@@ -40,9 +40,10 @@ Calcula las proyecciones a largo plazo (52 semanas) partiendo únicamente de la 
 Realizamos un *debug* profundo comparando el aplicativo contra la hoja *Plataforma vs Planeador* del Excel manual del usuario. 
 Descubrimos que la proyección manual se ve más alta en las primeras semanas de 2027 porque el Excel manual almacena el histórico de pedidos desde la semana `202614`, mientras que el archivo cargado al aplicativo (`PedidoConsolidado`) arrancaba en la semana `202639`. El aplicativo es matemáticamente preciso sobre los datos que recibe.
 
-## 5. Próximos Pasos (Pendientes)
-*   Existe un archivo adicional llamado **"Proyección 52 semanas"** que se alimenta de esta Proyección del Pedido Confirmado de MV. Es el módulo que sigue en la lista por desarrollar.
+## 5. Módulos y Cambios Recientes (Integración 52 Semanas)
+* **Archivo Maestro MVA:** Se eliminó la solicitud de cargar el *Pedido Consolidado* en cada módulo. Ahora se carga una única vez desde el "Dashboard General" y se guarda como archivo persistente (`PedidoConsolidado_master.xlsx`) para que el resto de los módulos lo consuman automáticamente.
+* **Proyección 52 Semanas:** Se construyó el módulo para la proyección de un año completo. Combina de forma inteligente **9 semanas** de proyección proveniente del inventario vivo en campo (PER13) y proyecta el resto de semanas requeridas desde el Pedido MVA. La información se inyecta en una plantilla vacía proporcionada por el usuario conservando absolutamente todas las variedades (incluso las que van en ceros), lista para descargar.
+* **Exportación Plataforma (13 Semanas):** Anteriormente dejaba las últimas 4 semanas en blanco o requería un archivo de plan manual. Ahora, si existe el archivo Maestro MVA, calcula las proyecciones automáticamente de ese pedido y rellena esas 4 semanas finales sin necesidad de inputs extra.
 
 ## Instrucción para el asistente:
-Al iniciar sesión, **lee este archivo, revisa `main_ui.py` y `mva_service.py`**, y pregúntale al usuario cuál es el siguiente objetivo. Tienes permiso absoluto para modificar y proponer mejoras arquitectónicas.
-
+Al iniciar sesión, **lee este archivo, revisa `main_ui.py` y `mva_service.py`**. El usuario retomará el chat desde su casa u otra ubicación. Recuérdale que el estado está guardado en el repositorio GitHub y explícale que ya se implementaron todas las integraciones del pedido maestro y la plantilla de 52 semanas tal como las pidió. Tienes permiso absoluto para proponer mejoras u optimizaciones.
