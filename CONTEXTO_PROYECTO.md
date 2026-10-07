@@ -45,3 +45,4 @@ Descubrimos que la proyección manual se ve más alta en las primeras semanas de
 
 ## Instrucción para el asistente:
 Al iniciar sesión, **lee este archivo, revisa `main_ui.py` y `mva_service.py`**, y pregúntale al usuario cuál es el siguiente objetivo. Tienes permiso absoluto para modificar y proponer mejoras arquitectónicas.
+
