@@ -48,32 +48,51 @@ if modulo == "Dashboard General":
     
     st.divider()
     
-    # --- Módulo de Carga ---
-    st.subheader("Carga de Plano de Siembra")
+    st.subheader("Carga de Insumos Maestros")
+    st.markdown("Sube aquí los archivos base. Una vez cargados, todos los módulos del sistema los usarán automáticamente.")
     
-    if os.path.exists("last_dataset_name.txt"):
-        with open("last_dataset_name.txt", "r") as f:
-            last_file = f.read().strip()
-    else:
-        last_file = "Siembra Actual (16).xlsx (Cargado por defecto)"
+    col_ins1, col_ins2 = st.columns(2)
+    
+    with col_ins1:
+        st.markdown("**1. Plano de Siembra (Inventario Vivo)**")
+        if os.path.exists("last_dataset_name.txt"):
+            with open("last_dataset_name.txt", "r") as f:
+                last_file = f.read().strip()
+        else:
+            last_file = "Ninguno"
+            
+        st.info(f"**Cargado:** {last_file}")
         
-    st.info(f"**Último dataset cargado:** {last_file}")
-    
-    uploaded_file = st.file_uploader("Cargar nuevo dataset de Siembras (Excel)", type=["xlsx", "xls"])
-    if uploaded_file is not None:
-        if st.button("Procesar Dataset"):
-            with st.spinner("Cargando y procesando dataset... esto puede tardar un momento."):
-                file_path = "Siembra Actual (16).xlsx"
-                with open(file_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                
-                with open("last_dataset_name.txt", "w") as f:
-                    f.write(uploaded_file.name)
-                
-                from scripts.ingestar_siembra import ingestar_siembra_actual
-                ingestar_siembra_actual()
-                
-                st.success("Dataset procesado con éxito. Los datos han sido actualizados.")
+        uploaded_file = st.file_uploader("Cargar nuevo dataset de Siembras", type=["xlsx", "xls"])
+        if uploaded_file is not None:
+            if st.button("Procesar Siembras"):
+                with st.spinner("Procesando dataset de siembras..."):
+                    file_path = "Siembra Actual (16).xlsx"
+                    with open(file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    with open("last_dataset_name.txt", "w") as f:
+                        f.write(uploaded_file.name)
+                    
+                    from scripts.ingestar_siembra import ingestar_siembra_actual
+                    ingestar_siembra_actual()
+                    
+                    st.success("Datos de siembra actualizados.")
+                    st.rerun()
+                    
+    with col_ins2:
+        st.markdown("**2. Pedido Consolidado (MVA)**")
+        if os.path.exists("PedidoConsolidado_master.xlsx"):
+            st.info("✅ Pedido Consolidado disponible en el sistema.")
+        else:
+            st.warning("⚠️ No hay Pedido Consolidado cargado.")
+            
+        uploaded_pedido = st.file_uploader("Cargar nuevo Pedido Consolidado", type=["xlsx", "xls"])
+        if uploaded_pedido is not None:
+            if st.button("Guardar Pedido MVA"):
+                with open("PedidoConsolidado_master.xlsx", "wb") as f:
+                    f.write(uploaded_pedido.getbuffer())
+                st.success("Pedido guardado. Se usará automáticamente en las proyecciones.")
                 st.rerun()
                 
     st.divider()
@@ -265,22 +284,35 @@ elif modulo == "Exportación Plataforma":
         uploaded_templates = st.file_uploader("Sube las plantillas por flor (Ej: Cushion_...xlsx)", type=["xlsx", "xls"], accept_multiple_files=True)
     
     with col_up2:
-        st.info("💡 **Nota sobre el Plan de Producción:** Las plantillas tienen 13 semanas. Las primeras 9 se llenan con la proyección real de campo. Las 4 restantes deben llenarse con la meta de siembra futura (Plan).")
-        uploaded_plan = st.file_uploader("Opcional: Sube el dataset de Plan de Producción (Excel) para llenar las 4 semanas finales", type=["xlsx", "xls"])
+        st.info("💡 **Automatización 13 Semanas:** Las primeras 9 semanas se llenan con la proyección real de campo. Las 4 semanas finales se rellenan usando el Pedido Consolidado MVA configurado en el Dashboard.")
 
     if uploaded_templates:
         if st.button("Procesar y Llenar Plantillas"):
-            with st.spinner("Generando forecast e inyectando datos en las plantillas..."):
-                # Generar forecast global
+            with st.spinner("Generando proyecciones e inyectando datos en las plantillas..."):
+                # Generar forecast global (primeras 9 semanas)
                 df_forecast = generar_forecast_13wk(db)
                 
-                # Cargar plan si existe
+                # Cargar plan (últimas 4 semanas) desde MVA si existe el maestro
                 df_plan = None
-                if uploaded_plan is not None:
-                    # Logica basica asumiendo que el plan tiene Variedad en la primera columna y semanas en las siguientes
-                    df_plan = pd.read_excel(uploaded_plan)
-                    if 'Variedad' in df_plan.columns:
-                        df_plan = df_plan.set_index('Variedad')
+                file_path = "PedidoConsolidado_master.xlsx"
+                if os.path.exists(file_path):
+                    import sys
+                    import os
+                    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+                    from app.services.mva_service import generar_plan_mva, proyectar_cosecha_desde_mva
+                    
+                    try:
+                        df_mrp = generar_plan_mva(file_path, week_is="Pedido")
+                        df_proyeccion = proyectar_cosecha_desde_mva(df_mrp, db)
+                        
+                        if not df_proyeccion.empty:
+                            # Preparar df_plan agrupando por Variedad y normalizando el índice
+                            df_plan = df_proyeccion.groupby('Variedad').sum()
+                            df_plan.index = df_plan.index.astype(str).str.strip().str.lower()
+                    except Exception as e:
+                        st.error(f"Error procesando Pedido MVA maestro: {e}")
+                else:
+                    st.warning("No se encontró un Pedido Consolidado MVA en el sistema. Las últimas 4 semanas quedarán en blanco.")
                 
                 # Importamos el procesador
                 import sys
@@ -333,20 +365,19 @@ elif modulo == "Proyección desde Pedido MV":
     # Explicacion visual
     st.info("🕒 **Línea de Tiempo Operativa**: Pedido Confirmado / Recepción (Semana **S**) ➔ 3 Semanas Enraizamiento ➔ Siembra a Campo (Semana **S+4**).")
     
-    uploaded_plan = st.file_uploader("📥 Cargar Pedido Consolidado (Excel)", type=["xlsx", "xls"])
+    uploaded_template_52 = st.file_uploader("📋 Cargar Plantilla Vacía 52 Semanas (Opcional - Excel)", type=["xlsx", "xls"])
     
-    if uploaded_plan is not None:
-        if st.button("Generar Proyecciones"):
+    if st.button("Generar Proyecciones"):
+        file_path = "PedidoConsolidado_master.xlsx"
+        if not os.path.exists(file_path):
+            st.error("❌ No hay un Pedido Consolidado configurado. Ve al 'Dashboard General' y cárgalo primero.")
+        else:
             with st.spinner("Procesando siembras futuras y calculando proyecciones de cosecha a largo plazo..."):
                 import sys
                 import os
                 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-                from app.services.mva_service import generar_plan_mva
-                
-                # Guardar el archivo temporalmente para leerlo con pandas
-                file_path = "temp_plan_mva.xlsx"
-                with open(file_path, "wb") as f:
-                    f.write(uploaded_plan.getbuffer())
+                from app.services.mva_service import generar_plan_mva, proyectar_cosecha_desde_mva, combinar_proyecciones_52_semanas, llenar_plantilla_52_semanas
+                from app.services.forecast_service import generar_forecast_13wk
                 
                 try:
                     df_mrp = generar_plan_mva(file_path, week_is="Pedido")
@@ -367,21 +398,32 @@ elif modulo == "Proyección desde Pedido MV":
                             'Esquejes_Para_Siembra (Final)': "{:,.0f}"
                         }), use_container_width=True)
                         
-                        # Generar Proyeccion 52 Semanas
-                        from app.services.mva_service import proyectar_cosecha_desde_mva
-                        df_proyeccion = proyectar_cosecha_desde_mva(df_mrp, db)
+                        # Generar Proyeccion 52 Semanas (MVA puro)
+                        df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
                         
-                        st.success(f"También se ha generado la proyección de cosecha a largo plazo basada en estas siembras futuras (abarcando {len([c for c in df_proyeccion.columns if str(c).startswith('202')])} semanas proyectadas).")
+                        # Combinar con el inventario vivo (PER13)
+                        df_forecast_vivo = generar_forecast_13wk(db)
+                        df_52_semanas = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
+                        
+                        st.success(f"También se ha generado la proyección Consolidada de 52 Semanas (combinando {len([c for c in df_forecast_vivo.columns if str(c).startswith('202')][:9])} semanas de inventario vivo y el resto del pedido MVA).")
                         
                         # Descargar Archivos
                         import io
                         output_mrp = io.BytesIO()
                         with pd.ExcelWriter(output_mrp, engine='xlsxwriter') as writer:
                             df_mrp.to_excel(writer, index=False, sheet_name="Explosion_MVA")
-                            
-                        output_proy = io.BytesIO()
-                        with pd.ExcelWriter(output_proy, engine='xlsxwriter') as writer:
-                            df_proyeccion.to_excel(writer, index=False, sheet_name="Proyeccion_Cosecha")
+                        
+                        # Si subió plantilla, usarla. Si no, descargar el raw df
+                        if uploaded_template_52 is not None:
+                            filled_template_bytes = llenar_plantilla_52_semanas(uploaded_template_52.getvalue(), df_52_semanas)
+                            proy_data = filled_template_bytes
+                            proy_filename = uploaded_template_52.name
+                        else:
+                            output_proy = io.BytesIO()
+                            with pd.ExcelWriter(output_proy, engine='xlsxwriter') as writer:
+                                df_52_semanas.to_excel(writer, index=False, sheet_name="Proyeccion_52W")
+                            proy_data = output_proy.getvalue()
+                            proy_filename = "Proyeccion_52_Semanas_Consolidada.xlsx"
                         
                         col_dl1, col_dl2 = st.columns(2)
                         col_dl1.download_button(
@@ -392,9 +434,9 @@ elif modulo == "Proyección desde Pedido MV":
                             type="primary"
                         )
                         col_dl2.download_button(
-                            label="⬇️ Descargar Proyección de Cosecha a Futuro",
-                            data=output_proy.getvalue(),
-                            file_name="Proyeccion_Cosecha_Largo_Plazo.xlsx",
+                            label="⬇️ Descargar Proyección 52 Semanas",
+                            data=proy_data,
+                            file_name=proy_filename,
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             type="primary"
                         )

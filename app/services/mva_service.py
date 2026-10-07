@@ -165,3 +165,86 @@ def proyectar_cosecha_desde_mva(df_mrp, db):
     meta_cols = [c for c in ['Flor', 'Color', 'Variedad'] if c in df_pivot.columns]
     
     return df_pivot[meta_cols + cols_semanas]
+
+def combinar_proyecciones_52_semanas(df_forecast, df_proyeccion):
+    """
+    Combina el forecast de corto plazo (inventario vivo) con el forecast de largo plazo (MVA)
+    para crear una proyección consolidada de 52 semanas.
+    - Primeras 9 semanas: Vienen de df_forecast (Inventario Vivo).
+    - Siguientes semanas (hasta la 52): Vienen de df_proyeccion (MVA).
+    """
+    from datetime import date
+    from app.services.forecast_service import isocalendar_to_string
+    import pandas as pd
+    
+    # 1. Preparar las 9 semanas de inventario vivo
+    semana_actual = isocalendar_to_string(date.today())
+    cols_fc = sorted([c for c in df_forecast.columns if str(c).startswith('202')])
+    semanas_viv = [s for s in cols_fc if s >= semana_actual][:9]
+    
+    df_viv = df_forecast[['Flor', 'Color', 'Variedad'] + semanas_viv].copy()
+    
+    # 2. Preparar el MVA a partir de la semana 10
+    cols_mva = sorted([c for c in df_proyeccion.columns if str(c).startswith('202')])
+    if semanas_viv:
+        ultima_semana_viv = semanas_viv[-1]
+        semanas_mva = [s for s in cols_mva if s > ultima_semana_viv]
+    else:
+        semanas_mva = cols_mva
+        
+    df_mrp_futuro = df_proyeccion[['Flor', 'Color', 'Variedad'] + semanas_mva].copy()
+    
+    # 3. Hacer un merge exterior (outer join) por Flor, Color, Variedad
+    df_consolidado = pd.merge(df_viv, df_mrp_futuro, on=['Flor', 'Color', 'Variedad'], how='outer')
+    
+    # Rellenar nulos con 0
+    df_consolidado = df_consolidado.fillna(0)
+    
+    # Limitar a exactamente 52 semanas (9 de vivo + 43 de mva)
+    todas_las_semanas = sorted([c for c in df_consolidado.columns if str(c).startswith('202')])
+    semanas_52 = todas_las_semanas[:52]
+    
+    df_final = df_consolidado[['Flor', 'Color', 'Variedad'] + semanas_52]
+    
+    return df_final
+
+def llenar_plantilla_52_semanas(template_bytes, df_52_semanas):
+    """
+    Toma una plantilla Excel de 52 semanas subida por el usuario,
+    busca la columna 'Variedad' y rellena las columnas de semanas
+    con los datos de df_52_semanas. Mantiene las variedades en 0 si no hay datos.
+    Retorna los bytes del archivo Excel modificado.
+    """
+    import io
+    import pandas as pd
+    
+    # Pre-procesar df_52_semanas para búsquedas rápidas
+    df_data = df_52_semanas.groupby('Variedad').sum()
+    df_data.index = df_data.index.astype(str).str.strip().str.lower()
+    
+    # Leer la plantilla
+    df_template = pd.read_excel(io.BytesIO(template_bytes), sheet_name=0)
+    
+    # Identificar las columnas de semanas (ej. 202640, 202701)
+    cols_semanas = [c for c in df_template.columns if str(c).startswith('202')]
+    
+    # Iterar y rellenar
+    if 'Variedad' in df_template.columns:
+        for idx, row in df_template.iterrows():
+            variedad_orig = str(row['Variedad']).strip().lower()
+            
+            for sem in cols_semanas:
+                sem_str = str(int(sem)) if isinstance(sem, float) else str(sem)
+                valor = 0
+                if not df_data.empty and variedad_orig in df_data.index and sem_str in df_data.columns:
+                    valor = df_data.loc[variedad_orig, sem_str]
+                
+                df_template.at[idx, sem] = int(valor)
+    
+    # Guardar en memoria
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_template.to_excel(writer, index=False, sheet_name='Proyeccion_52W')
+    output.seek(0)
+    
+    return output.getvalue()
