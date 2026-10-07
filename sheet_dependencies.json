@@ -1,0 +1,38 @@
+{
+    "Inicio": [],
+    "Plan_vs_Ajuste": [
+        "Plan a MVA"
+    ],
+    "Plan a MVA": [],
+    "FC_13WK": [
+        "ForeCast",
+        "Plan a MVA"
+    ],
+    "Pedido_MV": [
+        "Plataforma vs Planeador",
+        "Plan a MVA"
+    ],
+    "Plataforma vs Planeador": [
+        "Plan a MVA",
+        "Pedido_MV"
+    ],
+    "Plan Enraizamiento": [
+        "Plan a MVA",
+        "Pedido_MV"
+    ],
+    "Plan Siembra": [],
+    "Historico Enraizamiento": [],
+    "Datos_Campo": [],
+    "Datos_Variedades": [],
+    "Indices": [],
+    "Desbotone_Arranques": [],
+    "ForeCast": [
+        "Indices"
+    ],
+    "Auditoria Siembras": [
+        "Plataforma vs Planeador"
+    ],
+    "Factor_Ajuste": [],
+    "Datos_Base": [],
+    "Etiquetas": []
+}
