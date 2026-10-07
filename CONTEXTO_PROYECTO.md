@@ -18,15 +18,15 @@ Usamos SQLAlchemy. La base de datos `planeacion.db` contiene:
 ### A. Dashboard General
 Muestra KPIs rápidos (área ocupada, camas sembradas, variedades) y permite cargar el inventario actual de campo. También tiene una herramienta visual para consultar las curvas fenológicas día por día de cualquier variedad, aplicando su respectivo % de aprovechamiento.
 
-### B. ForeCast 10 Wk
-Toma el inventario vivo de campo y proyecta las próximas 10 semanas móviles de cosecha cruzando las fechas de siembra contra los días fenológicos. Compara gráficamente la proyección semanal contra un *input* manual de la Meta del Plan de Producción.
+### B. ForeCast 13 Wk
+Toma el inventario vivo de campo y proyecta las próximas 13 semanas móviles de cosecha cruzando las fechas de siembra contra los días fenológicos. Compara gráficamente la proyección semanal contra un *input* manual de la Meta del Plan de Producción.
 
-### C. Exportación a Plataforma (Plantillas de 13 Semanas)
+### C. Exportación Webflowers (Plantillas de 13 Semanas)
 *   El usuario sube plantillas de plataforma vacías (Excel).
 *   El aplicativo inyecta **9 semanas** de proyección viva, y deja las **4 semanas** restantes en blanco para que el área llene el Plan.
 *   **Solución técnica clave:** Logramos evadir la restricción de Streamlit que impide descargar múltiples archivos con un solo botón. Implementamos un componente HTML/JS (`st.components.v1`) que empaqueta todos los Excels en Base64 y los descarga en ráfaga (con el nombre original exacto) al hacer 1 clic, sin usar archivos ZIP.
 
-### D. Proyección desde Pedido Consolidado MV (Material Vegetal)
+### D. Proyección 52 Semanas (Desde Pedido Consolidado MVA)
 Calcula las proyecciones a largo plazo (52 semanas) partiendo únicamente de la intención de compra (esquejes).
 **Lógica y reglas de negocio acordadas:**
 1.  **Sin MVA adicional:** El archivo que se carga ya trae las cantidades netas a sembrar. Se removió el descuento del 2% de mortalidad en la interfaz por petición del usuario.

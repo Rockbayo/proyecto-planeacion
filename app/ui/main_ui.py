@@ -26,7 +26,7 @@ def get_db():
 db = next(get_db())
 
 st.sidebar.title("Navegación")
-modulo = st.sidebar.radio("Ir a:", ["Dashboard General", "ForeCast 10 Wk", "Exportación Plataforma", "Proyección desde Pedido MV"])
+modulo = st.sidebar.radio("Ir a:", ["Dashboard General", "ForeCast 13 Wk", "Exportación Webflowers", "Proyección 52 Semanas"])
 
 if modulo == "Dashboard General":
     st.header("📊 Dashboard General")
@@ -197,8 +197,8 @@ if modulo == "Dashboard General":
             else:
                 st.info("No hay curvas fenológicas configuradas para esta selección.")
 
-elif modulo == "ForeCast 10 Wk":
-    st.header("📈 ForeCast a 10 Semanas Móviles")
+elif modulo == "ForeCast 13 Wk":
+    st.header("📈 ForeCast a 13 Semanas Móviles")
     st.markdown("Proyección de cosecha basada en inventario activo.")
     
     # Parametros visuales
@@ -275,9 +275,9 @@ elif modulo == "ForeCast 10 Wk":
         else:
             st.dataframe(df_forecast, use_container_width=True)
 
-elif modulo == "Exportación Plataforma":
-    st.header("📤 Exportación a Plataforma")
-    st.markdown("Carga las plantillas vacías descargadas de la plataforma. El sistema inyectará **9 semanas** de proyecciones basadas en inventario vivo, y dejará el espacio de las **4 semanas** restantes para cruzar con el Plan de Producción.")
+elif modulo == "Exportación Webflowers":
+    st.header("📤 Exportación Webflowers")
+    st.markdown("Carga las plantillas vacías descargadas de la plataforma. El sistema inyectará **9 semanas** de proyecciones basadas en inventario vivo, y rellenará las **4 semanas** restantes con el Plan de Producción del Pedido Consolidado Maestro.")
     
     col_up1, col_up2 = st.columns(2)
     with col_up1:
@@ -358,9 +358,9 @@ elif modulo == "Exportación Plataforma":
                 
                 components.html(js_code, height=60)
 
-elif modulo == "Proyección desde Pedido MV":
-    st.header("🌱 Proyección desde Pedido Confirmado MV")
-    st.markdown("Carga el pedido consolidado aprobado por la finca propagadora. El sistema descontará la merma y proyectará las siembras y la cosecha futura.")
+elif modulo == "Proyección 52 Semanas":
+    st.header("🌱 Proyección 52 Semanas")
+    st.markdown("Genera la proyección de 52 semanas combinando el inventario vivo (PER13) y el Pedido Consolidado MVA (Material Vegetal Adicional).")
     
     # Explicacion visual
     st.info("🕒 **Línea de Tiempo Operativa**: Pedido Confirmado / Recepción (Semana **S**) ➔ 3 Semanas Enraizamiento ➔ Siembra a Campo (Semana **S+4**).")
