@@ -42,7 +42,8 @@ def ingestar_siembra_actual():
         flor = str(row['Flor']).strip()
         color = str(row['Color']).strip()
         
-        var_db = db.query(Variedad).filter(Variedad.nombre == nombre).first()
+        # Buscar de manera insensible a mayúsculas/minúsculas
+        var_db = db.query(Variedad).filter(Variedad.nombre.ilike(nombre)).first()
         if not var_db:
             var_db = Variedad(nombre=nombre, flor=flor, color=color, aprov_pp=1.0)
             db.add(var_db)
@@ -84,8 +85,14 @@ def ingestar_siembra_actual():
             db.refresh(ubi_db)
         ubicacion_cache[loc_key] = ubi_db.id
 
-    # 3. Cargar Siembras (Lotes Fsicos)
-    print("3. Registrando Lotes de Siembra Activos...")
+    # 3. Cargar Siembras (Lotes Físicos)
+    print("3. Limpiando inventario anterior y registrando Lotes de Siembra Activos...")
+    
+    # IMPORTANTE: Como el archivo es un "snapshot" del inventario vivo actual,
+    # debemos limpiar las siembras anteriores que ya no existen (fueron erradicadas).
+    db.query(Siembra).delete()
+    db.commit()
+    
     siembras_agregadas = 0
     for _, row in df.iterrows():
         if pd.isna(row['Variedad']) or pd.isna(row['Fecha de siembra']):
@@ -108,27 +115,16 @@ def ingestar_siembra_actual():
             plantas_sembradas = int(row.get('Plantas sembradas', 0))
             plantas_muertas = int(row.get('Plantas muertas', 0))
             
-            # Verificar si ya existe para evitar duplicados en mltiples ejecuciones
-            siembra_db = db.query(Siembra).filter(
-                Siembra.ubicacion_id == ubi_id,
-                Siembra.variedad_id == var_id,
-                Siembra.fecha_siembra == fecha_siembra
-            ).first()
-            
-            if siembra_db:
-                siembra_db.plantas_sembradas = plantas_sembradas
-                siembra_db.plantas_muertas = plantas_muertas
-            else:
-                nueva_siembra = Siembra(
-                    ubicacion_id=ubi_id,
-                    variedad_id=var_id,
-                    fecha_siembra=fecha_siembra,
-                    plantas_sembradas=plantas_sembradas,
-                    plantas_muertas=plantas_muertas,
-                    estado=EstadoSiembra.EN_PRODUCCION # Asumimos que si estn vivas estn en campo
-                )
-                db.add(nueva_siembra)
-                siembras_agregadas += 1
+            nueva_siembra = Siembra(
+                ubicacion_id=ubi_id,
+                variedad_id=var_id,
+                fecha_siembra=fecha_siembra,
+                plantas_sembradas=plantas_sembradas,
+                plantas_muertas=plantas_muertas,
+                estado=EstadoSiembra.EN_PRODUCCION # Asumimos que si están vivas están en campo
+            )
+            db.add(nueva_siembra)
+            siembras_agregadas += 1
                 
     db.commit()
     db.close()
