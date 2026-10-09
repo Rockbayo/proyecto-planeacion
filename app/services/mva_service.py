@@ -1,5 +1,5 @@
 import pandas as pd
-from datetime import datetime, date, timedelta
+from datetime import date, timedelta
 
 def iso_add_weeks(iso_str: str, weeks: int) -> str:
     """
@@ -82,28 +82,47 @@ def generar_plan_mva(filepath, week_is="Pedido"):
     return df_resultado
 
 
-def proyectar_cosecha_desde_mva(df_mrp, db):
+def proyectar_cosecha_desde_mva(df_mrp, db, var_dict=None):
     """
     Toma el DataFrame resultante de generar_plan_mva (que contiene Semana_Siembra y Plantas finales)
     y proyecta la cosecha a futuro (52 semanas) usando las curvas de las variedades.
     """
     from app.models.models import Variedad
-    from app.services.forecast_service import isocalendar_to_string
+    from app.services.forecast_service import isocalendar_to_string, calcular_curvas_dinamicas
     
     records = []
     
-    # Cargar todas las variedades en un diccionario para rapido acceso
-    variedades_db = db.query(Variedad).all()
-    var_dict = {v.nombre.strip().lower(): v for v in variedades_db}
+    # Calcular curvas dinámicamente con los parámetros óptimos (1.0 y 9)
+    curvas_dinamicas = calcular_curvas_dinamicas(alpha=1.0, num_ciclos=9)
+    
+    if var_dict is None:
+        # Cargar todas las variedades en un diccionario para rapido acceso
+        variedades_db = db.query(Variedad).all()
+        var_dict = {v.nombre.strip().lower(): v for v in variedades_db}
     
     for idx, row in df_mrp.iterrows():
         var_nombre_orig = row['Variedad']
         var_norm = str(var_nombre_orig).strip().lower()
         
-        if var_norm not in var_dict:
-            continue
+        # Obtener valores dinámicos si existen, fallback a DB
+        if var_nombre_orig in curvas_dinamicas:
+            v_dyn = curvas_dinamicas[var_nombre_orig]
+            dia_pico = v_dyn['dia_pico']
+            dia_inicio = v_dyn['dia_inicio']
+            curvas = [v_dyn[f'c{i}'] for i in range(1, 16)]
+        elif var_norm in var_dict:
+            var = var_dict[var_norm]
+            dia_pico = var.dia_pico if var.dia_pico else 70
+            dia_inicio = var.dia_inicio if var.dia_inicio else 68
+            curvas = [var.c1, var.c2, var.c3, var.c4, var.c5, 
+                      var.c6, var.c7, var.c8, var.c9, var.c10, 
+                      var.c11, var.c12, var.c13, var.c14, var.c15]
+        else:
+            # Crear variedad genérica (mock) para no perder los tallos
+            dia_pico = 70
+            dia_inicio = 68
+            curvas = [1.0] + [0.0] * 14
             
-        var = var_dict[var_norm]
         sem_siembra = str(row['Semana_Siembra'])
         plantas = row['Esquejes_Para_Siembra (Final)']
         
@@ -111,25 +130,19 @@ def proyectar_cosecha_desde_mva(df_mrp, db):
             continue
             
         # Determinar la fecha de siembra óptima en esa semana
-        # Buscamos el día de siembra (Lunes a Domingo) para que el 'Día Pico' caiga un Jueves (mitad de semana),
-        # logrando así que la curva de cosecha concentre su mayor volumen en una sola semana ISO.
         year = int(sem_siembra[:4])
         week = int(sem_siembra[4:])
         
         fecha_siembra = date.fromisocalendar(year, week, 1) # Default a lunes
         for d in range(1, 8):
             test_fecha = date.fromisocalendar(year, week, d)
-            fecha_pico = test_fecha + timedelta(days=var.dia_pico)
-            if fecha_pico.isoweekday() == 4: # 4 = Jueves
+            fecha_pico_test = test_fecha + timedelta(days=dia_pico)
+            if fecha_pico_test.isoweekday() == 4: # 4 = Jueves
                 fecha_siembra = test_fecha
                 break
         
-        fecha_inicio_cosecha = fecha_siembra + timedelta(days=var.dia_inicio)
+        fecha_inicio_cosecha = fecha_siembra + timedelta(days=dia_inicio)
         
-        curvas = [var.c1, var.c2, var.c3, var.c4, var.c5, 
-                  var.c6, var.c7, var.c8, var.c9, var.c10, 
-                  var.c11, var.c12, var.c13, var.c14, var.c15]
-                  
         for dia_indice, porcentaje_cosecha in enumerate(curvas):
             if porcentaje_cosecha and porcentaje_cosecha > 0:
                 fecha_corte_dia = fecha_inicio_cosecha + timedelta(days=dia_indice)
@@ -138,12 +151,12 @@ def proyectar_cosecha_desde_mva(df_mrp, db):
                 
                 if tallos_esperados > 0:
                     records.append({
-                        "Flor": var.flor,
-                        "Color": var.color,
-                        "Variedad": var.nombre,
+                        "Flor": row.get('Flor', 'Genérico'),
+                        "Color": row.get('Color', 'Genérico'),
+                        "Variedad": var_nombre_orig,
                         "Semana_Siembra": sem_siembra,
                         "Semana_Cosecha": semana_operativa,
-                        "Tallos_Proyectados": int(tallos_esperados)
+                        "Tallos_Proyectados": tallos_esperados
                     })
                     
     if not records:
@@ -170,21 +183,21 @@ def combinar_proyecciones_52_semanas(df_forecast, df_proyeccion):
     """
     Combina el forecast de corto plazo (inventario vivo) con el forecast de largo plazo (MVA)
     para crear una proyección consolidada de 52 semanas.
-    - Primeras 9 semanas: Vienen de df_forecast (Inventario Vivo).
+    - Primeras 10 semanas: Vienen de df_forecast (Inventario Vivo).
     - Siguientes semanas (hasta la 52): Vienen de df_proyeccion (MVA).
     """
     from datetime import date
     from app.services.forecast_service import isocalendar_to_string
     import pandas as pd
     
-    # 1. Preparar las 9 semanas de inventario vivo
+    # 1. Preparar las 10 semanas de inventario vivo
     semana_actual = isocalendar_to_string(date.today())
     cols_fc = sorted([c for c in df_forecast.columns if str(c).startswith('202')])
-    semanas_viv = [s for s in cols_fc if s >= semana_actual][:9]
+    semanas_viv = [s for s in cols_fc if s >= semana_actual][:10]
     
     df_viv = df_forecast[['Flor', 'Color', 'Variedad'] + semanas_viv].copy()
     
-    # 2. Preparar el MVA a partir de la semana 10
+    # 2. Preparar el MVA a partir de la semana 11
     cols_mva = sorted([c for c in df_proyeccion.columns if str(c).startswith('202')])
     if semanas_viv:
         ultima_semana_viv = semanas_viv[-1]
@@ -200,7 +213,7 @@ def combinar_proyecciones_52_semanas(df_forecast, df_proyeccion):
     # Rellenar nulos con 0
     df_consolidado = df_consolidado.fillna(0)
     
-    # Limitar a exactamente 52 semanas (9 de vivo + 43 de mva)
+    # Limitar a exactamente 52 semanas (10 de vivo + 42 de mva)
     todas_las_semanas = sorted([c for c in df_consolidado.columns if str(c).startswith('202')])
     semanas_52 = todas_las_semanas[:52]
     

@@ -9,8 +9,8 @@ from datetime import date
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from app.core.database import SessionLocal, engine
-from app.models.models import Variedad, Ubicacion, Siembra
-from app.services.forecast_service import generar_forecast_13wk, isocalendar_to_string
+from app.models.models import Variedad
+from app.services.forecast_service import generar_forecast_13wk, generar_forecast_ml_live, isocalendar_to_string
 
 st.set_page_config(page_title="Analitica Planeacion S&OP", layout="wide")
 
@@ -27,7 +27,11 @@ def get_db():
 db = next(get_db())
 
 st.sidebar.title("Navegación")
-modulo = st.sidebar.radio("Ir a:", ["Dashboard General", "ForeCast y Exportación", "Programación Diaria y Temporadas"])
+modulo = st.sidebar.radio("Ir a:", ["Dashboard General", "Curvas e Índices (Campo)", "ForeCast y Exportación", "Programación Diaria y Temporadas", "Plan de Producción (MVA)", "Pedido Material Vegetal", "Precisión y ML (Accuracy)"])
+
+from app.ui.curvas_ui import render_curvas_module
+from app.ui.accuracy_ui import render_accuracy_module
+from app.ui.actas_ui import render_actas_module
 
 if modulo == "Dashboard General":
     st.header("📊 Dashboard General")
@@ -97,6 +101,9 @@ if modulo == "Dashboard General":
                 st.rerun()
                 
     st.divider()
+
+elif modulo == "Curvas e Índices (Campo)":
+    render_curvas_module(db)
     
     # --- Filtro de Aprovechamiento y Curvas ---
     st.subheader("Aprovechamiento y Curvas de Variedades")
@@ -161,7 +168,7 @@ if modulo == "Dashboard General":
         with col_res1:
             if filtro_var == "Todas":
                 avg_aprov = int(round(df_vars['_aprov_num'].mean()))
-                st.metric(f"Promedio Aprovechamiento (Todas)", f"{avg_aprov}%")
+                st.metric("Promedio Aprovechamiento (Todas)", f"{avg_aprov}%")
             else:
                 val_aprov = df_vars['_aprov_num'].iloc[0]
                 st.metric(f"Aprovechamiento {filtro_var}", f"{val_aprov}%")
@@ -234,12 +241,12 @@ elif modulo == "ForeCast y Exportación":
     
     # Parametros visuales
     st.sidebar.markdown("### Parámetros de Suavización")
-    ponderacion = st.sidebar.slider("Ponderación (%)", 0, 100, 70)
+    ponderacion = st.sidebar.slider("Ponderación (%)", 0, 100, 100)
     periodos = st.sidebar.number_input("Ciclos (Periodos)", min_value=1, value=9)
     
     with st.spinner(f"Generando matriz de pronóstico ({vista})..."):
         # 1. Proyección de Inventario Vivo (Cubre hasta 9 semanas)
-        df_forecast_vivo = generar_forecast_13wk(db)
+        df_forecast_vivo = generar_forecast_13wk(db, alpha=(ponderacion/100.0), num_ciclos=periodos)
         
         # 2. Cargar MVA para las semanas faltantes
         import os
@@ -253,9 +260,9 @@ elif modulo == "ForeCast y Exportación":
                 df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
                 df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
                 if vista == "13 Semanas Móviles":
-                    st.info("💡 **Dato:** Las primeras 9 semanas vienen del inventario vivo y las siguientes 4 del Pedido Consolidado MVA.")
+                    st.info("💡 **Dato:** Las primeras 10 semanas vienen del inventario vivo y las siguientes del Pedido Consolidado MVA.")
                 else:
-                    st.info("💡 **Dato:** Las primeras 9 semanas vienen del inventario vivo y el resto (hasta 52) del Pedido Consolidado MVA.")
+                    st.info("💡 **Dato:** Las primeras 10 semanas vienen del inventario vivo y el resto (hasta la semana 52) del Pedido Consolidado MVA.")
             except Exception as e:
                 st.warning(f"Error procesando el archivo Maestro MVA: {e}")
                 df_forecast = df_forecast_vivo
@@ -283,32 +290,93 @@ elif modulo == "ForeCast y Exportación":
         if semanas_futuras:
             fc_agrupado = df_forecast[semanas_futuras].sum()
             
-            st.subheader("Proyección Semanal vs Plan de Producción")
+            st.subheader("Proyección Semanal vs Plan Aprobado")
             
-            col_plan1, col_plan2 = st.columns([1, 3])
-            plan_semanal = col_plan1.number_input("Meta del Plan (Tallos/Semana)", value=400000, step=10000, help="Define el plan de producción para visualizar la variación.")
+            # Intentar cargar el plan aprobado
+            plan_aprobado_path = "Plan_Aprobado.csv"
+            plan_series = pd.Series(0.0, index=semanas_futuras)
+            
+            if os.path.exists(plan_aprobado_path):
+                try:
+                    df_plan_app = pd.read_csv(plan_aprobado_path)
+                    col_capacidad = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_plan_app.columns else 'Suma de Tallos'
+                    if 'Semana' in df_plan_app.columns and col_capacidad in df_plan_app.columns:
+                        def clean_semana(val):
+                            if pd.isna(val):
+                                return ""
+                            try:
+                                return str(int(float(val)))
+                            except:
+                                return str(val).strip()
+                                
+                        df_plan_app['Semana'] = df_plan_app['Semana'].apply(clean_semana)
+                        
+                        # Agrupar el plan aprobado por semana (Tallos a producir de la contrapropuesta)
+                        df_plan_grp = df_plan_app.groupby('Semana')[col_capacidad].sum()
+                        
+                        # Alinear con las semanas futuras del chart
+                        for sem_fut in semanas_futuras:
+                            # Limpiar nombre por si tiene " (Actual)"
+                            sem_clean = sem_fut.split(" ")[0]
+                            if sem_clean in df_plan_grp.index:
+                                plan_series[sem_fut] = df_plan_grp[sem_clean]
+                    st.success("✅ Comparando contra el Plan Aprobado (Contrapropuesta consolidada).")
+                except Exception:
+                    st.warning("No se pudo leer el Plan Aprobado, usando 0.")
+            else:
+                st.info("💡 No hay un 'Plan Aprobado' guardado en el módulo MVA. Usa el módulo 'Plan de Producción' para procesar y consolidar un plan.")
+                col_plan1, col_plan2 = st.columns([1, 3])
+                plan_fallback = col_plan1.number_input("Meta del Plan (Fallback)", value=400000, step=10000)
+                plan_series = pd.Series(plan_fallback, index=semanas_futuras)
+                
+            # Intentar generar proyección ML para graficar
+            df_ml = generar_forecast_ml_live(db, start_date=date.today(), semanas_a_proyectar=num_semanas, df_plan_mva=df_mrp)
+            ml_series = pd.Series(0.0, index=semanas_futuras)
+            
+            if not df_ml.empty:
+                # Alinear las semanas de ML a semanas_futuras
+                for sem_fut in semanas_futuras:
+                    sem_clean = sem_fut.split(" ")[0]
+                    if sem_clean in df_ml.columns:
+                        ml_series[sem_fut] = df_ml[sem_clean].sum()
             
             df_chart = pd.DataFrame({
-                "Proyección (ForeCast)": fc_agrupado,
-                "Plan Producción": plan_semanal
+                "Proyección (ForeCast Clásico)": fc_agrupado,
+                "Proyección (Machine Learning)": ml_series,
+                "Plan Aprobado": plan_series
             })
+            
+            # Quitar la columna de ML si está en cero
+            if df_chart["Proyección (Machine Learning)"].sum() == 0:
+                df_chart = df_chart.drop(columns=["Proyección (Machine Learning)"])
+                
             st.line_chart(df_chart)
             
-            st.markdown("**Comparativo ForeCast vs Plan de Producción:**")
+            st.markdown("**Comparativo ForeCast vs Plan Aprobado:**")
             df_comp = df_chart.copy()
             # Evitar división por cero si el plan es 0
-            df_comp['Variación %'] = df_comp.apply(lambda row: ((row['Proyección (ForeCast)'] / row['Plan Producción']) - 1) * 100 if row['Plan Producción'] > 0 else 0, axis=1)
+            df_comp['Variación %'] = df_comp.apply(lambda row: ((row['Proyección (ForeCast Clásico)'] / row['Plan Aprobado']) - 1) * 100 if row['Plan Aprobado'] > 0 else 0, axis=1)
             
             df_comp_display = df_comp.copy()
-            df_comp_display['Proyección (ForeCast)'] = df_comp_display['Proyección (ForeCast)'].apply(lambda x: f"{int(x):,}")
-            df_comp_display['Plan Producción'] = df_comp_display['Plan Producción'].apply(lambda x: f"{int(x):,}")
+            df_comp_display['Proyección (ForeCast Clásico)'] = df_comp_display['Proyección (ForeCast Clásico)'].apply(lambda x: f"{int(x):,}")
+            if "Proyección (Machine Learning)" in df_comp_display.columns:
+                df_comp_display['Proyección (Machine Learning)'] = df_comp_display['Proyección (Machine Learning)'].apply(lambda x: f"{int(x):,}")
+            df_comp_display['Plan Aprobado'] = df_comp_display['Plan Aprobado'].apply(lambda x: f"{int(x):,}")
             df_comp_display['Variación %'] = df_comp_display['Variación %'].apply(lambda x: f"{x:+.1f}%")
             
             st.dataframe(df_comp_display.T, use_container_width=True)
             
         st.divider()
+        # Filtrar por variedades que tengan inventario vivo (sembradas actualmente)
+        if not df_forecast_vivo.empty and 'Variedad' in df_forecast_vivo.columns:
+            variedades_sembradas = df_forecast_vivo['Variedad'].dropna().unique()
+            df_forecast = df_forecast[df_forecast['Variedad'].isin(variedades_sembradas)]
+
         st.subheader("Resumen Total por Flor")
         df_forecast['TOTAL'] = df_forecast[semanas_futuras].sum(axis=1) if semanas_futuras else 0
+        
+        # Filtrar solo lo que tiene producción en el horizonte
+        df_forecast = df_forecast[df_forecast['TOTAL'] > 0]
         
         if semanas_futuras:
             resumen_flor = df_forecast.groupby('Flor')[semanas_futuras + ['TOTAL']].sum()
@@ -332,10 +400,10 @@ elif modulo == "ForeCast y Exportación":
                 total_row['Flor'] = 'TOTAL GENERAL'
             
             meta_cols = [c for c in ['Sede', 'Flor', 'Color', 'Variedad'] if c in df_forecast.columns]
-            df_forecast = df_forecast[meta_cols + cols_num]
+            df_forecast_display = df_forecast[meta_cols + cols_num].copy()
             
-            df_forecast = pd.concat([df_forecast, total_row], ignore_index=True)
-            st.dataframe(df_forecast.style.format(formatter={col: "{:,.0f}" for col in cols_num}), use_container_width=True)
+            df_forecast_display = pd.concat([df_forecast_display, total_row], ignore_index=True)
+            st.dataframe(df_forecast_display.style.format(formatter={col: "{:,.0f}" for col in cols_num}), use_container_width=True)
         else:
             st.dataframe(df_forecast, use_container_width=True)
 
@@ -378,7 +446,7 @@ elif modulo == "ForeCast y Exportación":
                         st.success(f"Se procesaron {len(resultados)} plantillas exitosamente.")
                         
                         import base64
-                        import json
+
                         import streamlit.components.v1 as components
                         
                         files_data = []
@@ -531,7 +599,18 @@ elif modulo == "Programación Diaria y Temporadas":
                                 import unicodedata
                                 name_lower = ''.join(c for c in unicodedata.normalize('NFD', name_lower) if unicodedata.category(c) != 'Mn')
                                 if name_lower in ["san valentin", "madres"]:
-                                    if s.get("Semana Inicio") <= sem_target_int <= s.get("Semana Fin"):
+                                    ini = s.get("Semana Inicio", 0)
+                                    fin = s.get("Semana Fin", 0)
+                                    w_ini = ini % 100 if ini > 100 else ini
+                                    w_fin = fin % 100 if fin > 100 else fin
+                                    week_target = sem_target_int % 100
+                                    
+                                    if w_ini <= w_fin:
+                                        in_season = (w_ini <= week_target <= w_fin)
+                                    else:
+                                        in_season = (week_target >= w_ini or week_target <= w_fin)
+                                        
+                                    if in_season:
                                         es_temporada_domingo = True
                                         break
                         except ValueError:
@@ -674,8 +753,29 @@ elif modulo == "Programación Diaria y Temporadas":
                 name = str(s.get("Temporada", ""))
                 start = str(int(s["Semana Inicio"])) if pd.notna(s.get("Semana Inicio")) else ""
                 end = str(int(s["Semana Fin"])) if pd.notna(s.get("Semana Fin")) else ""
+                try:
+                    ini = int(float(s.get("Semana Inicio", 0)))
+                    fin = int(float(s.get("Semana Fin", 0)))
+                except:
+                    ini = 0
+                    fin = 0
                 
-                valid_cols = [c for c in cols if start <= str(c) <= end]
+                w_ini = ini % 100 if ini > 100 else ini
+                w_fin = fin % 100 if fin > 100 else fin
+                
+                valid_cols = []
+                for c in cols:
+                    try:
+                        w_c = int(str(c)) % 100
+                        if w_ini <= w_fin:
+                            if w_ini <= w_c <= w_fin:
+                                valid_cols.append(c)
+                        else:
+                            if w_c >= w_ini or w_c <= w_fin:
+                                valid_cols.append(c)
+                    except:
+                        pass
+                
                 used_cols.update(valid_cols)
                 
                 total_vol = df_52[valid_cols].sum().sum() if valid_cols else 0
@@ -733,3 +833,162 @@ elif modulo == "Programación Diaria y Temporadas":
                     st.altair_chart(chart, use_container_width=True)
                 else:
                     st.info("Las proyecciones actuales no alcanzan las semanas de las temporadas configuradas.")
+
+elif modulo == "Plan de Producción (MVA)":
+    st.header("📈 Plan de Producción (MVA y Reglas de Negocio)")
+    tab_plan, tab_actas = st.tabs(["Planificación y Contrapropuesta", "Gestión MVA"])
+    
+    with tab_actas:
+        render_actas_module(db)
+        
+    with tab_plan:
+        st.markdown("""
+        Sube el archivo de plan semanal (Ej: `CH-ValentinesDay-Easter...xlsx`).
+        El sistema aplicará la distribución MVA, la regla de 2000 tallos mínimos acumulables en 2 semanas, 
+        el cálculo de Camas Completas (Siembra 4800 plantas), y finalmente, **Backward Scheduling** para Siembra y Enraizamiento.
+        """)
+    
+        plan_file = st.file_uploader("Subir Archivo de Plan Semanal (Excel)", type=["xlsx", "xls"])
+        if plan_file is not None:
+            # Si cambiamos de archivo, limpiamos el estado
+            if "plan_file_name" in st.session_state and st.session_state["plan_file_name"] != plan_file.name:
+                if "df_contra" in st.session_state:
+                    del st.session_state["df_contra"]
+                if "df_prod" in st.session_state:
+                    del st.session_state["df_prod"]
+                
+            if "df_contra" not in st.session_state:
+                if st.button("Procesar Plan", type="primary"):
+                    with st.spinner("Procesando archivo, aplicando MVA y Backward Scheduling..."):
+                        try:
+                            from app.services.produccion_service import process_plan_produccion
+                            df_produccion, df_contrapropuesta = process_plan_produccion(plan_file.getvalue(), db)
+                        
+                            if df_produccion.empty:
+                                st.warning("No se generaron registros. Verifica que el archivo tenga datos válidos.")
+                            else:
+                                st.session_state["df_contra"] = df_contrapropuesta
+                                st.session_state["df_prod"] = df_produccion
+                                st.session_state["plan_file_name"] = plan_file.name
+                                st.rerun()
+                        except Exception as e:
+                            import traceback
+                            st.error(f"Error procesando el plan: {e}")
+                            st.text(traceback.format_exc())
+                        
+            if "df_contra" in st.session_state:
+                df_contrapropuesta = st.session_state["df_contra"]
+                df_produccion = st.session_state["df_prod"]
+            
+                st.success("¡Contrapropuesta generada exitosamente!")
+                st.subheader("Contrapropuesta (Ajuste a Capacidad y Aprovechamiento)")
+            
+                columnas_ui = list(df_contrapropuesta.columns)
+                df_contra_display = df_contrapropuesta[columnas_ui].copy()
+                if not df_contra_display.empty:
+                    total_dict = {}
+                    for col in columnas_ui:
+                        if col in ['Tallos Solicitados (Plan)', 'Suma de Tallos', 'Variacion']:
+                            total_dict[col] = df_contra_display[col].sum()
+                        elif col == 'Flower':
+                            total_dict[col] = "TOTAL"
+                        else:
+                            total_dict[col] = ""
+                
+                    total_contra = pd.DataFrame([total_dict])
+                    df_contra_display = pd.concat([df_contra_display, total_contra], ignore_index=True)
+            
+                st.dataframe(
+                    df_contra_display.style.format({
+                        "Tallos Solicitados (Plan)": "{:,.0f}",
+                        "Suma de Tallos": "{:,.0f}",
+                        "Variacion": "{:,.0f}"
+                    }),
+                    use_container_width=True
+                )
+            
+                st.divider()
+            
+                col_save, col_dl1, col_dl2 = st.columns([2, 1, 1])
+            
+                with col_save:
+                    if st.button("💾 Guardar Contrapropuesta como Plan Aprobado", type="primary", use_container_width=True):
+                        plan_file_path = "Plan_Aprobado.csv"
+                        if os.path.exists(plan_file_path):
+                            try:
+                                # Cargar el plan maestro existente
+                                df_master = pd.read_csv(plan_file_path)
+                            
+                                def clean_sem(val):
+                                    if pd.isna(val) or str(val).lower() == 'nan':
+                                        return ""
+                                    try:
+                                        return str(int(float(val)))
+                                    except:
+                                        return str(val).strip()
+                                    
+                                df_master['Semana'] = df_master['Semana'].apply(clean_sem)
+                            
+                                # Identificar semanas en el nuevo ciclo
+                                df_produccion['Semana'] = df_produccion['Semana'].apply(clean_sem)
+                                nuevas_semanas = df_produccion['Semana'].unique()
+                            
+                                # Eliminar del maestro las semanas que vienen en este nuevo ciclo
+                                df_master = df_master[~df_master['Semana'].isin(nuevas_semanas)]
+                            
+                                # Agregar el nuevo ciclo y ordenar
+                                df_consolidado = pd.concat([df_master, df_produccion], ignore_index=True)
+                            
+                                if 'Flor' in df_consolidado.columns and 'Color' in df_consolidado.columns and 'Variedad' in df_consolidado.columns:
+                                    df_consolidado = df_consolidado.sort_values(['Semana', 'Flor', 'Color', 'Variedad'])
+                                else:
+                                    df_consolidado = df_consolidado.sort_values(['Semana'])
+                                
+                                df_consolidado.to_csv(plan_file_path, index=False)
+                                st.success(f"¡Ciclo consolidado! Se actualizaron {len(nuevas_semanas)} semanas en el Plan Maestro (semanas {min(nuevas_semanas)} a {max(nuevas_semanas)}).")
+                            except Exception as e:
+                                st.error(f"Error al consolidar el plan maestro: {e}")
+                        else:
+                            # Si no existe, guardar como el primero
+                            df_produccion.to_csv(plan_file_path, index=False)
+                            st.success("¡Primer ciclo guardado como Plan Maestro Aprobado (Detallado por Variedad)!")
+            
+                import io
+                # Generar Excel para Contrapropuesta
+                output_contra = io.BytesIO()
+                with pd.ExcelWriter(output_contra, engine='xlsxwriter') as writer:
+                    df_contrapropuesta.to_excel(writer, index=False, sheet_name='Contrapropuesta')
+                output_contra.seek(0)
+            
+                with col_dl1:
+                    st.download_button(
+                        label="📥 Descargar Contrapropuesta",
+                        data=output_contra.getvalue(),
+                        file_name=f"Contrapropuesta_{date.today()}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                
+                # Generar Excel para Descargar Plan Detallado
+                output_plan = io.BytesIO()
+                with pd.ExcelWriter(output_plan, engine='xlsxwriter') as writer:
+                    df_produccion.to_excel(writer, index=False, sheet_name='Plan_Detallado')
+                output_plan.seek(0)
+            
+                with col_dl2:
+                    st.download_button(
+                        label="📥 Descargar Plan Detallado (Flor/Color/Variedad)",
+                        data=output_plan.getvalue(),
+                        file_name=f"Plan_Detallado_MVA_{date.today()}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+
+elif modulo == "Pedido Material Vegetal":
+    from app.ui.pedido_ui import render_pedido_module
+    render_pedido_module(db)
+
+elif modulo == "Precisión y ML (Accuracy)":
+    render_accuracy_module(db)
+
+
