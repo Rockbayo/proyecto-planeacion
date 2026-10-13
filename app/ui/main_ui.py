@@ -224,29 +224,18 @@ elif modulo == "ForeCast y Exportación":
                 plan_fallback = col_plan1.number_input("Meta del Plan (Fallback)", value=400000, step=10000)
                 plan_series = pd.Series(plan_fallback, index=semanas_futuras)
                 
-            # Intentar generar proyección ML para graficar
-            df_ml = generar_forecast_ml_live(db, start_date=date.today(), semanas_a_proyectar=num_semanas, df_plan_mva=df_mrp)
-            ml_series = pd.Series(0.0, index=semanas_futuras)
-            
-            if not df_ml.empty:
-                # Alinear las semanas de ML a semanas_futuras
-                for sem_fut in semanas_futuras:
-                    sem_clean = sem_fut.split(" ")[0]
-                    if sem_clean in df_ml.columns:
-                        ml_series[sem_fut] = df_ml[sem_clean].sum()
-            
+            # Proyección determinística estándar (ML desactivado temporalmente)
             df_chart = pd.DataFrame({
-                "Proyección (ForeCast Clásico)": fc_agrupado,
-                "Proyección (Machine Learning)": ml_series,
+                "Proyección (ForeCast)": fc_agrupado,
                 "Plan Aprobado": plan_series
             })
             
             fig_fc = go.Figure()
             
-            # Línea de Proyección Clásica (ForeCast Dinámico)
+            # Línea de Proyección (ForeCast Dinámico)
             fig_fc.add_trace(go.Scatter(
                 x=list(df_chart.index),
-                y=df_chart["Proyección (ForeCast Clásico)"],
+                y=df_chart["Proyección (ForeCast)"],
                 mode='lines+markers',
                 name="Proyección (ForeCast)",
                 line=dict(color='#2E7D32', width=3),
@@ -266,21 +255,10 @@ elif modulo == "ForeCast y Exportación":
                     hovertemplate="<b>Semana %{x}</b><br>Plan Aprobado: %{y:,.0f} tallos<extra></extra>"
                 ))
                 
-            # Línea de Machine Learning (si está activa y tiene datos)
-            if "Proyección (Machine Learning)" in df_chart.columns and df_chart["Proyección (Machine Learning)"].sum() > 0:
-                fig_fc.add_trace(go.Scatter(
-                    x=list(df_chart.index),
-                    y=df_chart["Proyección (Machine Learning)"],
-                    mode='lines+markers',
-                    name="Machine Learning",
-                    line=dict(color='#FF8F00', width=2, dash='dot'),
-                    marker=dict(size=5),
-                    hovertemplate="<b>Semana %{x}</b><br>ML: %{y:,.0f} tallos<extra></extra>"
-                ))
-                
             fig_fc.update_layout(
                 title=dict(text=f"Proyección Semanal vs Plan Aprobado ({vista})", font=dict(size=16)),
                 xaxis=dict(
+                    type='category',  # Evita formato numérico 202.64k y muestra los nombres exactos de semana
                     title="Semana Operativa",
                     tickangle=-45,
                     fixedrange=True,  # Bloquea zoom y arrastre horizontal
@@ -302,12 +280,10 @@ elif modulo == "ForeCast y Exportación":
             st.markdown("**Comparativo ForeCast vs Plan Aprobado:**")
             df_comp = df_chart.copy()
             # Evitar división por cero si el plan es 0
-            df_comp['Variación %'] = df_comp.apply(lambda row: ((row['Proyección (ForeCast Clásico)'] / row['Plan Aprobado']) - 1) * 100 if row['Plan Aprobado'] > 0 else 0, axis=1)
+            df_comp['Variación %'] = df_comp.apply(lambda row: ((row['Proyección (ForeCast)'] / row['Plan Aprobado']) - 1) * 100 if row['Plan Aprobado'] > 0 else 0, axis=1)
             
             df_comp_display = df_comp.copy()
-            df_comp_display['Proyección (ForeCast Clásico)'] = df_comp_display['Proyección (ForeCast Clásico)'].apply(lambda x: f"{int(x):,}")
-            if "Proyección (Machine Learning)" in df_comp_display.columns:
-                df_comp_display['Proyección (Machine Learning)'] = df_comp_display['Proyección (Machine Learning)'].apply(lambda x: f"{int(x):,}")
+            df_comp_display['Proyección (ForeCast)'] = df_comp_display['Proyección (ForeCast)'].apply(lambda x: f"{int(x):,}")
             df_comp_display['Plan Aprobado'] = df_comp_display['Plan Aprobado'].apply(lambda x: f"{int(x):,}")
             df_comp_display['Variación %'] = df_comp_display['Variación %'].apply(lambda x: f"{x:+.1f}%")
             
