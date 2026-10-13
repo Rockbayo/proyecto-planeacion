@@ -1,0 +1,43 @@
+{
+    "por_flor": {
+        "Cushion": {
+            "alpha": 0.96,
+            "ponderacion_%": 96,
+            "num_ciclos": 9,
+            "wape_%": 26.45,
+            "bias_%": -21.59
+        },
+        "Daisy": {
+            "alpha": 0.68,
+            "ponderacion_%": 68,
+            "num_ciclos": 5,
+            "wape_%": 19.66,
+            "bias_%": -8.96
+        },
+        "Novelty": {
+            "alpha": 1.0,
+            "ponderacion_%": 100,
+            "num_ciclos": 2,
+            "wape_%": 35.85,
+            "bias_%": -33.93
+        }
+    },
+    "global": {
+        "alpha": 0.72,
+        "ponderacion_%": 72,
+        "num_ciclos": 6,
+        "wape_%": 27.44,
+        "bias_%": -18.98
+    },
+    "alpha": 0.72,
+    "ponderacion_%": 72,
+    "num_ciclos": 6,
+    "wape_%": 27.44,
+    "wape_anterior_%": 29.77,
+    "reduccion_error_%": 2.33,
+    "fecha_calibracion": "2026-10-13 16:04",
+    "semana_evaluada": "202641",
+    "total_iteraciones": 2000,
+    "simulaciones_por_flor": 500,
+    "origen": "Optimización Machine Learning Segmentada por Flor (2,000 Simulaciones)"
+}

@@ -12,6 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 from app.core.database import SessionLocal, engine
 from app.models.models import Variedad
 from app.services.forecast_service import generar_forecast_13wk, generar_forecast_ml_live, isocalendar_to_string
+from app.services.alertas_service import render_panel_alertas_sop, obtener_alertas_sop
 
 st.set_page_config(page_title="Analitica Planeacion S&OP", layout="wide")
 
@@ -94,6 +95,10 @@ if modulo == "Dashboard General":
                 }),
                 use_container_width=True
             )
+            
+    # Panel de Gobernanza y Alertas S&OP
+    st.markdown("")
+    render_panel_alertas_sop()
     
     st.divider()
     
@@ -177,14 +182,50 @@ elif modulo == "ForeCast y Exportación":
     vista = st.radio("Selecciona el horizonte de proyección:", ["13 Semanas Móviles", "52 Semanas (Año Completo)"], horizontal=True)
     num_semanas = 14 if vista == "13 Semanas Móviles" else 52
     
-    # Parametros visuales
+    # Alertas S&OP por horizonte
+    alertas_sop = obtener_alertas_sop()
+    if vista == "13 Semanas Móviles":
+        a13 = alertas_sop.get("regla_13wk", {})
+        st.caption(f"{a13.get('icono', '⏰')} **Regla 1 S&OP (13 Semanas / Webflowers):** Cierre los Miércoles antes de las 12:00 m. {a13.get('mensaje', '')}")
+    else:
+        a52 = alertas_sop.get("regla_52wk", {})
+        st.caption(f"{a52.get('icono', '📅')} **Regla 2 S&OP (52 Semanas / Anual):** Carga los 4º Jueves de cada mes. {a52.get('mensaje', '')}")
+    
+    # Parametros visuales con adopción de calibración ML
+    from app.services.calibracion_service import cargar_parametros_calibrados
+    params_cal = cargar_parametros_calibrados()
+    default_pond = int(params_cal.get('ponderacion_%', 100))
+    default_ciclos = int(params_cal.get('num_ciclos', 9))
+
     st.sidebar.markdown("### Parámetros de Suavización")
-    ponderacion = st.sidebar.slider("Ponderación (%)", 0, 100, 100)
-    periodos = st.sidebar.number_input("Ciclos (Periodos)", min_value=1, value=9)
+    usar_calibrado_flor = True
+    if params_cal.get('fecha_calibracion'):
+        por_fl = params_cal.get('por_flor', {})
+        c_p = por_fl.get('Cushion', {})
+        d_p = por_fl.get('Daisy', {})
+        n_p = por_fl.get('Novelty', {})
+        st.sidebar.success(f"""🤖 **Calibrado por ML (Por Flor):**
+* 🌸 Cushion: {c_p.get('ponderacion_%', default_pond)}% ({c_p.get('num_ciclos', default_ciclos)} cic)
+* 🌼 Daisy: {d_p.get('ponderacion_%', default_pond)}% ({d_p.get('num_ciclos', default_ciclos)} cic)
+* 🌺 Novelty: {n_p.get('ponderacion_%', default_pond)}% ({n_p.get('num_ciclos', default_ciclos)} cic)
+*Última: {params_cal.get('fecha_calibracion')}*""")
+        usar_calibrado_flor = st.sidebar.checkbox("Aplicar Calibración Segmentada por Flor (ML)", value=True, help="Usa automáticamente la ponderación y ciclos óptimos de Cushion, Daisy y Novelty.")
+
+    if not usar_calibrado_flor:
+        ponderacion = st.sidebar.slider("Ponderación Global (%)", 0, 100, default_pond)
+        periodos = st.sidebar.number_input("Ciclos Globales (Periodos)", min_value=1, value=default_ciclos)
+        alpha_fc = ponderacion / 100.0
+        ciclos_fc = periodos
+        params_flor_fc = None
+    else:
+        alpha_fc = None
+        ciclos_fc = None
+        params_flor_fc = params_cal.get('por_flor')
     
     with st.spinner(f"Generando matriz de pronóstico ({vista})..."):
-        # 1. Proyección de Inventario Vivo (Cubre hasta 9 semanas)
-        df_forecast_vivo = generar_forecast_13wk(db, alpha=(ponderacion/100.0), num_ciclos=periodos)
+        # 1. Proyección de Inventario Vivo (Cubre hasta 9 semanas) con parámetros segmentados
+        df_forecast_vivo = generar_forecast_13wk(db, alpha=alpha_fc, num_ciclos=ciclos_fc, params_por_flor=params_flor_fc)
+
         
         # 2. Cargar MVA para las semanas faltantes
         import os

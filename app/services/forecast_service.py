@@ -12,9 +12,9 @@ def isocalendar_to_string(dt: date) -> str:
 
 import os
 
-def calcular_curvas_dinamicas(alpha: float, num_ciclos: int):
+def calcular_curvas_dinamicas(alpha: float = None, num_ciclos: int = None, db: Session = None, params_por_flor: dict = None):
     # Retorna un diccionario con las variedades y sus valores suavizados
-    # { 'VariedadA': { 'aprov': 0.85, 'dia_inicio': 60, 'c1': ..., 'c15': ... }, ... }
+    # { 'VariedadA': { 'aprov': 0.85, 'dia_inicio': 60, 'c1': ..., 'c15': ..., 'flor': 'Cushion' }, ... }
     dict_vars = {}
     if not os.path.exists('Historico_Curvas.csv'):
         return dict_vars
@@ -35,6 +35,39 @@ def calcular_curvas_dinamicas(alpha: float, num_ciclos: int):
             
     if 'Variedad' not in df_full.columns:
         return dict_vars
+
+    # Cargar calibración persistida si no se especifican parámetros manuales
+    if params_por_flor is None:
+        try:
+            from app.services.calibracion_service import cargar_parametros_calibrados
+            cal_data = cargar_parametros_calibrados()
+            if cal_data.get('fecha_calibracion'):
+                params_por_flor = cal_data.get('por_flor')
+                if alpha is None:
+                    alpha = float(cal_data.get('alpha', 1.0))
+                if num_ciclos is None:
+                    num_ciclos = int(cal_data.get('num_ciclos', 9))
+        except Exception:
+            pass
+
+    if alpha is None:
+        alpha = 1.0
+    if num_ciclos is None:
+        num_ciclos = 9
+
+    # Mapeo de Variedad a Tipo de Flor
+    v_to_flor = {}
+    try:
+        if db is not None:
+            vars_db = db.query(Variedad).all()
+            v_to_flor = {v.nombre.strip().lower(): v.flor.strip() for v in vars_db if v.nombre and v.flor}
+        else:
+            from app.core.database import SessionLocal
+            with SessionLocal() as s_local:
+                vars_db = s_local.query(Variedad).all()
+                v_to_flor = {v.nombre.strip().lower(): v.flor.strip() for v in vars_db if v.nombre and v.flor}
+    except Exception:
+        pass
         
     variedades_nombres = df_full['Variedad'].dropna().unique()
     
@@ -45,6 +78,18 @@ def calcular_curvas_dinamicas(alpha: float, num_ciclos: int):
             
         if 'FechaSiembra' in df_var_all.columns:
             df_var_all = df_var_all.sort_values('FechaSiembra')
+
+        # Determinar alpha y ciclos según el Tipo de Flor de la variedad
+        fl_var = v_to_flor.get(var_name.strip().lower(), '')
+        fl_cap = fl_var.capitalize()
+
+        if params_por_flor and fl_cap in params_por_flor:
+            p_fl = params_por_flor[fl_cap]
+            alpha_var = float(p_fl.get('alpha', alpha))
+            ciclos_var = int(p_fl.get('num_ciclos', num_ciclos))
+        else:
+            alpha_var = alpha
+            ciclos_var = num_ciclos
             
         # 1. Histórico Crudo Total
         total_plantas_hist = df_var_all['NumeroPlantas'].sum() if 'NumeroPlantas' in df_var_all.columns else 0
@@ -61,8 +106,8 @@ def calcular_curvas_dinamicas(alpha: float, num_ciclos: int):
         dias_inicio_list_hist = (df_var_all['FechaInicioProduccion'] - df_var_all['FechaSiembra']).dt.days.dropna()
         dia_inicio_hist = int(dias_inicio_list_hist.mean()) if not dias_inicio_list_hist.empty else 0
         
-        # 2. Datos Nuevos (Últimos N Ciclos)
-        df_var_n = df_var_all.tail(num_ciclos)
+        # 2. Datos Nuevos (Últimos N Ciclos para esta variedad y flor)
+        df_var_n = df_var_all.tail(ciclos_var)
         total_plantas_nuevo = df_var_n['NumeroPlantas'].sum() if 'NumeroPlantas' in df_var_n.columns else 0
         
         if total_plantas_nuevo == 0:
@@ -82,19 +127,22 @@ def calcular_curvas_dinamicas(alpha: float, num_ciclos: int):
             dias_inicio_list = (df_var_n['FechaInicioProduccion'] - df_var_n['FechaSiembra']).dt.days.dropna()
             dia_inicio_nuevo = int(dias_inicio_list.mean()) if not dias_inicio_list.empty else 0
             
-        # 3. Suavización
-        aprov_suav = (aprov_nuevo * alpha) + (aprov_hist * (1 - alpha))
-        dia_inicio_suav = int((dia_inicio_nuevo * alpha) + (dia_inicio_hist * (1 - alpha)))
+        # 3. Suavización Exponencial
+        aprov_suav = (aprov_nuevo * alpha_var) + (aprov_hist * (1.0 - alpha_var))
+        dia_inicio_suav = int((dia_inicio_nuevo * alpha_var) + (dia_inicio_hist * (1.0 - alpha_var)))
         
         curva_suav = {}
         for i in range(1, 16):
-            curva_suav[f'c{i}'] = (curva_nueva[f'c{i}'] * alpha) + (curva_hist[f'c{i}'] * (1 - alpha))
+            curva_suav[f'c{i}'] = (curva_nueva[f'c{i}'] * alpha_var) + (curva_hist[f'c{i}'] * (1.0 - alpha_var))
             
         corte_max = max(curva_suav.items(), key=lambda k: k[1]) if sum(curva_suav.values()) > 0 else ('c1', 0)
         semana_pico = int(corte_max[0].replace('c', ''))
         dia_pico_suav = dia_inicio_suav + ((semana_pico - 1) * 7) + 3 # Estimación del dia pico
             
         res = {
+            'flor': fl_cap,
+            'alpha_usado': alpha_var,
+            'num_ciclos_usado': ciclos_var,
             'aprov': aprov_suav,
             'dia_inicio': dia_inicio_suav,
             'dia_pico': dia_pico_suav
@@ -106,19 +154,20 @@ def calcular_curvas_dinamicas(alpha: float, num_ciclos: int):
         
     return dict_vars
 
-def generar_forecast_13wk(db: Session, start_date: date = None, alpha: float = 1.0, num_ciclos: int = 9):
+def generar_forecast_13wk(db: Session, start_date: date = None, alpha: float = None, num_ciclos: int = None, params_por_flor: dict = None):
     """
     Calcula el ForeCast a 10 Semanas Móviles para todos los lotes en producción.
     Cruza el inventario de plantas vivas con la curva productiva de cada variedad.
-    Aplica suavización exponencial dinámica según alpha y num_ciclos.
+    Aplica suavización exponencial dinámica segmentada por tipo de flor (Cushion, Daisy, Novelty).
     """
     if not start_date:
         start_date = date.today()
         
-    # Calcular las curvas suavizadas dinámicamente con los parámetros del usuario
-    curvas_dinamicas = calcular_curvas_dinamicas(alpha, num_ciclos)
+    # Calcular las curvas suavizadas dinámicamente con los parámetros calibrados por flor
+    curvas_dinamicas = calcular_curvas_dinamicas(alpha=alpha, num_ciclos=num_ciclos, db=db, params_por_flor=params_por_flor)
         
     siembras = db.query(Siembra).filter(Siembra.estado == EstadoSiembra.EN_PRODUCCION).all()
+
     
     forecast_records = []
     
