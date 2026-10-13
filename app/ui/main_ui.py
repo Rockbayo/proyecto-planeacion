@@ -37,20 +37,65 @@ from app.ui.actas_ui import render_actas_module
 if modulo == "Dashboard General":
     st.header("📊 Dashboard General")
     
-    # KPIs basicos
+    # KPIs básicos del Plano de Siembra Actual (Inventario Vivo en Campo)
     col1, col2, col3, col4 = st.columns(4)
-    total_vars = db.query(Variedad).count()
     
-    # Calcular metricas de siembras y area
-    df_metrics = pd.read_sql("SELECT count(s.id) as camas, sum(s.plantas_sembradas) as plantas, sum(u.area_m2) as area_ocupada FROM siembras s JOIN ubicaciones u ON s.ubicacion_id = u.id", engine)
-    total_camas_sembradas = df_metrics['camas'].iloc[0] if not df_metrics.empty else 0
-    total_plantas_sembradas = df_metrics['plantas'].iloc[0] if not df_metrics.empty else 0
+    # Calcular métricas exclusivas del plano de siembra actual
+    df_metrics = pd.read_sql("""
+        SELECT 
+            count(distinct s.variedad_id) as vars_activas,
+            count(s.id) as camas, 
+            sum(s.plantas_sembradas) as plantas, 
+            sum(u.area_m2) as area_ocupada 
+        FROM siembras s 
+        JOIN ubicaciones u ON s.ubicacion_id = u.id
+    """, engine)
+    
+    total_vars_activas = df_metrics['vars_activas'].iloc[0] if not df_metrics.empty and pd.notnull(df_metrics['vars_activas'].iloc[0]) else 0
+    total_camas_sembradas = df_metrics['camas'].iloc[0] if not df_metrics.empty and pd.notnull(df_metrics['camas'].iloc[0]) else 0
+    total_plantas_sembradas = df_metrics['plantas'].iloc[0] if not df_metrics.empty and pd.notnull(df_metrics['plantas'].iloc[0]) else 0
     area_ocupada = df_metrics['area_ocupada'].iloc[0] if not df_metrics.empty and pd.notnull(df_metrics['area_ocupada'].iloc[0]) else 0
+    total_catalog = db.query(Variedad).count()
     
-    col1.metric("Variedades Activas", f"{total_vars:,.0f}")
-    col2.metric("Área Ocupada (m2)", f"{area_ocupada:,.2f}")
+    col1.metric("Variedades en Campo", f"{total_vars_activas:,.0f}", help=f"{total_vars_activas} variedades sembradas en el plano actual (de {total_catalog:,} registradas en el catálogo maestro)")
+    col2.metric("Área Ocupada (m²)", f"{area_ocupada:,.2f}")
     col3.metric("Lotes Sembrados", f"{total_camas_sembradas:,.0f}")
     col4.metric("Plantas Sembradas", f"{total_plantas_sembradas:,.0f}")
+    
+    if total_vars_activas > 0:
+        with st.expander("📋 Ver Distribución del Plano de Siembra Actual por Tipo de Flor", expanded=False):
+            df_flor_plano = pd.read_sql("""
+                SELECT 
+                    v.flor as "Tipo de Flor",
+                    count(distinct v.id) as "Variedades en Campo",
+                    count(s.id) as "Lotes Sembrados",
+                    sum(s.plantas_sembradas) as "Plantas Sembradas",
+                    round(sum(u.area_m2), 2) as "Área Ocupada (m²)"
+                FROM siembras s
+                JOIN variedades v ON s.variedad_id = v.id
+                JOIN ubicaciones u ON s.ubicacion_id = u.id
+                GROUP BY v.flor
+                ORDER BY "Plantas Sembradas" DESC
+            """, engine)
+            
+            total_dict = {
+                "Tipo de Flor": "TOTAL GENERAL",
+                "Variedades en Campo": total_vars_activas,
+                "Lotes Sembrados": total_camas_sembradas,
+                "Plantas Sembradas": total_plantas_sembradas,
+                "Área Ocupada (m²)": round(area_ocupada, 2)
+            }
+            df_flor_plano = pd.concat([df_flor_plano, pd.DataFrame([total_dict])], ignore_index=True)
+            
+            st.dataframe(
+                df_flor_plano.style.format({
+                    "Variedades en Campo": "{:,.0f}",
+                    "Lotes Sembrados": "{:,.0f}",
+                    "Plantas Sembradas": "{:,.0f}",
+                    "Área Ocupada (m²)": "{:,.2f}"
+                }),
+                use_container_width=True
+            )
     
     st.divider()
     
