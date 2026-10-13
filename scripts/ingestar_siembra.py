@@ -53,18 +53,23 @@ def ingestar_siembra_actual():
 
     # 2. Cargar Ubicaciones Únicas
     print("2. Extrayendo Ubicaciones/Camas...")
-    ubicaciones_unicas = df[['Sede', 'Bloque', 'Nave', 'Lado', 'Cama', 'Área (m2)']].drop_duplicates()
+    # Filtrar solo filas con siembras reales (excluir fila Total)
+    df_valid = df.dropna(subset=['Variedad', 'Fecha de siembra']).copy()
+    
+    # Calcular área total de cada cama física (si una cama tiene múltiples siembras, sumar sus áreas)
+    bed_areas = df_valid.groupby(['Sede', 'Bloque', 'Nave', 'Lado', 'Cama'])['Área (m2)'].sum().reset_index()
     ubicacion_cache = {}
     
-    for _, row in ubicaciones_unicas.iterrows():
+    for _, row in bed_areas.iterrows():
         sede = str(row.get('Sede', 'CH')).strip()
         bloque = str(row['Bloque']).strip()
         nave = str(row['Nave']).strip()
         lado = str(row['Lado']).strip()
         cama = str(row['Cama']).strip()
         area = float(row.get('Área (m2)', 0.0))
-        
-        # Clave nica para cach
+        if pd.isna(area):
+            area = 0.0
+            
         loc_key = f"{sede}-{bloque}-{nave}-{lado}-{cama}"
         
         ubi_db = db.query(Ubicacion).filter(
@@ -72,9 +77,6 @@ def ingestar_siembra_actual():
             Ubicacion.nave == nave, Ubicacion.lado == lado, Ubicacion.cama == cama
         ).first()
         
-        if pd.isna(area):
-            area = 0.0
-            
         if not ubi_db:
             ubi_db = Ubicacion(
                 sede=sede, bloque=bloque, nave=nave, lado=lado, cama=cama,
@@ -83,6 +85,12 @@ def ingestar_siembra_actual():
             db.add(ubi_db)
             db.commit()
             db.refresh(ubi_db)
+        else:
+            # Actualizar el área de la cama física con la suma real de sus secciones
+            ubi_db.area_m2 = area
+            ubi_db.capacidad_plantas = int(area * 87)
+            db.commit()
+            
         ubicacion_cache[loc_key] = ubi_db.id
 
     # 3. Cargar Siembras (Lotes Físicos)
@@ -114,11 +122,15 @@ def ingestar_siembra_actual():
         if var_id and ubi_id and fecha_siembra:
             plantas_sembradas = int(row.get('Plantas sembradas', 0))
             plantas_muertas = int(row.get('Plantas muertas', 0))
+            area_lote = float(row.get('Área (m2)', 0.0))
+            if pd.isna(area_lote):
+                area_lote = 0.0
             
             nueva_siembra = Siembra(
                 ubicacion_id=ubi_id,
                 variedad_id=var_id,
                 fecha_siembra=fecha_siembra,
+                area_m2=area_lote,
                 plantas_sembradas=plantas_sembradas,
                 plantas_muertas=plantas_muertas,
                 estado=EstadoSiembra.EN_PRODUCCION # Asumimos que si están vivas están en campo

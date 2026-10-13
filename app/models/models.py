@@ -75,6 +75,7 @@ class Siembra(Base):
     variedad_id = Column(Integer, ForeignKey("variedades.id"), nullable=False)
     
     fecha_siembra = Column(Date, nullable=False)
+    area_m2 = Column(Float, nullable=False, default=0.0)
     plantas_sembradas = Column(Integer, nullable=False)
     plantas_muertas = Column(Integer, default=0)
     
@@ -118,3 +119,34 @@ class RegistroPerdida(Base):
 
     siembra = relationship("Siembra", back_populates="perdidas")
 
+
+class DistribucionMVA(Base):
+    """
+    Tabla de parámetros del "Mix" de participación por variedad y temporada.
+    Proviene de las Actas del Comité INV.
+    """
+    __tablename__ = "distribucion_mva"
+
+    id = Column(Integer, primary_key=True, index=True)
+    finca = Column(String, index=True, nullable=False, default="ALL") # Para futura parametrización por finca
+    temporada = Column(String, index=True, nullable=False)            # Ej: 'Every Day', 'Fall', 'Xmass'
+    flor = Column(String, nullable=False)                             # Ej: Cushion, Daisy, Novelty
+    color = Column(String, nullable=False)                            # Ej: White, Yellow, etc.
+    variedad_nombre = Column(String, nullable=False)                  # Nombre de la variedad
+    porcentaje = Column(Float, nullable=False, default=0.0)           # Ej: 0.9 (90%)
+
+
+class FastTrackMVA(Base):
+    """
+    Tabla para las variedades de prueba (Fast Track) que se deben pedir 
+    pero corren de forma paralela e independiente de la distribución de MVA general.
+    """
+    __tablename__ = "fast_track_mva"
+
+    id = Column(Integer, primary_key=True, index=True)
+    finca = Column(String, index=True, nullable=False, default="ALL")
+    flor = Column(String, nullable=False)                             # Ej: CU, DA, NV
+    color = Column(String, nullable=False)                            # Ej: WH, PU, PC
+    variedad_nombre = Column(String, nullable=False)                  # Ej: Dropshot, Linette
+    breeder = Column(String, nullable=True)
+    observaciones = Column(String, nullable=True)

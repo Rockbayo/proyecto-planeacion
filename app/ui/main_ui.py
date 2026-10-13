@@ -46,9 +46,8 @@ if modulo == "Dashboard General":
             count(distinct s.variedad_id) as vars_activas,
             count(s.id) as camas, 
             sum(s.plantas_sembradas) as plantas, 
-            sum(u.area_m2) as area_ocupada 
-        FROM siembras s 
-        JOIN ubicaciones u ON s.ubicacion_id = u.id
+            sum(s.area_m2) as area_ocupada 
+        FROM siembras s
     """, engine)
     
     total_vars_activas = df_metrics['vars_activas'].iloc[0] if not df_metrics.empty and pd.notnull(df_metrics['vars_activas'].iloc[0]) else 0
@@ -70,10 +69,9 @@ if modulo == "Dashboard General":
                     count(distinct v.id) as "Variedades en Campo",
                     count(s.id) as "Lotes Sembrados",
                     sum(s.plantas_sembradas) as "Plantas Sembradas",
-                    round(sum(u.area_m2), 2) as "Área Ocupada (m²)"
+                    round(sum(s.area_m2), 2) as "Área Ocupada (m²)"
                 FROM siembras s
                 JOIN variedades v ON s.variedad_id = v.id
-                JOIN ubicaciones u ON s.ubicacion_id = u.id
                 GROUP BY v.flor
                 ORDER BY "Plantas Sembradas" DESC
             """, engine)
