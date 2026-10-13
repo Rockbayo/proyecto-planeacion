@@ -4,6 +4,7 @@ import json
 import streamlit as st
 import pandas as pd
 from datetime import date
+import plotly.graph_objects as go
 
 # Añadir el directorio raíz al path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -240,11 +241,63 @@ elif modulo == "ForeCast y Exportación":
                 "Plan Aprobado": plan_series
             })
             
-            # Quitar la columna de ML si está en cero
-            if df_chart["Proyección (Machine Learning)"].sum() == 0:
-                df_chart = df_chart.drop(columns=["Proyección (Machine Learning)"])
+            fig_fc = go.Figure()
+            
+            # Línea de Proyección Clásica (ForeCast Dinámico)
+            fig_fc.add_trace(go.Scatter(
+                x=list(df_chart.index),
+                y=df_chart["Proyección (ForeCast Clásico)"],
+                mode='lines+markers',
+                name="Proyección (ForeCast)",
+                line=dict(color='#2E7D32', width=3),
+                marker=dict(size=6),
+                hovertemplate="<b>Semana %{x}</b><br>ForeCast: %{y:,.0f} tallos<extra></extra>"
+            ))
+            
+            # Línea de Plan Aprobado
+            if "Plan Aprobado" in df_chart.columns:
+                fig_fc.add_trace(go.Scatter(
+                    x=list(df_chart.index),
+                    y=df_chart["Plan Aprobado"],
+                    mode='lines+markers',
+                    name="Plan Aprobado",
+                    line=dict(color='#1976D2', width=2.5, dash='dash'),
+                    marker=dict(size=5),
+                    hovertemplate="<b>Semana %{x}</b><br>Plan Aprobado: %{y:,.0f} tallos<extra></extra>"
+                ))
                 
-            st.line_chart(df_chart)
+            # Línea de Machine Learning (si está activa y tiene datos)
+            if "Proyección (Machine Learning)" in df_chart.columns and df_chart["Proyección (Machine Learning)"].sum() > 0:
+                fig_fc.add_trace(go.Scatter(
+                    x=list(df_chart.index),
+                    y=df_chart["Proyección (Machine Learning)"],
+                    mode='lines+markers',
+                    name="Machine Learning",
+                    line=dict(color='#FF8F00', width=2, dash='dot'),
+                    marker=dict(size=5),
+                    hovertemplate="<b>Semana %{x}</b><br>ML: %{y:,.0f} tallos<extra></extra>"
+                ))
+                
+            fig_fc.update_layout(
+                title=dict(text=f"Proyección Semanal vs Plan Aprobado ({vista})", font=dict(size=16)),
+                xaxis=dict(
+                    title="Semana Operativa",
+                    tickangle=-45,
+                    fixedrange=True,  # Bloquea zoom y arrastre horizontal
+                    gridcolor='#f0f0f0'
+                ),
+                yaxis=dict(
+                    title="Tallos Proyectados",
+                    tickformat=",.0f",
+                    fixedrange=True,  # Bloquea zoom y arrastre vertical
+                    gridcolor='#f0f0f0'
+                ),
+                hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=40, r=40, t=60, b=40)
+            )
+            
+            st.plotly_chart(fig_fc, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False})
             
             st.markdown("**Comparativo ForeCast vs Plan Aprobado:**")
             df_comp = df_chart.copy()
