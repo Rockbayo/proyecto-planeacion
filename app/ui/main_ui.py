@@ -157,9 +157,9 @@ elif modulo == "ForeCast y Exportación":
                 df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
                 has_mva = not df_proyeccion_mva.empty
                 if vista == "13 Semanas Móviles":
-                    st.info("💡 **Diferenciación visual:** La línea **Verde continua** corresponde a las semanas calculadas del **Plano de Siembras** (inventario vivo en campo). La línea **Naranja discontinua** corresponde a la proyección del **Pedido de Material Vegetal (MVA)**.")
+                    st.info("💡 **Diferenciación visual:** La línea **Verde** corresponde a las semanas calculadas del **Plano de Siembras** (inventario vivo en campo). La línea **Naranja** corresponde a la proyección del **Pedido de Material Vegetal (MVA)**.")
                 else:
-                    st.info("💡 **Diferenciación visual:** Las primeras 10 semanas (**Verde continua**) provienen del **Plano de Siembras** (inventario vivo). A partir de la semana 11 (**Naranja discontinua**), la proyección proviene del **Pedido de Material Vegetal (MVA)**.")
+                    st.info("💡 **Diferenciación visual:** Las primeras 10 semanas (**Verde**) provienen del **Plano de Siembras** (inventario vivo). A partir de la semana 11 (**Naranja**), la proyección proviene del **Pedido de Material Vegetal (MVA)**.")
             except Exception as e:
                 st.warning(f"Error procesando el archivo Maestro MVA: {e}")
                 df_forecast = df_forecast_vivo
@@ -261,7 +261,7 @@ elif modulo == "ForeCast y Exportación":
                     y=y_mva,
                     mode='lines+markers',
                     name="ForeCast (Material Vegetal)",
-                    line=dict(color='#E65100', width=3, dash='dash'),
+                    line=dict(color='#E65100', width=3),
                     marker=dict(size=6, symbol='diamond'),
                     hoverinfo=hover_mva,
                     hovertemplate="<b>Semana %{x}</b><br>Material Vegetal: %{y:,.0f} tallos<extra></extra>"
