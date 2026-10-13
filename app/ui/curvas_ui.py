@@ -26,12 +26,15 @@ def render_curvas_module(db):
                 if f in df_hist.columns:
                     df_hist[f] = pd.to_datetime(df_hist[f], errors='coerce').dt.normalize()
             
-            # Cargar información de Flor de la BD
+            # Cargar información de Flor y Color de la BD maestra
             variedades_db = db.query(Variedad).all()
             var_to_flor = {v.nombre.strip().lower(): v.flor for v in variedades_db}
+            var_to_color = {v.nombre.strip().lower(): v.color for v in variedades_db}
             
             df_hist['Flor'] = df_hist['Variedad'].astype(str).str.strip().str.lower().map(var_to_flor)
             df_hist['Flor'] = df_hist['Flor'].fillna('Desconocida')
+            df_hist['Color'] = df_hist['Variedad'].astype(str).str.strip().str.lower().map(var_to_color)
+            df_hist['Color'] = df_hist['Color'].fillna('Desconocido')
             
             # Filtros de fecha basados en FechaInicioProduccion
             min_date = df_hist['FechaInicioProduccion'].min()
