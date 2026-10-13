@@ -33,6 +33,13 @@ def generar_plan_mva(filepath, week_is="Pedido"):
     """
     df = pd.read_excel(filepath)
     
+    # Filtrar filas de totales o vacías del archivo de pedido
+    if 'Variedad' in df.columns:
+        df = df.dropna(subset=['Variedad'])
+        df = df[~df['Variedad'].astype(str).str.strip().str.lower().isin(['nan', 'total', 'none', '', 'null'])]
+    if 'Color' in df.columns:
+        df = df[~df['Color'].astype(str).str.strip().str.lower().isin(['total'])]
+    
     # Identificamos las columnas de semanas
     cols_semanas = [c for c in df.columns if str(c).startswith('S202') or str(c).startswith('202')]
     
@@ -47,6 +54,16 @@ def generar_plan_mva(filepath, week_is="Pedido"):
     # Filtrar ceros o nulos
     df_melt = df_melt[df_melt['Cantidad_Archivo'] > 0].copy()
     
+    # Cargar catálogo maestro de variedades desde BD para garantizar flor y color correctos
+    from app.core.database import SessionLocal
+    from app.models.models import Variedad
+    _db = SessionLocal()
+    try:
+        _vars_db = _db.query(Variedad).all()
+        v_map = {v.nombre.strip().lower(): (v.flor.strip(), v.color.strip()) for v in _vars_db}
+    finally:
+        _db.close()
+
     records = []
     
     for idx, row in df_melt.iterrows():
@@ -63,10 +80,13 @@ def generar_plan_mva(filepath, week_is="Pedido"):
             sem_siembra = sem_str
             sem_pedido = iso_add_weeks(sem_siembra, -4)
             
+        v_name = str(row.get("Variedad", "")).strip()
+        fl_db, col_db = v_map.get(v_name.lower(), (str(row.get("Flor", "")).strip(), str(row.get("Color", "")).strip()))
+
         record = {
-            "Flor": row.get("Flor", ""),
-            "Color": row.get("Color", ""),
-            "Variedad": row.get("Variedad", ""),
+            "Flor": fl_db,
+            "Color": col_db,
+            "Variedad": v_name,
             "Semana_Pedido_MV": sem_pedido,
             "Semana_Siembra": sem_siembra,
             "Esquejes_Pedido_MV": cantidad,
@@ -152,12 +172,12 @@ def proyectar_cosecha_desde_mva(df_mrp, db, var_dict=None):
                 
                 if tallos_esperados > 0:
                     var_obj = var_dict.get(var_norm)
-                    flor_val = row.get('Flor')
-                    if not flor_val or pd.isna(flor_val) or str(flor_val).strip() in ['', 'Genérico', 'Generico']:
-                        flor_val = var_obj.flor if var_obj else 'Novelty'
-                    color_val = row.get('Color')
-                    if not color_val or pd.isna(color_val) or str(color_val).strip() in ['', 'Genérico', 'Generico']:
-                        color_val = var_obj.color if var_obj else 'Mix'
+                    if var_obj and var_obj.flor and var_obj.color:
+                        flor_val = var_obj.flor
+                        color_val = var_obj.color
+                    else:
+                        flor_val = row.get('Flor') or 'Novelty'
+                        color_val = row.get('Color') or 'Mix'
                         
                     records.append({
                         "Flor": flor_val,

@@ -92,6 +92,10 @@ def process_plan_produccion(plan_bytes: bytes, db):
         if r.porcentaje and r.porcentaje > 0:
             mva_dict[k].append((str(r.variedad_nombre).strip(), float(r.porcentaje)))
 
+    # Cargar mapeo maestro de variedades para garantizar flor y color canónicos
+    vars_db = db.query(Variedad).all()
+    v_map = {v.nombre.strip().lower(): (v.flor.strip(), v.color.strip()) for v in vars_db}
+
     # 3. Aplicar MVA y agrupar por Variedad y Semana
     records = []
     for _, row in df_plan.iterrows():
@@ -130,13 +134,17 @@ def process_plan_produccion(plan_bytes: bytes, db):
                 continue
             else:
                 for (var_mva, pct) in mva_list:
+                    var_clean = str(var_mva).strip()
+                    fl_can, col_can = v_map.get(var_clean.lower(), (flor, color))
                     records.append({
-                        "Flor": flor, "Color": color, "Variedad": var_mva,
+                        "Flor": fl_can, "Color": col_can, "Variedad": var_clean,
                         "Semana_Cosecha": semana_str, "Tallos": tallos * pct
                     })
         else:
+            var_clean = str(variedad).strip()
+            fl_can, col_can = v_map.get(var_clean.lower(), (flor, color))
             records.append({
-                "Flor": flor, "Color": color, "Variedad": str(variedad).strip(),
+                "Flor": fl_can, "Color": col_can, "Variedad": var_clean,
                 "Semana_Cosecha": semana_str, "Tallos": tallos
             })
             

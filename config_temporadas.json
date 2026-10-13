@@ -1,0 +1,27 @@
+[
+    {
+        "Temporada": "Fall",
+        "Semana Inicio": 202632,
+        "Semana Fin": 202646
+    },
+    {
+        "Temporada": "Navidad",
+        "Semana Inicio": 202648,
+        "Semana Fin": 202650
+    },
+    {
+        "Temporada": "San valentin",
+        "Semana Inicio": 202703,
+        "Semana Fin": 202705
+    },
+    {
+        "Temporada": "Madres",
+        "Semana Inicio": 202716,
+        "Semana Fin": 202718
+    },
+    {
+        "Temporada": "Summer",
+        "Semana Inicio": 202719,
+        "Semana Fin": 202731
+    }
+]
