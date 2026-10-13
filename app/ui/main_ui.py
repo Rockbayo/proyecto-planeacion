@@ -514,6 +514,36 @@ elif modulo == "Programación Diaria y Temporadas":
     st.header("📅 Programación Diaria y Gestión de Temporadas")
     st.markdown("Configura la distribución diaria de cortes y haz seguimiento al volumen de las temporadas críticas.")
     
+    def ajustar_porcentajes_enteros(pct_dict):
+        """
+        Ajusta una distribución de porcentajes a números enteros de modo que
+        la suma sea EXACTAMENTE 100%, utilizando el método del residuo mayor (Hamilton/Hare).
+        Garantiza que la aproximación nunca supere ni quede por debajo del 100%.
+        """
+        import math
+        dias_activos = [d for d, v in pct_dict.items() if v > 0]
+        if not dias_activos:
+            return {d: 0 for d in pct_dict}
+            
+        floors = {d: int(math.floor(pct_dict[d])) for d in dias_activos}
+        remainders = {d: pct_dict[d] - floors[d] for d in dias_activos}
+        
+        suma_floors = sum(floors.values())
+        faltante = 100 - suma_floors
+        
+        # Ordenar los días activos según su residuo decimal de mayor a menor
+        dias_ordenados = sorted(dias_activos, key=lambda d: remainders[d], reverse=True)
+        
+        resultado = {d: 0 for d in pct_dict}
+        for d in dias_activos:
+            resultado[d] = floors[d]
+            
+        for i in range(faltante):
+            d = dias_ordenados[i % len(dias_ordenados)]
+            resultado[d] += 1
+            
+        return resultado
+    
     tab1, tab2 = st.tabs(["Distribución de Corte Diario", "Seguimiento de Temporadas"])
     
     with tab1:
@@ -527,15 +557,21 @@ elif modulo == "Programación Diaria y Temporadas":
         horas = {"Lunes": 8, "Martes": 8, "Miércoles": 7.5, "Jueves": 8, "Viernes": 8, "Sábado": 5, "Domingo": 0}
         total_horas = sum(horas.values())
         
-        pct_base = {dia: (h / total_horas) * 100 for dia, h in horas.items()}
+        pct_base_raw = {dia: (h / total_horas) * 100.0 for dia, h in horas.items()}
+        pct_base_int = ajustar_porcentajes_enteros(pct_base_raw)
         
-        config_diario = {flor: pct_base.copy() for flor in flores_db}
+        config_diario = {}
+        for flor in flores_db:
+            c = pct_base_int.copy()
+            c["Total"] = sum(pct_base_int.values())
+            config_diario[flor] = c
         
         df_config = pd.DataFrame(config_diario).T.reset_index().rename(columns={"index": "Flor"})
         
         col_ed1, col_ed2 = st.columns([2, 1])
         with col_ed1:
-            format_config = {d: "{:.0f}%" for d in ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]}
+            dias_cols = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo", "Total"]
+            format_config = {d: "{:.0f}%" for d in dias_cols}
             st.dataframe(df_config.style.format(format_config), use_container_width=True, hide_index=True)
             
         with col_ed2:
@@ -611,46 +647,42 @@ elif modulo == "Programación Diaria y Temporadas":
 
                         records_diarios = []
                         records_pcts = []
-                        config_actual = df_config.set_index("Flor").to_dict(orient="index")
+                        dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
                         
                         for _, row in df_week.iterrows():
                             flor = row['Flor']
-                            vol_semanal = row[semana_target]
-                            
-                            dist = config_actual.get(flor, {"Lunes": 17.98, "Martes": 17.98, "Miércoles": 16.85, "Jueves": 17.98, "Viernes": 17.98, "Sábado": 11.23, "Domingo": 0.0})
-                            
-                            dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-                            pcts = {d: float(dist.get(d, 0)) for d in dias}
+                            vol_semanal = int(round(row[semana_target]))
                             
                             if es_temporada_domingo:
-                                # Recalcular porcentajes sobre 49.5 horas en lugar de 44.5
-                                # L,M,J,V = 8/49.5 = 16.16%
-                                # Mi = 7.5/49.5 = 15.15%
-                                # S,D = 5/49.5 = 10.10%
-                                pcts = {
-                                    "Lunes": 16.1616, "Martes": 16.1616, "Miércoles": 15.1515,
-                                    "Jueves": 16.1616, "Viernes": 16.1616, "Sábado": 10.1010, "Domingo": 10.1010
-                                }
+                                # Temporada con domingo activo: 8h L,M,J,V, 7.5h Mie, 5h Sab, 5h Dom = 49.5h
+                                h_temp = {"Lunes": 8, "Martes": 8, "Miércoles": 7.5, "Jueves": 8, "Viernes": 8, "Sábado": 5, "Domingo": 5}
+                                tot_temp = sum(h_temp.values())
+                                pcts_float = {d: (h_temp[d] / tot_temp) * 100.0 for d in dias}
+                            else:
+                                pcts_float = {d: (horas[d] / total_horas) * 100.0 for d in dias}
                             
-                            if lunes_festivo and pcts["Lunes"] > 0:
-                                pct_a_repartir = pcts["Lunes"]
-                                pcts["Lunes"] = 0.0
-                                # Repartir entre los dias que tengan porcentaje > 0
-                                dias_activos = [d for d in dias if d != "Lunes" and pcts[d] > 0]
+                            if lunes_festivo and pcts_float["Lunes"] > 0:
+                                pct_a_repartir = pcts_float["Lunes"]
+                                pcts_float["Lunes"] = 0.0
+                                # Repartir proporcionalmente entre los días activos
+                                dias_activos = [d for d in dias if d != "Lunes" and pcts_float[d] > 0]
                                 if dias_activos:
                                     extra_por_dia = pct_a_repartir / len(dias_activos)
                                     for d in dias_activos:
-                                        pcts[d] += extra_por_dia
+                                        pcts_float[d] += extra_por_dia
                                         
-                            # Calcular tallos
-                            tallos_diarios = {d: int(round(vol_semanal * (pcts[d] / 100.0))) for d in dias}
+                            # 1. Ajuste matemático a enteros garantizando que sumen EXACTAMENTE 100%
+                            pcts_enteros = ajustar_porcentajes_enteros(pcts_float)
                             
-                            # Ajuste por redondeo para que sume exacto el semanal
+                            # 2. Calcular tallos a partir de los porcentajes enteros exactos
+                            tallos_diarios = {d: int(round(vol_semanal * (pcts_enteros[d] / 100.0))) for d in dias}
+                            
+                            # Ajuste por redondeo para que los tallos sumen exactamente el volumen semanal
                             suma_calc = sum(tallos_diarios.values())
                             diff = vol_semanal - suma_calc
                             if diff != 0:
-                                # Aplicar la diferencia al dia con mayor volumen
-                                dia_max = max(tallos_diarios, key=tallos_diarios.get)
+                                dias_con_corte = [d for d in dias if pcts_enteros[d] > 0]
+                                dia_max = max(dias_con_corte, key=lambda d: tallos_diarios[d])
                                 tallos_diarios[dia_max] += diff
                                 
                             rec = {
@@ -660,6 +692,7 @@ elif modulo == "Programación Diaria y Temporadas":
                                 "Vol. Semanal": vol_semanal
                             }
                             rec.update(tallos_diarios)
+                            rec["Total Tallos"] = sum(tallos_diarios.values())
                             records_diarios.append(rec)
                             
                             rec_pct = {
@@ -667,7 +700,8 @@ elif modulo == "Programación Diaria y Temporadas":
                                 "Color": row['Color'],
                                 "Variedad": row['Variedad']
                             }
-                            rec_pct.update({d: pcts[d] for d in dias})
+                            rec_pct.update({d: pcts_enteros[d] for d in dias})
+                            rec_pct["Total %"] = sum(pcts_enteros[d] for d in dias)
                             records_pcts.append(rec_pct)
                             
                         if records_diarios:
@@ -676,12 +710,15 @@ elif modulo == "Programación Diaria y Temporadas":
                             
                             st.success(f"Distribución generada para {len(df_diario)} variedades en la semana {semana_target}.")
                             
-                            st.markdown("#### Distribución en Porcentajes")
-                            format_dict = {d: "{:.0f}%" for d in ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]}
+                            st.markdown("#### Distribución en Porcentajes (Enteros exactos al 100%)")
+                            cols_pct = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo", "Total %"]
+                            format_dict = {d: "{:.0f}%" for d in cols_pct}
                             st.dataframe(df_pcts.style.format(format_dict), use_container_width=True)
                             
-                            st.markdown("#### Distribución en Tallos")
-                            st.dataframe(df_diario, use_container_width=True)
+                            st.markdown("#### Distribución en Tallos Diarios")
+                            cols_tallos = ["Vol. Semanal", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo", "Total Tallos"]
+                            format_tallos = {col: "{:,.0f}" for col in cols_tallos}
+                            st.dataframe(df_diario.style.format(format_tallos), use_container_width=True)
                             
                             import io
                             output = io.BytesIO()
