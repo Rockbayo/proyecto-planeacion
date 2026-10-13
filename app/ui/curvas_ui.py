@@ -40,78 +40,252 @@ def render_curvas_module(db):
             if pd.isna(min_date) or pd.isna(max_date):
                 st.warning("Las fechas de inicio de producción en el histórico son inválidas.")
             else:
-                col_f1, col_f2 = st.columns(2)
+                col_f1, col_f2, col_f3 = st.columns([1.5, 1.5, 2])
                 with col_f1:
                     start_date = st.date_input("Fecha Inicio Cosecha", min_date)
                 with col_f2:
                     end_date = st.date_input("Fecha Fin Cosecha", max_date)
+                with col_f3:
+                    modo_vista = st.radio("Nivel de Análisis:", ["Por Tipo de Flor", "Por Variedad"], horizontal=True)
                     
                 # Aplicar filtro
-                # Convertimos st.date_input a pd.Timestamp para poder comparar
                 start_ts = pd.to_datetime(start_date)
                 end_ts = pd.to_datetime(end_date)
                 
                 mask = (df_hist['FechaInicioProduccion'] >= start_ts) & (df_hist['FechaInicioProduccion'] <= end_ts)
-                df_filtered = df_hist.loc[mask]
+                df_filtered = df_hist.loc[mask].copy()
                 
                 if df_filtered.empty:
                     st.info("No hay ciclos cosechados en el periodo seleccionado.")
                 else:
-                    # Agrupar por Flor y calcular promedios
                     cortes_cols = [f'Corte {i}' for i in range(1, 16)]
                     for c in cortes_cols:
                         if c not in df_filtered.columns:
                             df_filtered[c] = 0.0
                             
-                    resultados_flor = []
+                    # Calcular días desde siembra para cada registro
+                    df_filtered['DiasInicio'] = (df_filtered['FechaInicioProduccion'] - df_filtered['FechaSiembra']).dt.days
                     
-                    df_grouped = df_filtered.groupby('Flor')
-                    for flor, group in df_grouped:
-                        plantas = group['NumeroPlantas'].sum()
-                        sum_cortes = group[cortes_cols].sum()
-                        tallos = sum_cortes.sum()
-                        aprov = tallos / plantas if plantas > 0 else 0.0
+                    if modo_vista == "Por Tipo de Flor":
+                        resultados = []
+                        records_plot = []
                         
-                        # Curva respecto a los tallos totales
-                        curva = {}
-                        for i in range(1, 16):
-                            curva[f'Corte {i}'] = sum_cortes[f'Corte {i}'] / tallos if tallos > 0 else 0.0
+                        df_grouped = df_filtered.groupby('Flor')
+                        for flor, group in df_grouped:
+                            plantas = group['NumeroPlantas'].sum()
+                            sum_cortes = group[cortes_cols].sum()
+                            tallos = sum_cortes.sum()
+                            aprov = tallos / plantas if plantas > 0 else 0.0
                             
-                        res = {
-                            'Flor': flor,
-                            'Ciclos Evaluados': len(group),
-                            'Total Plantas': plantas,
-                            'Total Tallos': tallos,
-                            'Aprovechamiento': aprov
-                        }
-                        res.update(curva)
-                        resultados_flor.append(res)
+                            dias_ini_series = group['DiasInicio'].dropna()
+                            dia_inicio = int(round(dias_ini_series.mean())) if not dias_ini_series.empty else 70
+                            
+                            corte_max_idx = int(sum_cortes.values.argmax()) if tallos > 0 else 0
+                            dia_pico = dia_inicio + corte_max_idx
+                            
+                            res = {
+                                'Flor': flor,
+                                'Ciclos Evaluados': len(group),
+                                'Total Plantas': plantas,
+                                'Total Tallos': tallos,
+                                'Aprovechamiento': aprov,
+                                'Día Inicio (Promedio)': dia_inicio,
+                                'Día Pico (Promedio)': dia_pico
+                            }
+                            resultados.append(res)
+                            
+                            for i in range(1, 16):
+                                dia_vida = dia_inicio + (i - 1)
+                                pct = (sum_cortes[f'Corte {i}'] / tallos * 100) if tallos > 0 else 0.0
+                                records_plot.append({
+                                    'Serie': flor,
+                                    'Día de Vida': dia_vida,
+                                    '% de Producción': pct,
+                                    'Corte': f"Corte {i}"
+                                })
+                                
+                        if resultados:
+                            df_res = pd.DataFrame(resultados)
+                            st.markdown("#### Resumen de Aprovechamiento y Ciclos")
+                            
+                            # Totales y Promedios Ponderados
+                            tot_ciclos = int(df_res['Ciclos Evaluados'].sum())
+                            tot_plantas = float(df_res['Total Plantas'].sum())
+                            tot_tallos = float(df_res['Total Tallos'].sum())
+                            aprov_ponderado = (tot_tallos / tot_plantas) if tot_plantas > 0 else 0.0
+                            prom_dia_inicio = int(round((df_res['Día Inicio (Promedio)'] * df_res['Total Tallos']).sum() / tot_tallos)) if tot_tallos > 0 else 0
+                            prom_dia_pico = int(round((df_res['Día Pico (Promedio)'] * df_res['Total Tallos']).sum() / tot_tallos)) if tot_tallos > 0 else 0
+                            
+                            m1, m2, m3, m4, m5 = st.columns(5)
+                            m1.metric("Ciclos Totales", f"{tot_ciclos:,}")
+                            m2.metric("Plantas Totales", f"{tot_plantas:,.0f}")
+                            m3.metric("Tallos Totales", f"{tot_tallos:,.0f}")
+                            m4.metric("Aprovechamiento Global", f"{aprov_ponderado*100:.1f}%")
+                            m5.metric("Ciclo Promedio", f"{prom_dia_inicio} d (Inicio) / {prom_dia_pico} d (Pico)")
+                            
+                            df_base = df_res[['Flor', 'Ciclos Evaluados', 'Total Plantas', 'Total Tallos', 'Aprovechamiento', 'Día Inicio (Promedio)', 'Día Pico (Promedio)']].copy()
+                            
+                            row_total = pd.DataFrame([{
+                                'Flor': 'TOTAL / PROMEDIO',
+                                'Ciclos Evaluados': tot_ciclos,
+                                'Total Plantas': tot_plantas,
+                                'Total Tallos': tot_tallos,
+                                'Aprovechamiento': aprov_ponderado,
+                                'Día Inicio (Promedio)': prom_dia_inicio,
+                                'Día Pico (Promedio)': prom_dia_pico
+                            }])
+                            
+                            df_final = pd.concat([df_base, row_total], ignore_index=True)
+                            df_show = df_final.copy()
+                            df_show['Ciclos Evaluados'] = df_show['Ciclos Evaluados'].map("{:,.0f}".format)
+                            df_show['Total Plantas'] = df_show['Total Plantas'].map("{:,.0f}".format)
+                            df_show['Total Tallos'] = df_show['Total Tallos'].map("{:,.0f}".format)
+                            df_show['Aprovechamiento'] = (df_show['Aprovechamiento'] * 100).map("{:.1f}%".format)
+                            df_show['Día Inicio (Promedio)'] = df_show['Día Inicio (Promedio)'].map("{:.0f}".format)
+                            df_show['Día Pico (Promedio)'] = df_show['Día Pico (Promedio)'].map("{:.0f}".format)
+                            st.dataframe(df_show, use_container_width=True)
+                            
+                            st.markdown("#### Comportamiento Fenológico por Días de Vida")
+                            df_plot = pd.DataFrame(records_plot).sort_values(['Serie', 'Día de Vida'])
+                            
+                            fig = px.line(
+                                df_plot,
+                                x='Día de Vida',
+                                y='% de Producción',
+                                color='Serie',
+                                markers=True,
+                                title=f"Curvas de Cosecha por Días de Vida ({start_date} a {end_date})",
+                                labels={'% de Producción': '% de Producción', 'Día de Vida': 'Días de Vida (desde siembra)'},
+                                hover_data={'Corte': True, 'Día de Vida': True, '% de Producción': ':.1f%'}
+                            )
+                            fig.update_layout(
+                                xaxis=dict(title="Días de Vida (Días desde siembra)", tickmode='linear', dtick=2),
+                                yaxis=dict(title="% de Producción Semanal/Corte", ticksuffix="%"),
+                                hovermode="x unified"
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        # Modo Por Variedad
+                        flores_disponibles = sorted([f for f in df_filtered['Flor'].unique() if f and f != 'Desconocida'])
+                        col_var1, col_var2 = st.columns([1, 2])
+                        with col_var1:
+                            flor_sel = st.selectbox("Filtrar por Flor:", ["Todas"] + flores_disponibles)
+                            
+                        df_var_filter = df_filtered if flor_sel == "Todas" else df_filtered[df_filtered['Flor'] == flor_sel]
                         
-                    if resultados_flor:
-                        df_res_flor = pd.DataFrame(resultados_flor)
+                        top_vars_vol = df_var_filter.groupby('Variedad')['NumeroPlantas'].sum().sort_values(ascending=False).index.tolist()
                         
-                        # Tabla Resumen
-                        st.markdown("#### Resumen de Aprovechamiento")
-                        df_show = df_res_flor[['Flor', 'Ciclos Evaluados', 'Total Plantas', 'Total Tallos', 'Aprovechamiento']].copy()
-                        df_show['Aprovechamiento'] = (df_show['Aprovechamiento'] * 100).map("{:.1f}%".format)
-                        
-                        # Formato numérico para plantas y tallos
-                        df_show['Total Plantas'] = df_show['Total Plantas'].map("{:,.0f}".format)
-                        df_show['Total Tallos'] = df_show['Total Tallos'].map("{:,.0f}".format)
-                        
-                        st.dataframe(df_show, use_container_width=True)
-                        
-                        # Gráfico de Curvas por Flor
-                        st.markdown("#### Comportamiento Semanal de Cosecha (Distribución %)")
-                        df_plot = df_res_flor[['Flor'] + cortes_cols].melt(id_vars='Flor', var_name='Semana de Corte', value_name='Porcentaje')
-                        df_plot['Porcentaje'] = df_plot['Porcentaje'] * 100
-                        df_plot['Semana_Num'] = df_plot['Semana de Corte'].str.replace('Corte ', '').astype(int)
-                        df_plot = df_plot.sort_values(['Flor', 'Semana_Num'])
-                        
-                        fig = px.line(df_plot, x='Semana de Corte', y='Porcentaje', color='Flor', markers=True,
-                                      title=f"Curvas Reales de Cosecha ({start_date} a {end_date})",
-                                      labels={'Porcentaje': '% de Producción', 'Semana de Corte': 'Semana'})
-                        st.plotly_chart(fig, use_container_width=True)
+                        with col_var2:
+                            vars_selected = st.multiselect(
+                                "Variedades a comparar:",
+                                options=top_vars_vol,
+                                default=top_vars_vol[:5] if len(top_vars_vol) >= 5 else top_vars_vol,
+                                help="Selecciona las variedades que deseas comparar en la gráfica de días de vida."
+                            )
+                            
+                        if not vars_selected:
+                            st.warning("Selecciona al menos una variedad para graficar.")
+                        else:
+                            resultados_var = []
+                            records_plot_var = []
+                            
+                            for var_name in vars_selected:
+                                group = df_var_filter[df_var_filter['Variedad'] == var_name]
+                                plantas = group['NumeroPlantas'].sum()
+                                sum_cortes = group[cortes_cols].sum()
+                                tallos = sum_cortes.sum()
+                                aprov = tallos / plantas if plantas > 0 else 0.0
+                                
+                                dias_ini_series = group['DiasInicio'].dropna()
+                                dia_inicio = int(round(dias_ini_series.mean())) if not dias_ini_series.empty else 70
+                                
+                                corte_max_idx = int(sum_cortes.values.argmax()) if tallos > 0 else 0
+                                dia_pico = dia_inicio + corte_max_idx
+                                
+                                flor_v = group['Flor'].iloc[0] if not group.empty else ''
+                                
+                                resultados_var.append({
+                                    'Variedad': var_name,
+                                    'Flor': flor_v,
+                                    'Ciclos Evaluados': len(group),
+                                    'Total Plantas': plantas,
+                                    'Total Tallos': tallos,
+                                    'Aprovechamiento': aprov,
+                                    'Día Inicio (Promedio)': dia_inicio,
+                                    'Día Pico (Promedio)': dia_pico
+                                })
+                                
+                                for i in range(1, 16):
+                                    dia_vida = dia_inicio + (i - 1)
+                                    pct = (sum_cortes[f'Corte {i}'] / tallos * 100) if tallos > 0 else 0.0
+                                    records_plot_var.append({
+                                        'Serie': var_name,
+                                        'Día de Vida': dia_vida,
+                                        '% de Producción': pct,
+                                        'Corte': f"Corte {i}"
+                                    })
+                                    
+                            if resultados_var:
+                                df_res_var = pd.DataFrame(resultados_var)
+                                st.markdown("#### Resumen de Variedades Seleccionadas")
+                                
+                                # Totales y Promedios Ponderados para las variedades seleccionadas
+                                tot_ciclos_v = int(df_res_var['Ciclos Evaluados'].sum())
+                                tot_plantas_v = float(df_res_var['Total Plantas'].sum())
+                                tot_tallos_v = float(df_res_var['Total Tallos'].sum())
+                                aprov_ponderado_v = (tot_tallos_v / tot_plantas_v) if tot_plantas_v > 0 else 0.0
+                                prom_dia_inicio_v = int(round((df_res_var['Día Inicio (Promedio)'] * df_res_var['Total Tallos']).sum() / tot_tallos_v)) if tot_tallos_v > 0 else 0
+                                prom_dia_pico_v = int(round((df_res_var['Día Pico (Promedio)'] * df_res_var['Total Tallos']).sum() / tot_tallos_v)) if tot_tallos_v > 0 else 0
+                                
+                                m1, m2, m3, m4, m5 = st.columns(5)
+                                m1.metric("Ciclos Totales", f"{tot_ciclos_v:,}")
+                                m2.metric("Plantas Totales", f"{tot_plantas_v:,.0f}")
+                                m3.metric("Tallos Totales", f"{tot_tallos_v:,.0f}")
+                                m4.metric("Aprovechamiento Global", f"{aprov_ponderado_v*100:.1f}%")
+                                m5.metric("Ciclo Promedio", f"{prom_dia_inicio_v} d (Inicio) / {prom_dia_pico_v} d (Pico)")
+                                
+                                df_base_v = df_res_var[['Variedad', 'Flor', 'Ciclos Evaluados', 'Total Plantas', 'Total Tallos', 'Aprovechamiento', 'Día Inicio (Promedio)', 'Día Pico (Promedio)']].copy()
+                                
+                                row_total_v = pd.DataFrame([{
+                                    'Variedad': 'TOTAL / PROMEDIO',
+                                    'Flor': '-',
+                                    'Ciclos Evaluados': tot_ciclos_v,
+                                    'Total Plantas': tot_plantas_v,
+                                    'Total Tallos': tot_tallos_v,
+                                    'Aprovechamiento': aprov_ponderado_v,
+                                    'Día Inicio (Promedio)': prom_dia_inicio_v,
+                                    'Día Pico (Promedio)': prom_dia_pico_v
+                                }])
+                                
+                                df_final_v = pd.concat([df_base_v, row_total_v], ignore_index=True)
+                                df_show_v = df_final_v.copy()
+                                df_show_v['Ciclos Evaluados'] = df_show_v['Ciclos Evaluados'].map("{:,.0f}".format)
+                                df_show_v['Total Plantas'] = df_show_v['Total Plantas'].map("{:,.0f}".format)
+                                df_show_v['Total Tallos'] = df_show_v['Total Tallos'].map("{:,.0f}".format)
+                                df_show_v['Aprovechamiento'] = (df_show_v['Aprovechamiento'] * 100).map("{:.1f}%".format)
+                                df_show_v['Día Inicio (Promedio)'] = df_show_v['Día Inicio (Promedio)'].map("{:.0f}".format)
+                                df_show_v['Día Pico (Promedio)'] = df_show_v['Día Pico (Promedio)'].map("{:.0f}".format)
+                                st.dataframe(df_show_v, use_container_width=True)
+                                
+                                st.markdown("#### Comportamiento Fenológico por Días de Vida")
+                                df_plot_v = pd.DataFrame(records_plot_var).sort_values(['Serie', 'Día de Vida'])
+                                
+                                fig = px.line(
+                                    df_plot_v,
+                                    x='Día de Vida',
+                                    y='% de Producción',
+                                    color='Serie',
+                                    markers=True,
+                                    title=f"Curvas de Variedades por Días de Vida ({start_date} a {end_date})",
+                                    labels={'% de Producción': '% de Producción', 'Día de Vida': 'Días de Vida (desde siembra)'},
+                                    hover_data={'Corte': True, 'Día de Vida': True, '% de Producción': ':.1f%'}
+                                )
+                                fig.update_layout(
+                                    xaxis=dict(title="Días de Vida (Días desde siembra)", tickmode='linear', dtick=2),
+                                    yaxis=dict(title="% de Producción Semanal/Corte", ticksuffix="%"),
+                                    hovermode="x unified"
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
                         
     with tab2:
         st.subheader("Ingreso de Datos y Motor de Suavización")

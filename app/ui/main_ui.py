@@ -56,10 +56,30 @@ if modulo == "Dashboard General":
     st.subheader("Carga de Insumos Maestros")
     st.markdown("Sube aquí los archivos base. Una vez cargados, todos los módulos del sistema los usarán automáticamente.")
     
-    col_ins1, col_ins2 = st.columns(2)
+    col_ins1, col_ins2, col_ins3 = st.columns(3)
     
     with col_ins1:
-        st.markdown("**1. Plano de Siembra (Inventario Vivo)**")
+        st.markdown("**1. Catálogo de Variedades (Maestro)**")
+        total_catalog = db.query(Variedad).count()
+        flores_count = pd.read_sql("SELECT flor, count(*) as cant FROM variedades GROUP BY flor", engine)
+        flores_str = ", ".join([f"{r['flor']}: {r['cant']}" for _, r in flores_count.iterrows()]) if not flores_count.empty else "Ninguna"
+        
+        if total_catalog > 0:
+            st.info(f"**Registradas:** {total_catalog:,} variedades\n\n*{flores_str}*")
+        else:
+            st.warning("⚠️ No hay catálogo de variedades registrado.")
+            
+        uploaded_vars = st.file_uploader("Cargar Listado(s) de Variedades", type=["xlsx", "xls"], accept_multiple_files=True, key="upload_vars")
+        if uploaded_vars:
+            if st.button("Procesar Catálogo de Variedades"):
+                with st.spinner("Procesando listados de variedades..."):
+                    from app.services.variedad_service import procesar_archivos_variedades
+                    res = procesar_archivos_variedades(uploaded_vars, db)
+                    st.success(f"Catálogo actualizado con éxito: {res.get('total_en_db', 0)} variedades en total ({res.get('insertadas', 0)} nuevas, {res.get('actualizadas', 0)} actualizadas).")
+                    st.rerun()
+                    
+    with col_ins2:
+        st.markdown("**2. Plano de Siembra (Inventario Vivo)**")
         if os.path.exists("last_dataset_name.txt"):
             with open("last_dataset_name.txt", "r") as f:
                 last_file = f.read().strip()
@@ -68,7 +88,7 @@ if modulo == "Dashboard General":
             
         st.info(f"**Cargado:** {last_file}")
         
-        uploaded_file = st.file_uploader("Cargar nuevo dataset de Siembras", type=["xlsx", "xls"])
+        uploaded_file = st.file_uploader("Cargar nuevo dataset de Siembras", type=["xlsx", "xls"], key="upload_siembras")
         if uploaded_file is not None:
             if st.button("Procesar Siembras"):
                 with st.spinner("Procesando dataset de siembras..."):
@@ -85,14 +105,14 @@ if modulo == "Dashboard General":
                     st.success("Datos de siembra actualizados.")
                     st.rerun()
                     
-    with col_ins2:
-        st.markdown("**2. Pedido Consolidado (MVA)**")
+    with col_ins3:
+        st.markdown("**3. Pedido Consolidado (MVA)**")
         if os.path.exists("PedidoConsolidado_master.xlsx"):
             st.info("✅ Pedido Consolidado disponible en el sistema.")
         else:
             st.warning("⚠️ No hay Pedido Consolidado cargado.")
             
-        uploaded_pedido = st.file_uploader("Cargar nuevo Pedido Consolidado", type=["xlsx", "xls"])
+        uploaded_pedido = st.file_uploader("Cargar nuevo Pedido Consolidado", type=["xlsx", "xls"], key="upload_pedido")
         if uploaded_pedido is not None:
             if st.button("Guardar Pedido MVA"):
                 with open("PedidoConsolidado_master.xlsx", "wb") as f:
@@ -104,132 +124,6 @@ if modulo == "Dashboard General":
 
 elif modulo == "Curvas e Índices (Campo)":
     render_curvas_module(db)
-    
-    # --- Filtro de Aprovechamiento y Curvas ---
-    st.subheader("Aprovechamiento y Curvas de Variedades")
-    st.markdown("Filtra el rendimiento histórico y comportamiento fenológico.")
-    
-    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-    
-    opcion_tiempo = col_f1.selectbox(
-        "Periodo histórico:",
-        ["1 Semana", "1 Mes", "3 Meses", "6 Meses", "12 Meses"],
-        index=1,
-        help="En el futuro conectará con cortes reales para recalcular las curvas dinámicamente en este lapso."
-    )
-    
-    variedades_db = db.query(Variedad).all()
-    
-    flores_db = sorted(list(set([v.flor for v in variedades_db if v.flor])))
-    filtro_flor = col_f2.selectbox("Flor:", ["Todas"] + flores_db)
-    
-    if filtro_flor != "Todas":
-        vars_flor = [v for v in variedades_db if v.flor == filtro_flor]
-    else:
-        vars_flor = variedades_db
-        
-    colores_db = sorted(list(set([v.color for v in vars_flor if v.color])))
-    filtro_color = col_f3.selectbox("Color:", ["Todos"] + colores_db)
-    
-    if filtro_color != "Todos":
-        vars_color = [v for v in vars_flor if v.color == filtro_color]
-    else:
-        vars_color = vars_flor
-        
-    nombres_variedades = sorted([v.nombre for v in vars_color if v.nombre])
-    filtro_var = col_f4.selectbox("Variedad:", ["Todas"] + nombres_variedades)
-    
-    if filtro_var != "Todas":
-        variedades = [v for v in vars_color if v.nombre == filtro_var]
-    else:
-        variedades = vars_color
-        
-    data = []
-    for v in variedades:
-        aprov_val = int(round(v.aprov_pp * 100)) if v.aprov_pp is not None else 0
-        data.append({
-            "Variedad": v.nombre,
-            "Flor": v.flor,
-            "Color": v.color,
-            "Días Inicio": v.dia_inicio,
-            "Días Pico": v.dia_pico,
-            "Días Desbotone": v.dias_desb,
-            "% APROV": f"{aprov_val}%",
-            "_aprov_num": aprov_val,
-            "c1": v.c1, "c2": v.c2, "c3": v.c3, "c4": v.c4, "c5": v.c5,
-            "c6": v.c6, "c7": v.c7, "c8": v.c8, "c9": v.c9, "c10": v.c10,
-            "c11": v.c11, "c12": v.c12, "c13": v.c13, "c14": v.c14, "c15": v.c15
-        })
-    df_vars = pd.DataFrame(data)
-    
-    if not df_vars.empty:
-        col_res1, col_res2 = st.columns(2)
-        
-        with col_res1:
-            if filtro_var == "Todas":
-                avg_aprov = int(round(df_vars['_aprov_num'].mean()))
-                st.metric("Promedio Aprovechamiento (Todas)", f"{avg_aprov}%")
-            else:
-                val_aprov = df_vars['_aprov_num'].iloc[0]
-                st.metric(f"Aprovechamiento {filtro_var}", f"{val_aprov}%")
-                
-            cols_to_drop = ['_aprov_num', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9', 'c10', 'c11', 'c12', 'c13', 'c14', 'c15']
-            st.dataframe(df_vars.drop(columns=cols_to_drop), use_container_width=True)
-            
-        with col_res2:
-            st.markdown("**Curva Fenológica Esperada (% Cosecha por Día de Vida)**")
-            records = []
-            
-            # Determinar el nivel de agrupación visual según los filtros
-            if filtro_flor == "Todas":
-                nivel = "Flor"
-            elif filtro_color == "Todos":
-                nivel = "Color"
-            else:
-                nivel = "Variedad"
-
-            # Agrupar las curvas manteniendo su forma de campana relativa (c1..c15)
-            temp_records = []
-            for _, row in df_vars.iterrows():
-                grupo = row[nivel]
-                d_inicio = row['Días Inicio'] if pd.notna(row['Días Inicio']) else 0
-                for i in range(1, 16):
-                    val = row[f'c{i}']
-                    if pd.notna(val) and val > 0:
-                        temp_records.append({
-                            'Grupo': grupo,
-                            'DiaRelativo': i,
-                            'Días Inicio': d_inicio,
-                            'Cosecha': val * 100
-                        })
-            
-            if temp_records:
-                df_temp = pd.DataFrame(temp_records)
-                
-                # 1. Calcular el Día de Inicio promedio CONSTANTE para cada Grupo
-                df_grupo_dias = df_temp.groupby('Grupo')['Días Inicio'].mean().reset_index()
-                dict_dias_inicio = dict(zip(df_grupo_dias['Grupo'], df_grupo_dias['Días Inicio']))
-                
-                # 2. Promediar el % de cosecha para cada día relativo (1 a 15)
-                df_grouped = df_temp.groupby(['Grupo', 'DiaRelativo'])['Cosecha'].mean().reset_index()
-                
-                for _, row in df_grouped.iterrows():
-                    grupo = row['Grupo']
-                    d_inicio_promedio = int(round(dict_dias_inicio[grupo]))
-                    dia_relativo = int(row['DiaRelativo'])
-                    records.append({
-                        'Serie': grupo,
-                        'Día de Vida': d_inicio_promedio + dia_relativo - 1,
-                        '% Cosecha': row['Cosecha']
-                    })
-                        
-            if records:
-                df_plot = pd.DataFrame(records)
-                df_pivot_plot = df_plot.pivot(index='Día de Vida', columns='Serie', values='% Cosecha')
-                st.line_chart(df_pivot_plot)
-                st.caption(f"Visualizando periodo: {opcion_tiempo}")
-            else:
-                st.info("No hay curvas fenológicas configuradas para esta selección.")
 
 elif modulo == "ForeCast y Exportación":
     st.header("📈 ForeCast y Exportación (S&OP)")

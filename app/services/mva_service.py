@@ -65,6 +65,7 @@ def generar_plan_mva(filepath, week_is="Pedido"):
             
         record = {
             "Flor": row.get("Flor", ""),
+            "Color": row.get("Color", ""),
             "Variedad": row.get("Variedad", ""),
             "Semana_Pedido_MV": sem_pedido,
             "Semana_Siembra": sem_siembra,
@@ -150,9 +151,17 @@ def proyectar_cosecha_desde_mva(df_mrp, db, var_dict=None):
                 tallos_esperados = plantas * porcentaje_cosecha
                 
                 if tallos_esperados > 0:
+                    var_obj = var_dict.get(var_norm)
+                    flor_val = row.get('Flor')
+                    if not flor_val or pd.isna(flor_val) or str(flor_val).strip() in ['', 'Genérico', 'Generico']:
+                        flor_val = var_obj.flor if var_obj else 'Novelty'
+                    color_val = row.get('Color')
+                    if not color_val or pd.isna(color_val) or str(color_val).strip() in ['', 'Genérico', 'Generico']:
+                        color_val = var_obj.color if var_obj else 'Mix'
+                        
                     records.append({
-                        "Flor": row.get('Flor', 'Genérico'),
-                        "Color": row.get('Color', 'Genérico'),
+                        "Flor": flor_val,
+                        "Color": color_val,
                         "Variedad": var_nombre_orig,
                         "Semana_Siembra": sem_siembra,
                         "Semana_Cosecha": semana_operativa,
