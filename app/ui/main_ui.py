@@ -267,39 +267,16 @@ elif modulo == "ForeCast y Exportación":
                     hovertemplate="<b>Semana %{x}</b><br>Material Vegetal: %{y:,.0f} tallos<extra></extra>"
                 ))
                 
-                # Línea y anotación de transición
-                if ultima_sem_plano:
-                    fig_fc.add_shape(
-                        type='line',
-                        xref='x',
-                        yref='paper',
-                        x0=ultima_sem_plano,
-                        x1=ultima_sem_plano,
-                        y0=0,
-                        y1=0.90,
-                        line=dict(color='#9E9E9E', width=1.5, dash='dot')
-                    )
-                    fig_fc.add_annotation(
-                        x=ultima_sem_plano,
-                        y=0.95,
-                        yref='paper',
-                        text='<b>Inicio Material Vegetal (MVA) →</b>',
-                        showarrow=False,
-                        xanchor='left',
-                        font=dict(size=11, color='#E65100')
-                    )
-            
             # 3. Línea de Plan Aprobado
-            if plan_series.sum() > 0:
-                fig_fc.add_trace(go.Scatter(
-                    x=semanas_futuras,
-                    y=plan_series,
-                    mode='lines+markers',
-                    name="Plan Aprobado",
-                    line=dict(color='#1976D2', width=2.5, dash='dot'),
-                    marker=dict(size=5, symbol='square'),
-                    hovertemplate="<b>Semana %{x}</b><br>Plan Aprobado: %{y:,.0f} tallos<extra></extra>"
-                ))
+            fig_fc.add_trace(go.Scatter(
+                x=semanas_futuras,
+                y=plan_series,
+                mode='lines+markers',
+                name="Plan Aprobado",
+                line=dict(color='#1976D2', width=2.5, dash='dot'),
+                marker=dict(size=5, symbol='square'),
+                hovertemplate="<b>Semana %{x}</b><br>Plan Aprobado: %{y:,.0f} tallos<extra></extra>"
+            ))
                 
             fig_fc.update_layout(
                 title=dict(text=f"Proyección Semanal vs Plan Aprobado ({vista})", font=dict(size=16)),
@@ -325,19 +302,15 @@ elif modulo == "ForeCast y Exportación":
             
             st.markdown("**Comparativo ForeCast vs Plan Aprobado:**")
             df_comp = pd.DataFrame(index=semanas_futuras)
-            df_comp['Origen'] = [
-                '🌱 Plano Siembras' if s in semanas_plano else '📦 Material Vegetal'
-                for s in semanas_futuras
-            ]
-            df_comp['ForeCast Total'] = fc_agrupado
+            df_comp['Proyección (ForeCast)'] = fc_agrupado
             df_comp['Plan Aprobado'] = plan_series
             df_comp['Variación %'] = df_comp.apply(
-                lambda row: ((row['ForeCast Total'] / row['Plan Aprobado']) - 1) * 100 if row['Plan Aprobado'] > 0 else 0,
+                lambda row: ((row['Proyección (ForeCast)'] / row['Plan Aprobado']) - 1) * 100 if row['Plan Aprobado'] > 0 else 0,
                 axis=1
             )
             
             df_comp_display = df_comp.copy()
-            df_comp_display['ForeCast Total'] = df_comp_display['ForeCast Total'].apply(lambda x: f"{int(x):,}")
+            df_comp_display['Proyección (ForeCast)'] = df_comp_display['Proyección (ForeCast)'].apply(lambda x: f"{int(x):,}")
             df_comp_display['Plan Aprobado'] = df_comp_display['Plan Aprobado'].apply(lambda x: f"{int(x):,}")
             df_comp_display['Variación %'] = df_comp_display['Variación %'].apply(lambda x: f"{x:+.1f}%")
             
