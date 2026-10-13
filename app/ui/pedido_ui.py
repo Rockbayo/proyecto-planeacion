@@ -3,187 +3,912 @@ import pandas as pd
 import os
 from datetime import date, timedelta
 import io
+from app.models.models import Variedad
+from app.services.forecast_service import calcular_curvas_dinamicas, generar_forecast_13wk, isocalendar_to_string
+from app.services.mva_service import generar_plan_mva, proyectar_cosecha_desde_mva, combinar_proyecciones_52_semanas
+from app.services.alertas_service import obtener_alertas_sop
 
 def get_iso_week_string(dt: date) -> str:
     y, w, _ = dt.isocalendar()
     return f"S{y}{w:02d}"
 
+def obtener_stats_jerarquicos(db, alpha: float = None, num_ciclos: int = None):
+    """
+    Construye las estadísticas jerárquicas biológicas para el pedido de esquejes:
+    1. Curva específica de la variedad (desde Historico_Curvas.csv con suavización calibrada por flor)
+    2. Promedio ponderado por [Flor, Color]
+    3. Promedio por [Flor]
+    4. Promedio Global de la Finca
+    """
+    dyn_curves = calcular_curvas_dinamicas(alpha=alpha, num_ciclos=num_ciclos, db=db)
+    vars_db = db.query(Variedad).all()
+    v_map = {v.nombre.strip().lower(): (v.flor.strip(), v.color.strip()) for v in vars_db}
+    
+    curve_records = []
+    for var_name, stats in dyn_curves.items():
+        sc = sum(stats.get(f'c{i}', 0) for i in range(1, 16))
+        if sc <= 0:
+            sc = stats.get('aprov', 0)
+        dia_pico = stats.get('dia_pico', 90)
+        flor, color = v_map.get(var_name.strip().lower(), ('Unknown', 'Unknown'))
+        
+        curve_records.append({
+            'var_norm': var_name.strip().lower(),
+            'flor': flor,
+            'flor_norm': flor.strip().lower(),
+            'color': color,
+            'color_norm': color.strip().lower(),
+            'aprov': sc,
+            'dia_pico': dia_pico
+        })
+        
+    df_c = pd.DataFrame(curve_records)
+    
+    fc_stats = {}
+    if not df_c.empty and 'flor_norm' in df_c.columns:
+        fc_stats = df_c.groupby(['flor_norm', 'color_norm']).agg(
+            aprov=('aprov', 'mean'),
+            dia_pico=('dia_pico', lambda x: int(round(x.mean())))
+        ).to_dict('index')
+        
+    f_stats = {}
+    if not df_c.empty and 'flor_norm' in df_c.columns:
+        f_stats = df_c.groupby('flor_norm').agg(
+            aprov=('aprov', 'mean'),
+            dia_pico=('dia_pico', lambda x: int(round(x.mean())))
+        ).to_dict('index')
+        
+    global_aprov = df_c['aprov'].mean() if not df_c.empty else 0.808
+    global_dia_pico = int(round(df_c['dia_pico'].mean())) if not df_c.empty else 93
+    global_stats = {
+        'aprov': global_aprov,
+        'dia_pico': global_dia_pico
+    }
+    
+    dyn_lower = {k.strip().lower(): v for k, v in dyn_curves.items()}
+    
+    return dyn_curves, dyn_lower, fc_stats, f_stats, global_stats
+
+def resolver_curva_variedad(variedad: str, flor: str, color: str, dyn_lower: dict, fc_stats: dict, f_stats: dict, global_stats: dict):
+    v_norm = str(variedad).strip().lower()
+    fl_norm = str(flor).strip().lower()
+    col_norm = str(color).strip().lower()
+    
+    if v_norm in dyn_lower:
+        v_data = dyn_lower[v_norm]
+        sc = sum(v_data.get(f'c{i}', 0) for i in range(1, 16))
+        if sc <= 0:
+            sc = v_data.get('aprov', 0)
+        if sc > 0:
+            dp = v_data.get('dia_pico', 90)
+            return sc, dp, 'Curva Histórica Real'
+            
+    if (fl_norm, col_norm) in fc_stats:
+        s = fc_stats[(fl_norm, col_norm)]
+        return s['aprov'], s['dia_pico'], f'Promedio Flor-Color ({flor} - {color})'
+        
+    if fl_norm in f_stats:
+        s = f_stats[fl_norm]
+        return s['aprov'], s['dia_pico'], f'Promedio Tipo de Flor ({flor})'
+        
+    return global_stats['aprov'], global_stats['dia_pico'], 'Promedio Global Finca'
+
+def obtener_forecast_52w_completo(db):
+    """
+    Obtiene la matriz de pronóstico consolidada de cosecha para las 52 semanas:
+    Inventario Vivo en Campo + Proyección MVA (Pedido Consolidado Maestro).
+    Esto asegura que no haya semanas con ForeCast en 0 artificialmente.
+    """
+    from app.services.calibracion_service import cargar_parametros_calibrados
+    params_cal = cargar_parametros_calibrados()
+    alpha_cal = params_cal.get('alpha', 1.0)
+    ciclos_cal = params_cal.get('num_ciclos', 9)
+    df_fc_vivo = generar_forecast_13wk(db, alpha=alpha_cal, num_ciclos=ciclos_cal)
+    file_master = "PedidoConsolidado_master.xlsx"
+    if os.path.exists(file_master):
+        try:
+            df_mrp = generar_plan_mva(file_master, week_is="Pedido")
+            df_proy_mva = proyectar_cosecha_desde_mva(df_mrp, db)
+            df_fc_total = combinar_proyecciones_52_semanas(df_fc_vivo, df_proy_mva)
+            return df_fc_total
+        except Exception:
+            return df_fc_vivo
+    return df_fc_vivo
+
+def exportar_matriz_estandar_erp(df_records: pd.DataFrame, col_semana: str = 'Semana_Pedido', col_valor: str = 'Esquejes') -> bytes:
+    """
+    Genera un archivo Excel exactamente con la estructura estándar requerida por la plataforma ERP:
+    - Hoja única: 'Hoja1'
+    - Columnas: 'Flor', 'Color', 'Variedad', seguidas de las semanas 'S{YYYYWW}'
+    - Sin encabezados adicionales, comentarios ni columnas auxiliares.
+    """
+    if df_records.empty:
+        df_empty = pd.DataFrame(columns=['Flor', 'Color', 'Variedad'])
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+            df_empty.to_excel(writer, sheet_name='Hoja1', index=False)
+        return out.getvalue()
+        
+    df_pivot = df_records.groupby(['Flor', 'Color', 'Variedad', col_semana])[col_valor].sum().unstack(fill_value=0).reset_index()
+    semanas = sorted([c for c in df_pivot.columns if str(c).startswith('S')])
+    df_pivot = df_pivot[['Flor', 'Color', 'Variedad'] + semanas]
+    df_pivot.columns.name = None
+    
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+        df_pivot.to_excel(writer, sheet_name='Hoja1', index=False)
+    return out.getvalue()
+
 def render_pedido_module(db):
-    st.header("🌱 Pedido de Material Vegetal")
+    st.header("🌱 Pedido de Material Vegetal (S&OP Propagación)")
     st.markdown("""
-    Este módulo calcula el pedido de esquejes a los proveedores basado en el **Plan Aprobado**.
-    Se aplica un **5% adicional** sobre la capacidad aprobada para asegurar el cumplimiento, 
-    y se redondea en camas físicas de **5200 esquejes**. 
-    El pedido se programa para recibirse **4 semanas antes de la siembra**.
+    Cálculo maestro del requerimiento de esquejes para propagación y proveedores.
+    - Se aplica un **5% adicional de seguridad** sobre la capacidad aprobada.
+    - Se redondea en camas físicas estándar de **5,200 esquejes**.
+    - El pedido se programa **4 semanas antes de la siembra**.
     """)
 
+    # Gobernanza S&OP
+    alertas = obtener_alertas_sop()
+    regla_ped = alertas.get("regla_pedido", {})
+    with st.container(border=True):
+        st.markdown(f"**{regla_ped.get('icono', '📦')} {regla_ped.get('titulo', '3. Pedido Material Vegetal')}** — *{regla_ped.get('deadline', '1ª Semana de cada mes')}*")
+        if regla_ped.get('activo', False):
+            st.success(regla_ped.get('mensaje', 'Ventana activa para pedido mensual regular.'))
+        else:
+            st.info(f"{regla_ped.get('mensaje', '')} Para pedidos fuera de ventana regular, contingencias o cancelaciones, use las pestañas correspondientes.")
+
     plan_file_path = "Plan_Aprobado.csv"
-
-
     if not os.path.exists(plan_file_path):
-        st.warning("No se encontró ningún Plan Aprobado. Ve a 'Plan de Producción' y guarda una contrapropuesta.")
+        st.warning("⚠️ No se encontró ningún Plan Aprobado. Ve a 'Plan de Producción (MVA)', procesa el archivo de demanda y guarda una contrapropuesta.")
         return
 
     df_plan = pd.read_csv(plan_file_path)
-    
-    # Manejar nombres de columnas por compatibilidad
     col_flor = 'Flor' if 'Flor' in df_plan.columns else 'Flower'
     col_capacidad = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_plan.columns else 'Suma de Tallos'
     
     if 'Variedad' not in df_plan.columns:
-        st.error("❌ El Plan Aprobado actual no tiene el detalle por Variedad. Por favor, ve al módulo 'Plan de Producción', vuelve a Procesar tu archivo y dale click en 'Guardar Contrapropuesta' para que se actualice con el formato correcto.")
+        st.error("❌ El Plan Aprobado actual no contiene detalle por Variedad. Por favor regenera la contrapropuesta en 'Plan de Producción'.")
         return
 
-    col1, col2 = st.columns(2)
-    with col1:
-        # Default start week: +24 semanas
-        hoy = date.today()
-        fecha_default = hoy + timedelta(weeks=24)
-        default_sem = get_iso_week_string(fecha_default)
-        sem_inicio = st.text_input("Semana Inicio de Pedido (Ej: S202640)", value=default_sem)
-    
-    with col2:
-        st.info("💡 El horizonte abarcará desde la semana de inicio hacia adelante (todas las disponibles en el plan).")
+    # Fechas operativas clave
+    hoy = date.today()
+    sem_actual = get_iso_week_string(hoy)
+    sem_siguiente = get_iso_week_string(hoy + timedelta(weeks=1))
+    sem_firme_default = get_iso_week_string(hoy + timedelta(weeks=24))
 
-    if st.button("Generar Pedido de Esquejes", type="primary"):
-        with st.spinner("Calculando fechas, curvas y consolidando pedido..."):
-            try:
-                from app.services.forecast_service import calcular_curvas_dinamicas
-                dyn_curves = calcular_curvas_dinamicas(alpha=1.0, num_ciclos=9)
-                var_dict = {k.strip().lower(): v for k, v in dyn_curves.items()}
-                
-                records_pedido = []
-                
-                for _, row in df_plan.iterrows():
-                    flor = str(row[col_flor]).strip()
-                    color = str(row['Color']).strip()
-                    variedad = str(row['Variedad']).strip()
-                    sem_cosecha_raw = str(row['Semana']).strip()
-                    capacidad = pd.to_numeric(row[col_capacidad], errors='coerce')
-                    
-                    if pd.isna(capacidad) or capacidad <= 0:
-                        continue
-                        
-                    # 1. Aplicar margen de 5% adicional
-                    meta_tallos = capacidad * 1.05
-                    
-                    # 2. Obtener curva biológica
-                    var_norm = variedad.lower()
-                    var_db = var_dict.get(var_norm)
-                    
-                    suma_curva = 1.0
-                    dia_pico = 70
-                    if var_db:
-                        sc = sum(var_db.get(f'c{i}', 0) for i in range(1, 16))
-                        if sc > 0:
-                            suma_curva = sc
-                        if 'dia_pico' in var_db and var_db['dia_pico'] > 0:
-                            dia_pico = var_db['dia_pico']
-                            
-                    # 3. Plantas Teóricas
-                    plantas_teoricas = meta_tallos / suma_curva
-                    
-                    # 4. Camas físicas de 5200 (Redondeo inteligente)
-                    camas = round(plantas_teoricas / 5200.0)
-                    if camas == 0 and plantas_teoricas > 0:
-                        camas = 1
-                        
-                    esquejes_pedir = camas * 5200
-                    
-                    if esquejes_pedir == 0:
-                        continue
-                        
-                    # 5. Cálculo de Fechas
-                    try:
-                        # Extraer año y semana (ej: "202640" o "202640.0")
-                        sem_clean = sem_cosecha_raw.replace(".0", "")
-                        year = int(sem_clean[:4])
-                        week = int(sem_clean[4:])
-                        fecha_pico = date.fromisocalendar(year, week, 4)
-                    except:
-                        continue
-                        
-                    fecha_siembra = fecha_pico - timedelta(days=dia_pico)
-                    # El pedido se recibe 4 semanas antes de la siembra
-                    fecha_pedido = fecha_siembra - timedelta(weeks=4)
-                    sem_pedido = get_iso_week_string(fecha_pedido)
-                    
-                    records_pedido.append({
-                        "Flor": flor,
-                        "Color": color,
-                        "Variedad": variedad,
-                        "Semana_Pedido": sem_pedido,
-                        "Esquejes": esquejes_pedir
-                    })
-                    
-                df_pedido = pd.DataFrame(records_pedido)
-                
-                if df_pedido.empty:
-                    st.warning("No se generaron pedidos. Revisa que el plan aprobado tenga cantidades.")
-                    return
-                    
-                # 6. Crear la tabla dinámica (Pivot Table)
-                df_pivot = df_pedido.groupby(['Flor', 'Color', 'Variedad', 'Semana_Pedido'])['Esquejes'].sum().reset_index()
-                df_pivot = df_pivot.pivot(index=['Flor', 'Color', 'Variedad'], columns='Semana_Pedido', values='Esquejes').fillna(0)
-                
-                # Obtener la lista de semanas proyectadas (Horizonte)
-                sem_inicio_formatted = sem_inicio if sem_inicio.startswith("S") else f"S{sem_inicio}"
-                semanas_presentes = [c for c in df_pivot.columns if str(c).startswith('S')]
-                
-                if not semanas_presentes:
-                    st.warning("No se generaron pedidos válidos.")
-                    return
-                
-                max_sem = max(semanas_presentes)
-                sem_inicio_clean = sem_inicio_formatted.replace("S", "").replace("s", "")
-                year_start = int(sem_inicio_clean[:4])
-                week_start = int(sem_inicio_clean[4:])
-                fecha_start = date.fromisocalendar(year_start, week_start, 4)
-                
-                semanas_horizonte = []
-                curr_fecha = fecha_start
-                while True:
-                    curr_sem_str = get_iso_week_string(curr_fecha)
-                    semanas_horizonte.append(curr_sem_str)
-                    if curr_sem_str >= max_sem:
-                        break
-                    curr_fecha += timedelta(weeks=1)
-                
-                # Asegurar que todas las semanas del horizonte existan en la tabla (con 0 si no hay pedidos)
-                for s in semanas_horizonte:
-                    if s not in df_pivot.columns:
-                        df_pivot[s] = 0
-                        
-                # Filtrar y ordenar las columnas para que solo queden las del horizonte
-                df_pivot = df_pivot[semanas_horizonte]
-                
-                # Resetear index para visualización plana
-                df_pivot = df_pivot.reset_index()
-                df_pivot.columns.name = None
-                
-                st.session_state['df_pedido_consolidado'] = df_pivot
-                st.success("¡Pedido Consolidado generado con éxito!")
-                
-            except Exception as e:
-                import traceback
-                st.error(f"Error procesando el pedido: {e}")
-                st.text(traceback.format_exc())
-                
-    if 'df_pedido_consolidado' in st.session_state:
-        df_result = st.session_state['df_pedido_consolidado']
-        st.dataframe(df_result, use_container_width=True)
+    # Cargar estadísticas biológicas jerárquicas y catálogo maestro de variedades con parámetros calibrados por ML
+    from app.services.calibracion_service import cargar_parametros_calibrados
+    params_cal = cargar_parametros_calibrados()
+    alpha_cal = params_cal.get('alpha', 1.0)
+    ciclos_cal = params_cal.get('num_ciclos', 9)
+    dyn_curves, dyn_lower, fc_stats, f_stats, global_stats = obtener_stats_jerarquicos(db, alpha=alpha_cal, num_ciclos=ciclos_cal)
+    vars_db = db.query(Variedad).all()
+    v_map = {v.nombre.strip().lower(): (v.flor.strip(), v.color.strip()) for v in vars_db}
+
+    tab_firme, tab_extemporaneo, tab_cancelacion = st.tabs([
+        "📦 Pedido Mensual Regular en Firme (+24 Semanas)", 
+        "🚨 Pedidos Extemporáneos Reactivos (< 24 Semanas)",
+        "❌ Cancelación de Material Vegetal (Excedentes > 5%)"
+    ])
+
+    # =========================================================================
+    # TAB 1: PEDIDO REGULAR EN FIRME (+24 SEMANAS)
+    # =========================================================================
+    with tab_firme:
+        st.subheader("📦 Pedido Regular en Firme (+24 Semanas)")
+        st.markdown(f"""
+        Emisión mensual estándar según el ciclo S&OP. Abarca el horizonte en firme desde **+24 semanas** ({sem_firme_default}) 
+        hacia adelante para garantizar la reserva de material parental en propagación.
+        """)
+
+        col1, col2 = st.columns([1.5, 2.5])
+        with col1:
+            sem_inicio_firme = st.text_input("Semana Inicio de Pedido Firme", value=sem_firme_default, key="sem_inicio_firme")
+        with col2:
+            st.info(f"💡 Pedidos calculados desde **{sem_inicio_firme}** en adelante. Para semanas anteriores (< 24 semanas), utilice la pestaña de **Pedidos Extemporáneos**.")
+
+        if st.button("Calcular Pedido Consolidado en Firme", type="primary", key="btn_gen_pedido_firme"):
+            with st.spinner("Calculando curvas dinámicas, fallbacks jerárquicos y consolidando semanas..."):
+                try:
+                    records_firme = []
+                    records_audit = []
+
+                    for _, row in df_plan.iterrows():
+                        variedad = str(row['Variedad']).strip()
+                        flor_orig = str(row[col_flor]).strip()
+                        color_orig = str(row['Color']).strip()
+                        flor, color = v_map.get(variedad.lower(), (flor_orig, color_orig))
+                        sem_cosecha_raw = str(row['Semana']).strip()
+                        capacidad = pd.to_numeric(row[col_capacidad], errors='coerce')
+
+                        if pd.isna(capacidad) or capacidad <= 0:
+                            continue
+
+                        meta_tallos = capacidad * 1.05
+
+                        aprov, dia_pico, metodo = resolver_curva_variedad(
+                            variedad, flor, color, dyn_lower, fc_stats, f_stats, global_stats
+                        )
+
+                        plantas_teoricas = meta_tallos / aprov
+                        camas = round(plantas_teoricas / 5200.0)
+                        if camas == 0 and plantas_teoricas > 0:
+                            camas = 1
+
+                        esquejes_pedir = camas * 5200
+                        if esquejes_pedir == 0:
+                            continue
+
+                        try:
+                            sem_clean = sem_cosecha_raw.replace(".0", "")
+                            year = int(sem_clean[:4])
+                            week = int(sem_clean[4:])
+                            fecha_pico = date.fromisocalendar(year, week, 4)
+                            fecha_siembra = fecha_pico - timedelta(days=dia_pico)
+                            fecha_pedido = fecha_siembra - timedelta(weeks=4)
+                            sem_pedido = get_iso_week_string(fecha_pedido)
+                        except Exception:
+                            continue
+
+                        records_audit.append({
+                            "Flor": flor,
+                            "Color": color,
+                            "Variedad": variedad,
+                            "Semana_Cosecha": f"S{sem_clean}",
+                            "Semana_Pedido": sem_pedido,
+                            "Tallos_Plan": capacidad,
+                            "Aprovechamiento_%": aprov * 100.0,
+                            "Dia_Pico": dia_pico,
+                            "Metodo_Curva": metodo,
+                            "Camas_5200": camas,
+                            "Esquejes_Pedir": esquejes_pedir
+                        })
+
+                        sem_inicio_f_fmt = sem_inicio_firme if sem_inicio_firme.startswith("S") else f"S{sem_inicio_firme}"
+                        if sem_pedido >= sem_inicio_f_fmt:
+                            records_firme.append({
+                                "Flor": flor,
+                                "Color": color,
+                                "Variedad": variedad,
+                                "Semana_Pedido": sem_pedido,
+                                "Esquejes": esquejes_pedir
+                            })
+
+                    df_ped_firme = pd.DataFrame(records_firme)
+                    df_audit = pd.DataFrame(records_audit)
+
+                    if df_ped_firme.empty:
+                        st.warning(f"No se generaron pedidos para el horizonte en firme desde {sem_inicio_firme}.")
+                    else:
+                        st.session_state['df_pedido_firme_raw'] = df_ped_firme
+                        st.session_state['df_pedido_firme_audit'] = df_audit
+                        st.success("✅ Pedido Consolidado en Firme generado exitosamente.")
+
+                except Exception as e:
+                    st.error(f"Error generando pedido en firme: {e}")
+
+        if 'df_pedido_firme_raw' in st.session_state:
+            df_raw_f = st.session_state['df_pedido_firme_raw']
+            df_audit = st.session_state['df_pedido_firme_audit']
+
+            df_pivot_f = df_raw_f.groupby(['Flor', 'Color', 'Variedad', 'Semana_Pedido'])['Esquejes'].sum().unstack(fill_value=0).reset_index()
+            semanas_cols = sorted([c for c in df_pivot_f.columns if str(c).startswith('S')])
+            df_pivot_f = df_pivot_f[['Flor', 'Color', 'Variedad'] + semanas_cols]
+            df_pivot_f.columns.name = None
+
+            total_esq = df_pivot_f[semanas_cols].sum().sum()
+            total_cam = total_esq / 5200.0
+            total_v = df_pivot_f['Variedad'].nunique()
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total Esquejes Firme", f"{total_esq:,.0f}")
+            m2.metric("Total Camas (5,200)", f"{total_cam:,.0f}")
+            m3.metric("Variedades en Pedido", f"{total_v:,}")
+            m4.metric("Semanas en Firme", f"{len(semanas_cols)}")
+
+            st.dataframe(df_pivot_f, width='stretch')
+
+            with st.expander("🔍 Auditoría de Rendimientos y Curvas Jerárquicas", expanded=False):
+                metodos_resumen = df_audit.groupby('Metodo_Curva')['Variedad'].nunique()
+                col_m1, col_m2 = st.columns([1, 2])
+                with col_m1:
+                    st.markdown("**Variedades por Origen de Curva:**")
+                    for m_name, count in metodos_resumen.items():
+                        st.write(f"- **{m_name}:** {count} variedades")
+                with col_m2:
+                    df_audit_unique = df_audit.drop_duplicates(subset=['Variedad'])[['Flor', 'Color', 'Variedad', 'Aprovechamiento_%', 'Dia_Pico', 'Metodo_Curva']]
+                    st.dataframe(
+                        df_audit_unique.style.format({'Aprovechamiento_%': '{:.1f}%', 'Dia_Pico': '{:.0f} d'}),
+                        width='stretch'
+                    )
+
+            excel_firme_erp = exportar_matriz_estandar_erp(df_raw_f, col_semana='Semana_Pedido', col_valor='Esquejes')
+
+            col_df1, col_df2 = st.columns(2)
+            with col_df1:
+                st.download_button(
+                    label="📥 Descargar Pedido Consolidado (Formato Plataforma)",
+                    data=excel_firme_erp,
+                    file_name=f"PedidoConsolidado_{date.today()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    width='stretch'
+                )
+            with col_df2:
+                if st.button("💾 Guardar como PedidoConsolidado_master.xlsx (Actualiza ForeCast)", width='stretch'):
+                    with open("PedidoConsolidado_master.xlsx", "wb") as f:
+                        f.write(excel_firme_erp)
+                    st.success("✅ 'PedidoConsolidado_master.xlsx' actualizado. Los módulos de ForeCast ahora proyectarán con este archivo maestro.")
+
+    # =========================================================================
+    # TAB 2: PEDIDOS EXTEMPORÁNEOS REACTIVOS (< 24 SEMANAS)
+    # =========================================================================
+    with tab_extemporaneo:
+        st.subheader("🚨 Pedidos Extemporáneos Reactivos (< 24 Semanas)")
         
-        # Generar Excel
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_result.to_excel(writer, index=False, sheet_name='PedidoConsolidado')
-        output.seek(0)
+        st.warning(f"""
+        ⚠️ **VENTANA FIRME (< 24 SEMANAS) — SUJETO A APROBACIÓN DE PROPAGACIÓN**
         
-        st.download_button(
-            label="📥 Descargar Archivo para Plataforma (Pedido Consolidado)",
-            data=output.getvalue(),
-            file_name=f"PedidoConsolidado_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
+        * **Regla de Negocio Grupo Color:** Si a nivel de `[Flor, Color]` el volumen proyectado cumple con la capacidad del Plan Aprobado, **no se adiciona material**. Se compensan variedades dentro del mismo color comercial (confirmación real de propagación).
+        * **Ventana Ejecutable:** Solo se programan pedidos para semanas futuras ejecutables (desde **{sem_siguiente}** hasta **{sem_firme_default}**). No se muestran semanas pasadas ni se acumulan pedidos.
+        * **Formato de Archivo:** El Excel descargado mantiene **estrictamente la estructura estándar del pedido** (`Flor | Color | Variedad | Semanas...`) sin comentarios adicionales.
+        """)
+
+        modo_ext = st.radio(
+            "Método de Determinación de Pedido Extemporáneo:",
+            ["⚡ Detección Automática con Compensación de Grupo Color (Plan vs. ForeCast)", "✍️ Solicitud Reactiva Ad-Hoc por Lote/Variedad"],
+            horizontal=True,
+            key="radio_modo_ext"
         )
 
+        if modo_ext == "⚡ Detección Automática con Compensación de Grupo Color (Plan vs. ForeCast)":
+            c_ext1, c_ext2 = st.columns([2, 1])
+            with c_ext1:
+                st.info(f"📅 **Ventana Ejecutable:** Analiza pedidos entre **{sem_siguiente}** y **{sem_firme_default}**, cruzando el Plan contra el ForeCast consolidado de 52 semanas.")
+            with c_ext2:
+                filtro_flor_ext = st.selectbox("Filtrar por Flor", ["Todas"] + sorted(list(df_plan[col_flor].dropna().unique())), key="filtro_flor_ext")
+
+            if st.button("Analizar Brecha y Calcular Pedido Extemporáneo", type="primary", key="btn_calc_ext"):
+                with st.spinner("Consolidando ForeCast 52 semanas y evaluando balance por Grupo Color..."):
+                    try:
+                        # 1. Obtener Forecast Consolidado de 52 semanas
+                        df_fc_completo = obtener_forecast_52w_completo(db)
+                        semanas_fc_cols = [c for c in df_fc_completo.columns if str(c).startswith('202')]
+
+                        fc_melt = df_fc_completo.melt(
+                            id_vars=['Flor', 'Color', 'Variedad'],
+                            value_vars=semanas_fc_cols,
+                            var_name='Semana',
+                            value_name='Tallos_Forecast'
+                        )
+                        fc_melt['Variedad_Norm'] = fc_melt['Variedad'].astype(str).str.strip().str.lower()
+                        fc_melt['Flor_Canon'] = fc_melt['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[0])
+                        fc_melt['Color_Canon'] = fc_melt['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[1])
+                        fc_melt['Flor'] = fc_melt['Flor_Canon'].fillna(fc_melt['Flor'])
+                        fc_melt['Color'] = fc_melt['Color_Canon'].fillna(fc_melt['Color'])
+                        fc_melt['Flor_Norm'] = fc_melt['Flor'].str.strip().str.lower()
+                        fc_melt['Color_Norm'] = fc_melt['Color'].str.strip().str.lower()
+                        fc_melt['Semana_Clean'] = fc_melt['Semana'].astype(str)
+
+                        # 2. Plan Aprobado
+                        df_plan_eval = df_plan.dropna(subset=[col_capacidad]).copy()
+                        df_plan_eval = df_plan_eval[df_plan_eval[col_capacidad] > 0]
+                        df_plan_eval['Semana_Clean'] = df_plan_eval['Semana'].astype(str).str.replace(".0", "")
+                        df_plan_eval['Variedad_Norm'] = df_plan_eval['Variedad'].astype(str).str.strip().str.lower()
+                        df_plan_eval['Flor_Canon'] = df_plan_eval['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[0])
+                        df_plan_eval['Color_Canon'] = df_plan_eval['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[1])
+                        df_plan_eval[col_flor] = df_plan_eval['Flor_Canon'].fillna(df_plan_eval[col_flor])
+                        df_plan_eval['Color'] = df_plan_eval['Color_Canon'].fillna(df_plan_eval['Color'])
+                        df_plan_eval['Flor_Norm'] = df_plan_eval[col_flor].astype(str).str.strip().str.lower()
+                        df_plan_eval['Color_Norm'] = df_plan_eval['Color'].astype(str).str.strip().str.lower()
+
+                        if filtro_flor_ext != "Todas":
+                            df_plan_eval = df_plan_eval[df_plan_eval[col_flor] == filtro_flor_ext]
+                            fc_melt = fc_melt[fc_melt['Flor'] == filtro_flor_ext]
+
+                        # 3. Comparación por variedad
+                        var_plan = df_plan_eval.groupby(['Variedad_Norm', col_flor, 'Color', 'Variedad', 'Semana_Clean'])[col_capacidad].sum().reset_index()
+                        var_fc = fc_melt.groupby(['Variedad_Norm', 'Semana_Clean'])['Tallos_Forecast'].sum().reset_index()
+                        var_m = pd.merge(var_plan, var_fc, on=['Variedad_Norm', 'Semana_Clean'], how='left')
+                        var_m['Tallos_Forecast'] = var_m['Tallos_Forecast'].fillna(0)
+                        var_m['Flor_Norm'] = var_m[col_flor].str.strip().str.lower()
+                        var_m['Color_Norm'] = var_m['Color'].str.strip().str.lower()
+                        var_m['Raw_Deficit'] = (var_m[col_capacidad] - var_m['Tallos_Forecast']).clip(lower=0)
+
+                        # 4. Balance a nivel de Grupo Color [Flor, Color, Semana]
+                        gc_plan = var_m.groupby(['Flor_Norm', 'Color_Norm', 'Semana_Clean'])[col_capacidad].sum().reset_index().rename(columns={col_capacidad: 'GC_Plan'})
+                        gc_fc = var_m.groupby(['Flor_Norm', 'Color_Norm', 'Semana_Clean'])['Tallos_Forecast'].sum().reset_index().rename(columns={'Tallos_Forecast': 'GC_FC'})
+                        gc_raw_def = var_m.groupby(['Flor_Norm', 'Color_Norm', 'Semana_Clean'])['Raw_Deficit'].sum().reset_index().rename(columns={'Raw_Deficit': 'GC_Raw_Def_Sum'})
+
+                        gc_info = pd.merge(gc_plan, gc_fc, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'])
+                        gc_info = pd.merge(gc_info, gc_raw_def, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'])
+                        gc_info['GC_Net_Deficit'] = (gc_info['GC_Plan'] - gc_info['GC_FC']).clip(lower=0)
+
+                        df_eval = pd.merge(var_m, gc_info, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'], how='left')
+
+                        # Distribución proporcional solo si el grupo color tiene déficit neto
+                        df_eval['Net_Deficit_Var'] = 0.0
+                        mask_def = (df_eval['GC_Net_Deficit'] > 50) & (df_eval['GC_Raw_Def_Sum'] > 0) & (df_eval['Raw_Deficit'] > 0)
+                        df_eval.loc[mask_def, 'Net_Deficit_Var'] = df_eval.loc[mask_def, 'GC_Net_Deficit'] * (df_eval.loc[mask_def, 'Raw_Deficit'] / df_eval.loc[mask_def, 'GC_Raw_Def_Sum'])
+
+                        ext_records = []
+                        for _, r in df_eval[df_eval['Net_Deficit_Var'] > 50].iterrows():
+                            v = r['Variedad']
+                            fl = r[col_flor]
+                            col = r['Color']
+                            sem_cos = r['Semana_Clean']
+                            net_def = r['Net_Deficit_Var']
+
+                            aprov, dia_pico, metodo = resolver_curva_variedad(
+                                v, fl, col, dyn_lower, fc_stats, f_stats, global_stats
+                            )
+
+                            try:
+                                y = int(sem_cos[:4])
+                                w = int(sem_cos[4:])
+                                f_pico = date.fromisocalendar(y, w, 4)
+                                f_siem = f_pico - timedelta(days=dia_pico)
+                                f_ped = f_siem - timedelta(weeks=4)
+                                sem_ped = get_iso_week_string(f_ped)
+                            except Exception:
+                                continue
+
+                            # Filtro estricto: Solo semanas ejecutables futuras
+                            if sem_siguiente <= sem_ped < sem_firme_default:
+                                tallos_reponer = net_def * 1.05
+                                plantas_nec = tallos_reponer / aprov
+                                camas = round(plantas_nec / 5200.0)
+                                if camas == 0 and plantas_nec > 0:
+                                    camas = 1
+                                esquejes_pedir = camas * 5200
+
+                                ext_records.append({
+                                    "Flor": fl,
+                                    "Color": col,
+                                    "Variedad": v,
+                                    "Semana_Cosecha": f"S{sem_cos}",
+                                    "Semana_Pedido": sem_ped,
+                                    "Tallos_Plan": int(round(r[col_capacidad])),
+                                    "Tallos_ForeCast": int(round(r['Tallos_Forecast'])),
+                                    "Balance_Color_Neto": f"Déficit Color: {int(round(r['GC_Net_Deficit'])):,} tll",
+                                    "Deficit_Tallos": int(round(net_def)),
+                                    "Aprovechamiento_%": round(aprov * 100.0, 1),
+                                    "Metodo_Curva": metodo,
+                                    "Camas_5200": camas,
+                                    "Esquejes": esquejes_pedir,
+                                    "Motivo": "Déficit biológico neto del Grupo Color"
+                                })
+
+                        if not ext_records:
+                            st.success(f"🎉 No se detectaron déficits biológicos netos a nivel de Grupo Color entre {sem_siguiente} y {sem_firme_default}. El volumen total por color está cubierto.")
+                        else:
+                            df_ext_result = pd.DataFrame(ext_records)
+                            st.session_state['df_extemporaneo_raw'] = df_ext_result
+                            st.success(f"Déficit biológico neto compensado por Grupo Color: {len(df_ext_result)} requerimientos en ventana.")
+
+                    except Exception as e:
+                        st.error(f"Error analizando pedido extemporáneo: {e}")
+
+        else:
+            # Modo B: Solicitud Ad-Hoc
+            st.markdown("Ingresa una solicitud ad-hoc de pedido reactivo para suplir pérdidas en lotes específicos.")
+            with st.form("form_extemporaneo_adhoc"):
+                col_ad1, col_ad2, col_ad3 = st.columns(3)
+                with col_ad1:
+                    flores_disp = sorted(list(df_plan[col_flor].dropna().unique()))
+                    flor_sel = st.selectbox("Flor", flores_disp)
+                    vars_disp = sorted(list(df_plan[df_plan[col_flor] == flor_sel]['Variedad'].dropna().unique()))
+                    var_sel = st.selectbox("Variedad", vars_disp)
+                with col_ad2:
+                    colores_disp = sorted(list(df_plan[df_plan['Variedad'] == var_sel]['Color'].dropna().unique()))
+                    col_sel = colores_disp[0] if colores_disp else "Desconocido"
+                    st.text_input("Color", value=col_sel, disabled=True)
+                    sem_ped_adhoc = st.text_input(f"Semana de Pedido Requerida (>= {sem_siguiente})", value=sem_siguiente)
+                with col_ad3:
+                    camas_adhoc = st.number_input("Camas Requeridas (5,200 esquejes)", min_value=1, value=5, step=1)
+                    motivo_adhoc = st.selectbox("Motivo", [
+                        "Bajo aprovechamiento biológico en curvas piloto",
+                        "Pérdida fitosanitaria en campo",
+                        "Problemas de prendimiento en enraizamiento",
+                        "Incremento repentino de programa comercial"
+                    ])
+
+                if st.form_submit_button("Agregar a Pedido Extemporáneo", type="primary"):
+                    sem_ped_clean = sem_ped_adhoc if sem_ped_adhoc.startswith("S") else f"S{sem_ped_adhoc}"
+                    if sem_ped_clean < sem_siguiente:
+                        st.error(f"❌ La semana de pedido debe ser igual o posterior a la semana siguiente ({sem_siguiente}). Semanas pasadas no son ejecutables.")
+                    else:
+                        aprov, dia_pico, metodo = resolver_curva_variedad(
+                            var_sel, flor_sel, col_sel, dyn_lower, fc_stats, f_stats, global_stats
+                        )
+                        esquejes_tot = camas_adhoc * 5200
+                        tallos_rep = int(round(esquejes_tot * aprov / 1.05))
+
+                        nuevo_reg = {
+                            "Flor": flor_sel,
+                            "Color": col_sel,
+                            "Variedad": var_sel,
+                            "Semana_Cosecha": "Ad-Hoc",
+                            "Semana_Pedido": sem_ped_clean,
+                            "Tallos_Plan": tallos_rep,
+                            "Tallos_ForeCast": 0,
+                            "Balance_Color_Neto": "Ad-Hoc Manual",
+                            "Deficit_Tallos": tallos_rep,
+                            "Aprovechamiento_%": round(aprov * 100.0, 1),
+                            "Metodo_Curva": metodo,
+                            "Camas_5200": camas_adhoc,
+                            "Esquejes": esquejes_tot,
+                            "Motivo": motivo_adhoc
+                        }
+
+                        if 'df_extemporaneo_raw' not in st.session_state:
+                            st.session_state['df_extemporaneo_raw'] = pd.DataFrame([nuevo_reg])
+                        else:
+                            st.session_state['df_extemporaneo_raw'] = pd.concat(
+                                [st.session_state['df_extemporaneo_raw'], pd.DataFrame([nuevo_reg])], 
+                                ignore_index=True
+                            )
+                        st.success(f"Solicitud extemporánea para '{var_sel}' agregada al pedido.")
+
+        # Visualización de Pedido Extemporáneo
+        if 'df_extemporaneo_raw' in st.session_state and not st.session_state['df_extemporaneo_raw'].empty:
+            df_ext = st.session_state['df_extemporaneo_raw']
+
+            st.divider()
+            st.markdown("### 📋 Resumen del Pedido Extemporáneo (Salidas para Planeación)")
+            
+            kpi_e1, kpi_e2, kpi_e3, kpi_e4 = st.columns(4)
+            tot_esq_ext = df_ext['Esquejes'].sum()
+            tot_cam_ext = df_ext['Camas_5200'].sum()
+            tot_def_ext = df_ext['Deficit_Tallos'].sum()
+            tot_vars_ext = df_ext['Variedad'].nunique()
+
+            kpi_e1.metric("Esquejes Extemporáneos", f"{tot_esq_ext:,.0f}")
+            kpi_e2.metric("Camas Adicionales (5,200)", f"{tot_cam_ext:,.0f}")
+            kpi_e3.metric("Déficit de Tallos Cubierto", f"{tot_def_ext:,.0f}")
+            kpi_e4.metric("Variedades Afectadas", f"{tot_vars_ext:,}")
+
+            # Detalle en pantalla para el equipo de planeación
+            st.dataframe(
+                df_ext[[
+                    'Flor', 'Color', 'Variedad', 'Semana_Cosecha', 'Semana_Pedido',
+                    'Tallos_Plan', 'Tallos_ForeCast', 'Balance_Color_Neto', 'Deficit_Tallos',
+                    'Aprovechamiento_%', 'Camas_5200', 'Esquejes', 'Motivo'
+                ]],
+                width='stretch'
+            )
+
+            # Generación del archivo en formato estándar ERP (idéntico al pedido regular)
+            excel_ext_erp = exportar_matriz_estandar_erp(df_ext, col_semana='Semana_Pedido', col_valor='Esquejes')
+
+            col_dex1, col_dex2 = st.columns([2, 1])
+            with col_dex1:
+                st.download_button(
+                    label="📥 Descargar Archivo para Plataforma (Pedido Extemporáneo - Formato ERP)",
+                    data=excel_ext_erp,
+                    file_name=f"Pedido_Extemporaneo_{date.today()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    width='stretch'
+                )
+            with col_dex2:
+                if st.button("🗑️ Limpiar Pedido Extemporáneo", width='stretch'):
+                    del st.session_state['df_extemporaneo_raw']
+                    st.rerun()
+
+    # =========================================================================
+    # TAB 3: CANCELACIÓN DE MATERIAL VEGETAL (EXCEDENTES > 5%)
+    # =========================================================================
+    with tab_cancelacion:
+        st.subheader("❌ Cancelación de Material Vegetal (Excedentes > 5%)")
+        
+        st.markdown(f"""
+        Este módulo detecta proyecciones biológicas en campo que **superan la capacidad aprobada más el seguro del 5%** 
+        (`Tallos Proyectados > Plan × 1.05`), evaluando el balance a nivel de **Grupo Color**.
+        
+        * **Regla de Compensación Grupo Color:** Si una variedad tiene sobreproducción pero otra del mismo color está deficitaria, se compensan. Solo se cancela el **excedente neto del grupo color** que supere el 5% de holgura.
+        * **Distribución de Semanas:** Cada cancelación se asigna a su **semana de pedido respectiva** en el futuro (entre **{sem_siguiente}** y **{sem_firme_default}**). No se acumulan en una sola semana ni se cancelan semanas pasadas.
+        * **Formato de Archivo:** El Excel descargado mantiene **la estructura estándar requerida por el sistema** (`Flor | Color | Variedad | Semanas...`) sin comentarios adicionales.
+        """)
+
+        modo_canc = st.radio(
+            "Método de Determinación de Cancelación:",
+            ["⚡ Detección Automática con Compensación de Grupo Color (> 5% Seguro)", "✍️ Solicitud de Cancelación Directa por Lote"],
+            horizontal=True,
+            key="radio_modo_canc"
+        )
+
+        if modo_canc == "⚡ Detección Automática con Compensación de Grupo Color (> 5% Seguro)":
+            col_c1, col_c2 = st.columns([2, 1])
+            with col_c1:
+                st.info(f"💡 Se evalúa la proyección consolidada contra el Plan más 5% de seguro por Grupo Color. Semanas de cancelación ejecutables: **{sem_siguiente}** a **{sem_firme_default}**.")
+            with col_c2:
+                filtro_flor_canc = st.selectbox("Filtrar por Flor", ["Todas"] + sorted(list(df_plan[col_flor].dropna().unique())), key="filtro_flor_canc")
+
+            if st.button("Evaluar Excedentes y Generar Solicitud de Cancelación", type="primary", key="btn_eval_canc"):
+                with st.spinner("Consolidando ForeCast 52 semanas y detectando sobrecupos netos por Grupo Color..."):
+                    try:
+                        df_fc_completo = obtener_forecast_52w_completo(db)
+                        semanas_fc_cols = [c for c in df_fc_completo.columns if str(c).startswith('202')]
+
+                        fc_melt = df_fc_completo.melt(
+                            id_vars=['Flor', 'Color', 'Variedad'],
+                            value_vars=semanas_fc_cols,
+                            var_name='Semana',
+                            value_name='Tallos_Forecast'
+                        )
+                        fc_melt['Variedad_Norm'] = fc_melt['Variedad'].astype(str).str.strip().str.lower()
+                        fc_melt['Flor_Canon'] = fc_melt['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[0])
+                        fc_melt['Color_Canon'] = fc_melt['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[1])
+                        fc_melt['Flor'] = fc_melt['Flor_Canon'].fillna(fc_melt['Flor'])
+                        fc_melt['Color'] = fc_melt['Color_Canon'].fillna(fc_melt['Color'])
+                        fc_melt['Flor_Norm'] = fc_melt['Flor'].str.strip().str.lower()
+                        fc_melt['Color_Norm'] = fc_melt['Color'].str.strip().str.lower()
+                        fc_melt['Semana_Clean'] = fc_melt['Semana'].astype(str)
+
+                        df_plan_eval = df_plan.dropna(subset=[col_capacidad]).copy()
+                        df_plan_eval = df_plan_eval[df_plan_eval[col_capacidad] > 0]
+                        df_plan_eval['Semana_Clean'] = df_plan_eval['Semana'].astype(str).str.replace(".0", "")
+                        df_plan_eval['Variedad_Norm'] = df_plan_eval['Variedad'].astype(str).str.strip().str.lower()
+                        df_plan_eval['Flor_Canon'] = df_plan_eval['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[0])
+                        df_plan_eval['Color_Canon'] = df_plan_eval['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[1])
+                        df_plan_eval[col_flor] = df_plan_eval['Flor_Canon'].fillna(df_plan_eval[col_flor])
+                        df_plan_eval['Color'] = df_plan_eval['Color_Canon'].fillna(df_plan_eval['Color'])
+                        df_plan_eval['Flor_Norm'] = df_plan_eval[col_flor].astype(str).str.strip().str.lower()
+                        df_plan_eval['Color_Norm'] = df_plan_eval['Color'].astype(str).str.strip().str.lower()
+
+                        if filtro_flor_canc != "Todas":
+                            df_plan_eval = df_plan_eval[df_plan_eval[col_flor] == filtro_flor_canc]
+                            fc_melt = fc_melt[fc_melt['Flor'] == filtro_flor_canc]
+
+                        var_plan = df_plan_eval.groupby(['Variedad_Norm', col_flor, 'Color', 'Variedad', 'Semana_Clean'])[col_capacidad].sum().reset_index()
+                        var_fc = fc_melt.groupby(['Variedad_Norm', 'Semana_Clean'])['Tallos_Forecast'].sum().reset_index()
+                        var_m = pd.merge(var_plan, var_fc, on=['Variedad_Norm', 'Semana_Clean'], how='left')
+                        var_m['Tallos_Forecast'] = var_m['Tallos_Forecast'].fillna(0)
+                        var_m['Flor_Norm'] = var_m[col_flor].str.strip().str.lower()
+                        var_m['Color_Norm'] = var_m['Color'].str.strip().str.lower()
+                        var_m['Raw_Surplus'] = (var_m['Tallos_Forecast'] - var_m[col_capacidad] * 1.05).clip(lower=0)
+
+                        # Balance a nivel de Grupo Color [Flor, Color, Semana]
+                        gc_plan = var_m.groupby(['Flor_Norm', 'Color_Norm', 'Semana_Clean'])[col_capacidad].sum().reset_index().rename(columns={col_capacidad: 'GC_Plan'})
+                        gc_fc = var_m.groupby(['Flor_Norm', 'Color_Norm', 'Semana_Clean'])['Tallos_Forecast'].sum().reset_index().rename(columns={'Tallos_Forecast': 'GC_FC'})
+                        gc_raw_sur = var_m.groupby(['Flor_Norm', 'Color_Norm', 'Semana_Clean'])['Raw_Surplus'].sum().reset_index().rename(columns={'Raw_Surplus': 'GC_Raw_Sur_Sum'})
+
+                        gc_info = pd.merge(gc_plan, gc_fc, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'])
+                        gc_info = pd.merge(gc_info, gc_raw_sur, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'])
+                        gc_info['GC_Net_Surplus'] = (gc_info['GC_FC'] - gc_info['GC_Plan'] * 1.05).clip(lower=0)
+
+                        df_eval = pd.merge(var_m, gc_info, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'], how='left')
+
+                        # Distribución proporcional solo si el grupo color supera el 5% neto
+                        df_eval['Net_Surplus_Var'] = 0.0
+                        mask_sur = (df_eval['GC_Net_Surplus'] > 50) & (df_eval['GC_Raw_Sur_Sum'] > 0) & (df_eval['Raw_Surplus'] > 0)
+                        df_eval.loc[mask_sur, 'Net_Surplus_Var'] = df_eval.loc[mask_sur, 'GC_Net_Surplus'] * (df_eval.loc[mask_sur, 'Raw_Surplus'] / df_eval.loc[mask_sur, 'GC_Raw_Sur_Sum'])
+
+                        # Margen general de la finca por semana de cosecha para proteger el volumen total
+                        finca_plan = df_plan_eval.groupby('Semana_Clean')[col_capacidad].sum().rename('Finca_Plan')
+                        finca_fc = fc_melt.groupby('Semana_Clean')['Tallos_Forecast'].sum().rename('Finca_FC')
+                        finca_margin = pd.concat([finca_plan, finca_fc], axis=1).dropna()
+                        finca_margin['Finca_Net_Margin'] = finca_margin['Finca_FC'] - finca_margin['Finca_Plan']
+                        finca_margin['Finca_Cumplimiento_%'] = (finca_margin['Finca_FC'] / finca_margin['Finca_Plan']) * 100
+
+                        cancel_records = []
+                        for _, r in df_eval[df_eval['Net_Surplus_Var'] > 50].iterrows():
+                            v = r['Variedad']
+                            fl = r[col_flor]
+                            col = r['Color']
+                            sem_cos = r['Semana_Clean']
+                            net_surplus = r['Net_Surplus_Var']
+
+                            aprov, dia_pico, metodo = resolver_curva_variedad(
+                                v, fl, col, dyn_lower, fc_stats, f_stats, global_stats
+                            )
+
+                            try:
+                                y = int(sem_cos[:4])
+                                w = int(sem_cos[4:])
+                                f_pico = date.fromisocalendar(y, w, 4)
+                                f_siem = f_pico - timedelta(days=dia_pico)
+                                f_ped = f_siem - timedelta(weeks=4)
+                                sem_canc = get_iso_week_string(f_ped)
+                            except Exception:
+                                continue
+
+                            # Filtro estricto: Solo semanas cancelables futuras en su fecha respectiva
+                            if sem_siguiente <= sem_canc < sem_firme_default:
+                                plantas_exc = net_surplus / aprov
+                                camas_canc = round(plantas_exc / 5200.0)
+                                if camas_canc >= 1:
+                                    esquejes_canc = camas_canc * 5200
+
+                                    # Evaluar seguridad para el plan general de la finca
+                                    f_margin = finca_margin.loc[sem_cos, 'Finca_Net_Margin'] if sem_cos in finca_margin.index else 0
+                                    f_cump = finca_margin.loc[sem_cos, 'Finca_Cumplimiento_%'] if sem_cos in finca_margin.index else 100.0
+                                    es_segura = bool(f_margin >= 0)
+
+                                    cancel_records.append({
+                                        "Flor": fl,
+                                        "Color": col,
+                                        "Variedad": v,
+                                        "Semana_Cosecha": f"S{sem_cos}",
+                                        "Semana_Cancelacion": sem_canc,
+                                        "Tallos_Plan": int(round(r[col_capacidad])),
+                                        "Plan_con_Colchon_5%": int(round(r[col_capacidad] * 1.05)),
+                                        "Tallos_ForeCast": int(round(r['Tallos_Forecast'])),
+                                        "Excedente_Color_Neto": f"Excedente Color: {int(round(r['GC_Net_Surplus'])):,} tll",
+                                        "Excedente_Tallos": int(round(net_surplus)),
+                                        "Aprovechamiento_%": round(aprov * 100.0, 1),
+                                        "Camas_a_Cancelar": camas_canc,
+                                        "Esquejes_a_Cancelar": esquejes_canc,
+                                        "Finca_Cumplimiento_%": round(f_cump, 1),
+                                        "Finca_Margen_Tallos": int(round(f_margin)),
+                                        "Gobernanza_Riesgo": "🟢 Segura (Superávit General Finca)" if es_segura else "🟡 Condicionada a Propagación",
+                                        "Es_Segura": es_segura,
+                                        "Motivo": "Excedente neto del Grupo Color supera seguro del 5%"
+                                    })
+
+                        if not cancel_records:
+                            st.success("🎉 No se detectaron sobrecupos netos por Grupo Color que superen el seguro del 5% en la ventana ejecutable.")
+                        else:
+                            df_canc_result = pd.DataFrame(cancel_records)
+                            st.session_state['df_cancelacion_raw'] = df_canc_result
+                            st.success(f"Se identificaron {len(df_canc_result)} cancelaciones netas distribuidas en sus semanas correspondientes.")
+
+                    except Exception as e:
+                        st.error(f"Error evaluando cancelaciones: {e}")
+
+        else:
+            # Modo B: Solicitud Directa
+            st.markdown("Ingresa una solicitud directa de cancelación de material vegetal para evitar recibir esquejes excedentes.")
+            with st.form("form_cancelacion_directa"):
+                col_can1, col_can2, col_can3 = st.columns(3)
+                with col_can1:
+                    flores_disp_c = sorted(list(df_plan[col_flor].dropna().unique()))
+                    flor_sel_c = st.selectbox("Flor", flores_disp_c, key="canc_flor")
+                    vars_disp_c = sorted(list(df_plan[df_plan[col_flor] == flor_sel_c]['Variedad'].dropna().unique()))
+                    var_sel_c = st.selectbox("Variedad", vars_disp_c, key="canc_var")
+                with col_can2:
+                    colores_disp_c = sorted(list(df_plan[df_plan['Variedad'] == var_sel_c]['Color'].dropna().unique()))
+                    col_sel_c = colores_disp_c[0] if colores_disp_c else "Desconocido"
+                    st.text_input("Color", value=col_sel_c, disabled=True, key="canc_col")
+                    sem_canc_directa = st.text_input(f"Semana de Cancelación (>= {sem_siguiente})", value=sem_siguiente, key="canc_sem")
+                with col_can3:
+                    camas_a_canc = st.number_input("Camas a Cancelar (5,200 esquejes)", min_value=1, value=2, step=1, key="canc_camas")
+                    motivo_canc = st.selectbox("Motivo de Cancelación", [
+                        "Producción en campo supera seguro del 5%",
+                        "Cancelación de pedido comercial por cliente",
+                        "Reducción de área/camas físicas disponibles",
+                        "Excedente proyectado en curva de floración"
+                    ], key="canc_motivo")
+
+                if st.form_submit_button("Agregar a Lista de Cancelación", type="primary"):
+                    sem_canc_clean = sem_canc_directa if sem_canc_directa.startswith("S") else f"S{sem_canc_directa}"
+                    if sem_canc_clean < sem_siguiente:
+                        st.error(f"❌ La semana de cancelación debe ser igual o posterior a la semana siguiente ({sem_siguiente}). No es posible cancelar semanas pasadas.")
+                    else:
+                        aprov, dia_pico, metodo = resolver_curva_variedad(
+                            var_sel_c, flor_sel_c, col_sel_c, dyn_lower, fc_stats, f_stats, global_stats
+                        )
+                        esquejes_canc = camas_a_canc * 5200
+                        tallos_canc = int(round(esquejes_canc * aprov))
+
+                        nuevo_canc = {
+                            "Flor": flor_sel_c,
+                            "Color": col_sel_c,
+                            "Variedad": var_sel_c,
+                            "Semana_Cosecha": "Directa",
+                            "Semana_Cancelacion": sem_canc_clean,
+                            "Tallos_Plan": 0,
+                            "Tallos_ForeCast": tallos_canc,
+                            "Excedente_Color_Neto": "Directa Manual",
+                            "Excedente_Tallos": tallos_canc,
+                            "Aprovechamiento_%": round(aprov * 100.0, 1),
+                            "Camas_a_Cancelar": camas_a_canc,
+                            "Esquejes_a_Cancelar": esquejes_canc,
+                            "Finca_Cumplimiento_%": 100.0,
+                            "Finca_Margen_Tallos": 0,
+                            "Gobernanza_Riesgo": "🟢 Manual Directa",
+                            "Es_Segura": True,
+                            "Motivo": motivo_canc
+                        }
+
+                        if 'df_cancelacion_raw' not in st.session_state:
+                            st.session_state['df_cancelacion_raw'] = pd.DataFrame([nuevo_canc])
+                        else:
+                            st.session_state['df_cancelacion_raw'] = pd.concat(
+                                [st.session_state['df_cancelacion_raw'], pd.DataFrame([nuevo_canc])], 
+                                ignore_index=True
+                            )
+                        st.success(f"Cancelación de '{camas_a_canc}' camas ({esquejes_canc:,} esquejes) agregada para '{var_sel_c}'.")
+
+        # Visualización de Cancelación de Material Vegetal
+        if 'df_cancelacion_raw' in st.session_state and not st.session_state['df_cancelacion_raw'].empty:
+            df_canc = st.session_state['df_cancelacion_raw']
+
+            if 'Es_Segura' not in df_canc.columns:
+                df_canc['Es_Segura'] = True
+            if 'Gobernanza_Riesgo' not in df_canc.columns:
+                df_canc['Gobernanza_Riesgo'] = "🟢 Segura"
+
+            st.divider()
+            st.markdown("### 📋 Resumen de Material Vegetal a Cancelar (Salidas para Planeación)")
+
+            st.info("""
+            🛡️ **Protección del Colchón del 5% y Gobernanza S&OP:**
+            * **Colchón del 5% Garantizado:** El sistema calcula el excedente estrictamente como `Tallos Proyectados - (Plan × 1.05)`. Por lo tanto, tras cancelar las camas sobrantes, la proyección de la variedad **permanece exactamente en el 105% del Plan**, preservando intacto el colchón de seguridad del 5%.
+            * **🟢 Cancelaciones Seguras (Inmediatas):** Semanas donde la producción consolidada de la finca supera el 100% del Plan Aprobado. Cancelar este exceso elimina sobrecostos de esquejes **sin riesgo de incumplir la meta general de producción**.
+            * **🟡 Cancelaciones Condicionadas a Propagación:** Semanas críticas o de déficit general (ej: San Valentín). **No se deben cancelar en la plataforma** hasta que Propagación apruebe y garantice la entrega del material extemporáneo, evitando dejar la finca desabastecida.
+            """)
+
+            tot_esq_canc = df_canc['Esquejes_a_Cancelar'].sum()
+            seg_esq = df_canc[df_canc['Es_Segura'] == True]['Esquejes_a_Cancelar'].sum()
+            seg_casos = (df_canc['Es_Segura'] == True).sum()
+            cond_esq = df_canc[df_canc['Es_Segura'] == False]['Esquejes_a_Cancelar'].sum()
+            cond_casos = (df_canc['Es_Segura'] == False).sum()
+
+            kpi_s1, kpi_s2, kpi_s3 = st.columns(3)
+            kpi_s1.metric("Total Excedentes Detectados", f"{tot_esq_canc:,.0f} esq", f"{len(df_canc)} casos")
+            kpi_s2.metric("🟢 Cancelaciones Seguras Ya", f"{seg_esq:,.0f} esq", f"{seg_casos} casos (Protege Plan Finca)")
+            kpi_s3.metric("🟡 Condicionadas a Propagación", f"{cond_esq:,.0f} esq", f"{cond_casos} casos (En espera)")
+
+            criterio_canc = st.radio(
+                "Filtro de Gobernanza para Descarga y Análisis:",
+                [
+                    "🟢 Solo Cancelaciones Seguras (Protege 100% del Plan General de la Finca)",
+                    "📋 Ver Todas las Cancelaciones (Seguras + Condicionadas)",
+                    "🟡 Solo Condicionadas a Propagación"
+                ],
+                horizontal=True,
+                key="radio_criterio_canc"
+            )
+
+            if "Solo Cancelaciones Seguras" in criterio_canc:
+                df_canc_mostrar = df_canc[df_canc['Es_Segura'] == True]
+            elif "Solo Condicionadas" in criterio_canc:
+                df_canc_mostrar = df_canc[df_canc['Es_Segura'] == False]
+            else:
+                df_canc_mostrar = df_canc
+
+            if df_canc_mostrar.empty:
+                st.info("No hay cancelaciones bajo el criterio seleccionado.")
+            else:
+                kpi_c1, kpi_c2, kpi_c3, kpi_c4 = st.columns(4)
+                m_tot_esq = df_canc_mostrar['Esquejes_a_Cancelar'].sum()
+                m_tot_cam = df_canc_mostrar['Camas_a_Cancelar'].sum()
+                m_tot_exc = df_canc_mostrar['Excedente_Tallos'].sum()
+                m_tot_vars = df_canc_mostrar['Variedad'].nunique()
+
+                kpi_c1.metric("Esquejes en Vista", f"{m_tot_esq:,.0f}")
+                kpi_c2.metric("Camas en Vista (5,200)", f"{m_tot_cam:,.0f}")
+                kpi_c3.metric("Excedente Tallos Neutralizado", f"{m_tot_exc:,.0f}")
+                kpi_c4.metric("Variedades en Vista", f"{m_tot_vars:,}")
+
+                cols_mostrar = [
+                    'Flor', 'Color', 'Variedad', 'Semana_Cosecha', 'Semana_Cancelacion',
+                    'Gobernanza_Riesgo', 'Finca_Cumplimiento_%',
+                    'Tallos_Plan', 'Plan_con_Colchon_5%', 'Tallos_ForeCast', 'Excedente_Color_Neto', 'Excedente_Tallos',
+                    'Aprovechamiento_%', 'Camas_a_Cancelar', 'Esquejes_a_Cancelar', 'Motivo'
+                ]
+                cols_mostrar = [c for c in cols_mostrar if c in df_canc_mostrar.columns]
+
+                st.dataframe(df_canc_mostrar[cols_mostrar], width='stretch')
+
+                excel_canc_erp = exportar_matriz_estandar_erp(
+                    df_canc_mostrar, col_semana='Semana_Cancelacion', col_valor='Esquejes_a_Cancelar'
+                )
+
+                col_dc1, col_dc2 = st.columns([2, 1])
+                with col_dc1:
+                    st.download_button(
+                        label=f"📥 Descargar Archivo para Plataforma ({len(df_canc_mostrar)} casos - {m_tot_esq:,.0f} Esquejes - Formato ERP)",
+                        data=excel_canc_erp,
+                        file_name=f"Cancelacion_Material_Vegetal_{date.today()}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                        width='stretch'
+                    )
+                with col_dc2:
+                    if st.button("🗑️ Limpiar Lista de Cancelación", width='stretch'):
+                        del st.session_state['df_cancelacion_raw']
+                        st.rerun()
