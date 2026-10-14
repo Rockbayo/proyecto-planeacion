@@ -10,7 +10,11 @@ from app.services.alertas_service import obtener_alertas_sop
 from app.services.ocupacion_service import (
     obtener_dimensiones_camas_bloques,
     resolver_bloque_tentativo,
-    calcular_ocupacion_semanal_52w
+    calcular_ocupacion_semanal_52w,
+    calcular_cancelaciones_reduccion_area_s2648,
+    SEMANA_CORTE_REDUCCION_AREA,
+    AREA_PRODUCTIVA_ACTUAL_M2,
+    AREA_PRODUCTIVA_REDUCIDA_M2
 )
 
 def get_iso_week_string(dt: date) -> str:
@@ -209,6 +213,7 @@ def render_pedido_module(db):
             🔒 **Horizonte Congelado Inmutable (24 Semanas — S&OP Freeze Zone):**
             * **Regla Inmutable:** Las semanas entre la semana actual (**{sem_actual}**) y **{sem_firme_default}** (24 semanas) ya se encuentran comprometidas en firme y contratadas con las casas de propagación. **No pueden modificarse ni recalcularse en este ciclo regular**.
             * **Horizonte Ejecutable en Firme:** El cálculo del pedido regular aplica estrictamente a partir de **{sem_firme_default}** en adelante.
+            * **Régimen de Área Reducida:** Este horizonte regular opera 100% bajo la capacidad reducida de **61,878 m²** (que rige desde la **Semana 2648**), calibrado dinámicamente según el bloque de destino.
             """)
 
         col_h1, col_h2 = st.columns([1.5, 2.5])
@@ -521,6 +526,7 @@ def render_pedido_module(db):
         st.warning(f"""
         ⚠️ **VENTANA FIRME (< 24 SEMANAS) — SUJETO A APROBACIÓN DE PROPAGACIÓN**
         
+        * **Corte Cronológico de Capacidad:** En este momento el área de la finca es de **64,878 m²** (hasta Semana 2647). A partir de la **Semana 2648**, el área se reduce a **61,878 m²** ($-3,000 \\text{{ m}}^2$, $-4.62\\%$). Los análisis evalúan la capacidad real vigente de cada período.
         * **Regla de Negocio Grupo Color:** Si a nivel de `[Flor, Color]` el volumen proyectado cumple con la capacidad del Plan Aprobado, **no se adiciona material**. Se compensan variedades dentro del mismo color comercial (confirmación real de propagación).
         * **Ventana Ejecutable:** Solo se programan pedidos para semanas futuras ejecutables (desde **{sem_siguiente}** hasta **{sem_firme_default}**). No se muestran semanas pasadas ni se acumulan pedidos.
         * **Formato de Archivo:** El Excel descargado mantiene **estrictamente la estructura estándar del pedido** (`Flor | Color | Variedad | Semanas...`) sin comentarios adicionales.
@@ -679,6 +685,8 @@ def render_pedido_module(db):
                 with col_ad3:
                     camas_adhoc = st.number_input("Camas Requeridas (5,200 esquejes)", min_value=1, value=5, step=1)
                     motivo_adhoc = st.selectbox("Motivo", [
+                        "Rebalanceo reactivo por reducción de área (Semana 2648 en adelante)",
+                        "Compensación de mix MVA post-reducción de área",
                         "Bajo aprovechamiento biológico en curvas piloto",
                         "Pérdida fitosanitaria en campo",
                         "Problemas de prendimiento en enraizamiento",
@@ -785,7 +793,11 @@ def render_pedido_module(db):
 
         modo_canc = st.radio(
             "Método de Determinación de Cancelación:",
-            ["⚡ Detección Automática con Compensación de Grupo Color (> 5% Seguro)", "✍️ Solicitud de Cancelación Directa por Lote"],
+            [
+                "⚡ Detección Automática con Compensación de Grupo Color (> 5% Seguro)",
+                "🔻 Ajuste Mandatorio por Reducción de Área (Semana 2648 en adelante — 64,878 m² → 61,878 m²)",
+                "✍️ Solicitud de Cancelación Directa por Lote"
+            ],
             horizontal=True,
             key="radio_modo_canc"
         )
@@ -929,8 +941,39 @@ def render_pedido_module(db):
                     except Exception as e:
                         st.error(f"Error evaluando cancelaciones: {e}")
 
+        elif modo_canc.startswith("🔻"):
+            st.markdown("##### 🔻 Ajuste Mandatorio por Reducción de Área Física (Semana 2648 en adelante)")
+            with st.container(border=True):
+                st.markdown(f"""
+                * **Cronograma de Área:** En este momento el área productiva real de la finca es de **64,878 m²** (hasta Semana 2647). A partir de la **Semana 2648**, el área se reduce físicamente a **61,878 m²** ($-3,000 \\text{{ m}}^2$, $-4.624\\%$).
+                * **Impacto en Pedidos:** Las órdenes programadas para siembra a partir de la semana **202648** en la ventana ejecutable (< 24 semanas) fueron proyectadas para 64,878 m² y tienen un excedente de material vegetal que ya no cabe físicamente en las camas de la finca.
+                * **Acción:** Cuantifica y genera la lista oficial de cancelaciones para recortar el material sobrante (~404,549 esquejes) preservando la estructura del pedido.
+                """)
+
+                col_red1, col_red2 = st.columns([2, 1])
+                with col_red1:
+                    st.info(f"📅 **Ventana Ejecutable:** Pedidos entre **{sem_siguiente}** y **{sem_firme_default}** con siembra >= **S{SEMANA_CORTE_REDUCCION_AREA}**.")
+                with col_red2:
+                    btn_calc_red = st.button("Evaluar Excedentes por Reducción de Área", type="primary", key="btn_eval_red")
+
+                if btn_calc_red:
+                    with st.spinner("Explosión de MRP y cálculo de excedentes de área..."):
+                        try:
+                            df_canc_red = calcular_cancelaciones_reduccion_area_s2648(
+                                archivo_pedido="PedidoConsolidado_master.xlsx",
+                                sem_inicio=sem_siguiente,
+                                sem_fin=sem_firme_default
+                            )
+                            if df_canc_red.empty:
+                                st.warning("No se encontraron pedidos afectados para la ventana seleccionada.")
+                            else:
+                                st.session_state['df_cancelacion_raw'] = df_canc_red
+                                st.success(f"✅ Se identificaron {len(df_canc_red)} registros de exceso por reducción de área ({df_canc_red['Esquejes_a_Cancelar'].sum():,} esquejes a cancelar).")
+                        except Exception as e:
+                            st.error(f"Error calculando cancelaciones por reducción de área: {e}")
+
         else:
-            # Modo B: Solicitud Directa
+            # Modo C: Solicitud Directa
             st.markdown("Ingresa una solicitud directa de cancelación de material vegetal para evitar recibir esquejes excedentes.")
             with st.form("form_cancelacion_directa"):
                 col_can1, col_can2, col_can3 = st.columns(3)

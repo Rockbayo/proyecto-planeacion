@@ -9,10 +9,13 @@ from app.models.models import Ubicacion, Siembra, Variedad, EstadoSiembra, Capac
 from app.core.database import Base, engine
 from app.services.forecast_service import isocalendar_to_string
 
-# Constantes Maestras de la Finca
-AREA_PRODUCTIVA_TOTAL_M2 = 61878.0       # Área comercial productiva real actual
-AREA_PRODUCTIVA_ANTERIOR_M2 = 64878.0   # Área comercial previa (con la que se diseñó el Plan Original)
-FACTOR_AJUSTE_AREA = AREA_PRODUCTIVA_TOTAL_M2 / AREA_PRODUCTIVA_ANTERIOR_M2 # 0.953759 (-4.62%)
+# Constantes Maestras de la Finca y Cronograma de Transición
+SEMANA_CORTE_REDUCCION_AREA = 202648     # Semana de corte: la reducción física se aplica a partir de S202648
+AREA_PRODUCTIVA_ACTUAL_M2 = 64878.0       # Área productiva real actual (hasta semana 202647)
+AREA_PRODUCTIVA_REDUCIDA_M2 = 61878.0     # Área productiva reducida a partir de semana 202648
+AREA_PRODUCTIVA_TOTAL_M2 = 61878.0        # Área comercial productiva régimen post-reducción
+AREA_PRODUCTIVA_ANTERIOR_M2 = 64878.0    # Área comercial previa (con la que se diseñó el Plan Original)
+FACTOR_AJUSTE_AREA = AREA_PRODUCTIVA_REDUCIDA_M2 / AREA_PRODUCTIVA_ANTERIOR_M2 # 0.953759 (-4.624%)
 
 CAMAS_COMERCIALES_TOTALES = 1168.0       # Camas en bloques 01 a 06
 CAMAS_INV_TOTALES = 48.0                 # Bloque INV (Investigación / I+D)
@@ -314,7 +317,11 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
                             if s_occ in ocupacion_matrix:
                                 # Acumular demanda de camas del pedido
                                 ocupacion_matrix[s_occ]['camas_pedido_original'] += camas_req
-                                ocupacion_matrix[s_occ]['camas_pedido_ajustado'] += (camas_req * FACTOR_AJUSTE_AREA)
+                                s_int = int(s_occ) if str(s_occ).isdigit() else 202640
+                                if s_int >= SEMANA_CORTE_REDUCCION_AREA:
+                                    ocupacion_matrix[s_occ]['camas_pedido_ajustado'] += (camas_req * FACTOR_AJUSTE_AREA)
+                                else:
+                                    ocupacion_matrix[s_occ]['camas_pedido_ajustado'] += camas_req
                     except Exception:
                         pass
         except Exception:
@@ -341,8 +348,6 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
             return "Fall / Invierno 2027"
         return "Regular"
 
-    m2_por_cama_prom = AREA_PRODUCTIVA_TOTAL_M2 / CAMAS_COMERCIALES_TOTALES
-
     for sem in sorted(semanas_lista):
         info = ocupacion_matrix[sem]
         c_vivas = info['camas_vivas']
@@ -357,19 +362,28 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
             camas_tot_orig = float(c_vivas)
             camas_tot_adj = float(c_vivas)
 
+        sem_int = int(sem) if sem.isdigit() else 202640
+        temp = clasificar_temporada(sem_int)
+
+        if sem_int < SEMANA_CORTE_REDUCCION_AREA:
+            area_cap_sem = AREA_PRODUCTIVA_ACTUAL_M2
+            regimen_area = "Base Actual (64,878 m²)"
+        else:
+            area_cap_sem = AREA_PRODUCTIVA_REDUCIDA_M2
+            regimen_area = "Base Reducida (61,878 m²)"
+
+        m2_cama_sem = area_cap_sem / CAMAS_COMERCIALES_TOTALES
+
         # Métricas del Plan Original (Base 64,878 m2)
         pct_orig = round((camas_tot_orig / CAMAS_COMERCIALES_TOTALES) * 100.0, 1)
 
-        # Métricas del Plan Ajustado (Base 61,878 m2)
+        # Métricas del Plan Ajustado
         c_adj_clamped = min(CAMAS_COMERCIALES_TOTALES, round(camas_tot_adj, 1))
         pct_adj = round((c_adj_clamped / CAMAS_COMERCIALES_TOTALES) * 100.0, 1)
         libres_adj = max(0.0, CAMAS_COMERCIALES_TOTALES - c_adj_clamped)
 
-        area_occ_adj = round(c_adj_clamped * m2_por_cama_prom, 1)
-        area_lib_adj = round(max(0.0, AREA_PRODUCTIVA_TOTAL_M2 - area_occ_adj), 1)
-
-        sem_int = int(sem) if sem.isdigit() else 202640
-        temp = clasificar_temporada(sem_int)
+        area_occ_adj = round(c_adj_clamped * m2_cama_sem, 1)
+        area_lib_adj = round(max(0.0, area_cap_sem - area_occ_adj), 1)
 
         # Diagnóstico de estado
         if pct_orig > 100.0:
@@ -388,6 +402,8 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
             "Semana": sem,
             "Semana_Num": f"S{sem[-2:]}",
             "Temporada": temp,
+            "Regimen_Area": regimen_area,
+            "Area_Capacidad_m2": area_cap_sem,
             "Camas_Ocupadas": round(c_adj_clamped, 1),
             "Camas_Libres": round(libres_adj, 1),
             "Ocupacion_%": pct_adj,
@@ -824,5 +840,86 @@ def resolver_bloque_tentativo(sem_siembra: str, df_bloques_52w: pd.DataFrame = N
 
     # Fallback a promedio ponderado de finca
     return "FINCA", dict_dimensiones.get("FINCA", dict_dimensiones.get("01"))
+
+def calcular_cancelaciones_reduccion_area_s2648(archivo_pedido: str = "PedidoConsolidado_master.xlsx", sem_inicio: str = None, sem_fin: str = None) -> pd.DataFrame:
+    """
+    Calcula el excedente de material vegetal derivado de la reducción de área física 
+    (64,878 m2 -> 61,878 m2, -4.624%) a partir de la semana de siembra 202648.
+    
+    Identifica para cada orden en la ventana ejecutable (< 24 semanas) los esquejes 
+    que no tienen cama disponible y deben ser cancelados para evitar sobrecostos.
+    """
+    import glob
+    from datetime import date, timedelta
+    from app.services.mva_service import generar_plan_mva
+
+    if not os.path.exists(archivo_pedido):
+        candidatos = glob.glob("PedidoConsolidado*.xlsx") + glob.glob("*pedido*.xlsx")
+        archivo_pedido = candidatos[0] if candidatos else None
+
+    if not archivo_pedido or not os.path.exists(archivo_pedido):
+        return pd.DataFrame()
+
+    hoy = date.today()
+    if not sem_inicio:
+        y, w, _ = (hoy + timedelta(weeks=1)).isocalendar()
+        sem_inicio = f"S{y}{w:02d}"
+    if not sem_fin:
+        y, w, _ = (hoy + timedelta(weeks=24)).isocalendar()
+        sem_fin = f"S{y}{w:02d}"
+
+    sem_ini_clean = sem_inicio if sem_inicio.startswith("S") else f"S{sem_inicio}"
+    sem_fin_clean = sem_fin if sem_fin.startswith("S") else f"S{sem_fin}"
+
+    df_mrp = generar_plan_mva(archivo_pedido, week_is="Pedido")
+    if df_mrp.empty or "Semana_Siembra" not in df_mrp.columns:
+        return pd.DataFrame()
+
+    df_mrp['Sem_Ped_Clean'] = 'S' + df_mrp['Semana_Pedido_MV'].astype(str)
+    df_mrp['Sem_Siem_Clean'] = df_mrp['Semana_Siembra'].astype(str)
+
+    # Filtrar por semanas de siembra >= 202648 y ventana ejecutable de pedido
+    mask = (
+        (df_mrp['Sem_Siem_Clean'] >= str(SEMANA_CORTE_REDUCCION_AREA)) &
+        (df_mrp['Sem_Ped_Clean'] >= sem_ini_clean) &
+        (df_mrp['Sem_Ped_Clean'] < sem_fin_clean)
+    )
+    df_filt = df_mrp[mask].copy()
+    if df_filt.empty:
+        return pd.DataFrame()
+
+    FACTOR_REDUCCION = AREA_PRODUCTIVA_REDUCIDA_M2 / AREA_PRODUCTIVA_ACTUAL_M2
+    records = []
+    for _, row in df_filt.iterrows():
+        esq_orig = int(row['Esquejes_Para_Siembra (Final)'])
+        esq_adj = int(round(esq_orig * FACTOR_REDUCCION))
+        esq_canc = esq_orig - esq_adj
+        if esq_canc <= 0:
+            continue
+
+        camas_canc = round(esq_canc / 5200.0, 2)
+        records.append({
+            "Flor": str(row.get('Flor', '')).strip(),
+            "Color": str(row.get('Color', '')).strip(),
+            "Variedad": str(row.get('Variedad', '')).strip(),
+            "Semana_Siembra": f"S{row['Sem_Siem_Clean']}",
+            "Semana_Cancelacion": row['Sem_Ped_Clean'],
+            "Tallos_Plan": esq_orig,
+            "Plan_con_Colchon_5%": int(round(esq_orig * 1.05)),
+            "Tallos_ForeCast": esq_orig,
+            "Excedente_Color_Neto": f"Exceso Área S{SEMANA_CORTE_REDUCCION_AREA}: {esq_canc:,} esq",
+            "Excedente_Tallos": esq_canc,
+            "Aprovechamiento_%": 100.0,
+            "Camas_a_Cancelar": camas_canc,
+            "Esquejes_a_Cancelar": esq_canc,
+            "Finca_Cumplimiento_%": 100.0,
+            "Finca_Margen_Tallos": 0,
+            "Gobernanza_Riesgo": "🟢 Mandatorio (Área Reducida a 61,878 m²)",
+            "Es_Segura": True,
+            "Motivo": f"Ajuste mandatorio por reducción de área física (-4.62% a partir de semana S{SEMANA_CORTE_REDUCCION_AREA})"
+        })
+
+    return pd.DataFrame(records)
+
 
 

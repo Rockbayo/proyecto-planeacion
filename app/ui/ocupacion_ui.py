@@ -10,6 +10,9 @@ from app.services.ocupacion_service import (
     calcular_balanceo_estacional,
     aplicar_nivelacion_quirurgica_picos,
     exportar_pedido_nivelado_excel,
+    SEMANA_CORTE_REDUCCION_AREA,
+    AREA_PRODUCTIVA_ACTUAL_M2,
+    AREA_PRODUCTIVA_REDUCIDA_M2,
     AREA_PRODUCTIVA_TOTAL_M2,
     AREA_PRODUCTIVA_ANTERIOR_M2,
     FACTOR_AJUSTE_AREA,
@@ -51,14 +54,14 @@ def render_ocupacion_module(db):
 
     # Banner Superior de Parámetros Maestros
     with st.container(border=True):
-        st.markdown("#### 🎯 Parámetros Físicos Maestros y Capacidad Instalada")
+        st.markdown("#### 🎯 Parámetros Físicos Maestros y Cronograma de Capacidad")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Área Real Actual", f"{AREA_PRODUCTIVA_TOTAL_M2:,.0f} m²", f"-3,000 m² (-4.62%) vs {AREA_PRODUCTIVA_ANTERIOR_M2:,.0f} m²")
-        c2.metric("Camas Comerciales", f"{camas_com_tot:,} camas", f"{AREA_PRODUCTIVA_TOTAL_M2/camas_com_tot:.2f} m²/cama bruta prom.")
-        c3.metric("Meta Finca (Aprov.)", f"{META_TALLOS_M2_ANUAL:.0f} tallos/m²", f"~{AREA_PRODUCTIVA_TOTAL_M2 * META_TALLOS_M2_ANUAL / 1e6:.2f}M tallos/año")
+        c1.metric("Área Real Vigente Hoy", f"{AREA_PRODUCTIVA_ACTUAL_M2:,.0f} m²", f"61,878 m² a partir de S{SEMANA_CORTE_REDUCCION_AREA}")
+        c2.metric("Camas Comerciales", f"{camas_com_tot:,} camas", f"{AREA_PRODUCTIVA_ACTUAL_M2/camas_com_tot:.2f} m²/cama hoy")
+        c3.metric("Meta Finca (Aprov.)", f"{META_TALLOS_M2_ANUAL:.0f} tallos/m²", f"~{AREA_PRODUCTIVA_ACTUAL_M2 * META_TALLOS_M2_ANUAL / 1e6:.2f}M tallos/año")
         c4.metric("Rotación Promedio", f"{CICLOS_ANUALES_PROMEDIO:.1f} ciclos/año", "~14.9 sem / ciclo completo")
 
-        st.caption(f"📏 **Dimensiones Cama según Planos:** Rango de **51.57 m² a 60.62 m² brutos/cama** (media {AREA_PRODUCTIVA_TOTAL_M2/camas_com_tot:.1f} m²). Era neta cultivable $\approx {AREA_NETA_CAMA_M2:.1f} \text{{ m}}^2$ ({ANCHO_CAMA_M:.2f} m $\\times$ {LARGO_CAMA_M:.1f} m). | Bloque **INV (Investigación):** 48 camas (2,835 m²) exclusivas para I+D y pruebas (excluidas del plan comercial).")
+        st.caption(f"📏 **Cronograma de Transición:** En este momento el área es de **64,878 m²**; a partir de la **Semana 2648** se reduce a **61,878 m²** (-3,000 m², -4.62%). | Camas de 51.57 m² a 60.62 m² brutos. | Bloque **INV (Investigación):** 48 camas (2,835 m²) exclusivas para I+D (excluidas del plan comercial).")
 
     # Pestañas del Módulo
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -278,16 +281,17 @@ def render_ocupacion_module(db):
         # Gobernanza S&OP: Separación de Responsabilidades y Ventana Congelada (24 Semanas)
         with st.container(border=True):
             st.markdown("#### 🏛️ Gobernanza S&OP: Separación de Responsabilidades y Ventana Congelada (24 Semanas)")
-            st.markdown("""
+            st.markdown(f"""
+            * **Cronograma de Transición de Área Física:**
+              - **Vigente Hoy (hasta S2647):** Área comercial de **64,878 m²**.
+              - **A partir de Semana 2648:** Reducción física a **61,878 m²** ($-3,000 \\text{{ m}}^2$, $-4.62\\%$).
             * **Alcance del Módulo de Ocupación:** Este módulo establece los techos físicos de capacidad (**1,168 camas comerciales**), 
               detecta sobrecupos en picos estacionales (San Valentín y Navidad) y programa descansos y paradas de bloques en Summer.
-            * **Generación y Emisión de Pedidos de Esquejes:** La nivelación cuantitativa, calibración física por cama y exportación oficial 
-              del Pedido Consolidado se gestiona **exclusivamente desde el módulo de Pedido de Material Vegetal**.
-            * **Regla Inmutable de Ventana Congelada (24 Semanas):** Los pedidos de las próximas 24 semanas ya están contratados y comprometidos 
-              en firme con las casas matrices y propagadores; **no pueden modificarse retroactivamente**.
-            * **Calibración Dinámica por Bloque Tentativo:** En el módulo de Pedido, el estándar plano anterior de 5,200 esquejes/cama 
-              ha sido sustituido por el dimensionamiento dinámico según el bloque de destino (Bloques 01 a 06), 
-              eliminando pérdidas por exceso en bloques pequeños (B05 y B06) y garantizando que ningún bloque grande quede desabastecido.
+            * **Ajuste de Pedidos en Material Vegetal:** Los pedidos de la ventana de 24 semanas para siembras a partir de la Semana 2648 
+              fueron dimensionados con el área anterior de 64,878 m². Su excedente (~404,549 esquejes) se gestiona y cancela formalmente en el módulo 
+              **[🌱 Pedido de Material Vegetal / Cancelaciones y Extemporáneos](?nav=pedido)** para evitar recibir material que no tiene cama disponible.
+            * **Regla Inmutable de Ventana Congelada (24 Semanas):** Los pedidos regulares en firme aplican a partir de **+24 semanas** 
+              totalmente calibrados bajo el régimen de 61,878 m² y dimensionados por bloque de destino.
             """)
 
         st.divider()
