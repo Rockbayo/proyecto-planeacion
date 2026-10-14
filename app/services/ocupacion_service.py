@@ -401,6 +401,7 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
         res_semanal.append({
             "Semana": sem,
             "Semana_Num": f"S{sem[-2:]}",
+            "Semana_Label": f"S{sem[2:]}",
             "Temporada": temp,
             "Regimen_Area": regimen_area,
             "Area_Capacidad_m2": area_cap_sem,
@@ -509,7 +510,7 @@ def calcular_balanceo_estacional(df_semanal: pd.DataFrame, meta_tallos_m2: float
         }
     }
 
-def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_COMERCIALES_TOTALES) -> dict:
+def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_COMERCIALES_TOTALES, df_52w: pd.DataFrame = None) -> dict:
     """
     Implementa la Opción B (Nivelación Quirúrgica en Picos):
     - Identifica las semanas donde la demanda acumulada del Plan Original supera las 1,168 camas comerciales.
@@ -613,8 +614,13 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
 
     # Construir curva semanal nivelada
     res_semanal = []
-    semanas_todas = sorted(list(set(list(occ_orig.keys()) + list(occ_nivelada.keys()))))
-    semanas_52 = [s for s in semanas_todas if '202638' <= s <= '202745']
+    if df_52w is not None and not df_52w.empty:
+        semanas_52 = sorted(list(df_52w['Semana'].unique()))
+        live_camas_map = dict(zip(df_52w['Semana'], df_52w['Camas_Ocupadas']))
+    else:
+        semanas_todas = sorted(list(set(list(occ_orig.keys()) + list(occ_nivelada.keys()))))
+        semanas_52 = [s for s in semanas_todas if '202640' <= s <= '202740']
+        live_camas_map = {}
 
     def clasificar_temporada(sem_int):
         if 202640 <= sem_int <= 202646:
@@ -634,8 +640,9 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
         return "Regular"
 
     for s in semanas_52:
-        c_orig = round(occ_orig.get(s, 0.0), 1)
-        c_niv = round(min(max_camas, occ_nivelada.get(s, 0.0)), 1)
+        c_live = float(live_camas_map.get(s, 0.0))
+        c_orig = round(max(c_live, occ_orig.get(s, 0.0)), 1)
+        c_niv = round(max(c_live, min(max_camas, occ_nivelada.get(s, 0.0))), 1)
         pct_orig = round((c_orig / max_camas) * 100.0, 1)
         pct_niv = round((c_niv / max_camas) * 100.0, 1)
         libres_niv = round(max(0.0, max_camas - c_niv), 1)
@@ -657,6 +664,7 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
         res_semanal.append({
             "Semana": s,
             "Semana_Num": f"S{s[-2:]}",
+            "Semana_Label": f"S{s[2:]}",
             "Temporada": temp,
             "Camas_Plan_Original": c_orig,
             "Ocupacion_Original_%": pct_orig,
@@ -679,7 +687,7 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
     camas_dif_anual = round(camas_tot_orig - camas_tot_niv, 1)
 
     kpis_niv = {
-        "max_camas_original": max(v for s, v in occ_orig.items() if '202638' <= s <= '202745'),
+        "max_camas_original": max([v for s, v in occ_orig.items() if s in semanas_52] or [1168.0]),
         "max_camas_nivelado": max(df_semanal_niv['Camas_Niveladas_OpB']) if not df_semanal_niv.empty else max_camas,
         "techo_comercial": max_camas,
         "camas_ajustadas_total_anio": camas_dif_anual,
