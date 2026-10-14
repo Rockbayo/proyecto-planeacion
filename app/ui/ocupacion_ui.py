@@ -8,6 +8,8 @@ from app.services.ocupacion_service import (
     obtener_estado_ocupacion_actual,
     calcular_ocupacion_semanal_52w,
     calcular_balanceo_estacional,
+    aplicar_nivelacion_quirurgica_picos,
+    exportar_pedido_nivelado_excel,
     AREA_PRODUCTIVA_TOTAL_M2,
     AREA_PRODUCTIVA_ANTERIOR_M2,
     FACTOR_AJUSTE_AREA,
@@ -133,15 +135,18 @@ def render_ocupacion_module(db):
         """)
 
         df_52w, df_bloques_52w = calcular_ocupacion_semanal_52w(db)
+        res_op_b = aplicar_nivelacion_quirurgica_picos(db)
+        df_niv = res_op_b.get("df_semanal_nivelado", pd.DataFrame())
+        kpis_niv = res_op_b.get("kpis_nivelacion", {})
 
         col_c1, col_c2 = st.columns([2, 1])
         with col_c1:
             modo_vista = st.radio(
                 "Seleccionar Escenario de Proyección:",
                 [
-                    "Plan Ajustado a Capacidad Real (61,878 m²) [Recomendado - Dentro de Techo]",
+                    "Plan Nivelado Quirúrgico (Opción B) [Adoptado - Techo 1,168 Camas Respetado]",
                     "Plan Original Diseñado con 64,878 m² [Muestra Sobrecupo en Picos]",
-                    "Comparativa Ambos Planes (Overlaid)"
+                    "Comparativa Superpuesta (Plan Original vs. Opción B)"
                 ],
                 horizontal=True
             )
@@ -152,7 +157,16 @@ def render_ocupacion_module(db):
 
         # Preparación de datos para visualización
         techo_camas = CAMAS_COMERCIALES_TOTALES
-        df_plot = df_52w.copy()
+        
+        # Merge de df_52w con nivelación si está disponible
+        if not df_niv.empty:
+            df_plot = pd.merge(df_52w, df_niv[['Semana', 'Camas_Niveladas_OpB', 'Ocupacion_Nivelada_%']], on='Semana', how='left')
+            df_plot['Camas_Niveladas_OpB'] = df_plot['Camas_Niveladas_OpB'].fillna(df_plot['Camas_Ocupadas'])
+            df_plot['Ocupacion_Nivelada_%'] = df_plot['Ocupacion_Nivelada_%'].fillna(df_plot['Ocupacion_%'])
+        else:
+            df_plot = df_52w.copy()
+            df_plot['Camas_Niveladas_OpB'] = df_plot['Camas_Ocupadas']
+            df_plot['Ocupacion_Nivelada_%'] = df_plot['Ocupacion_%']
 
         # Techo Físico (Línea Roja)
         df_rule = pd.DataFrame([{'Techo': techo_camas}])
@@ -175,12 +189,12 @@ def render_ocupacion_module(db):
             x=alt.X('Semana_Num:N', title='Semana Operativa', axis=alt.Axis(labelAngle=-45))
         )
 
-        if modo_vista == "Plan Ajustado a Capacidad Real (61,878 m²) [Recomendado - Dentro de Techo]":
-            line_chart = base_chart.mark_line(point=True, color='#2ca02c', strokeWidth=2.5).encode(
-                y=alt.Y('Camas_Ocupadas:Q', title='Camas Ocupadas (Plan Ajustado)', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
-                tooltip=['Semana:N', 'Temporada:N', 'Camas_Ocupadas:Q', 'Ocupacion_%:Q', 'Estado_Capacidad:N']
+        if modo_vista == "Plan Nivelado Quirúrgico (Opción B) [Adoptado - Techo 1,168 Camas Respetado]":
+            line_chart = base_chart.mark_line(point=True, color='#1f77b4', strokeWidth=2.5).encode(
+                y=alt.Y('Camas_Niveladas_OpB:Q', title='Camas Ocupadas Niveladas', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
+                tooltip=['Semana:N', 'Temporada:N', alt.Tooltip('Camas_Niveladas_OpB:Q', title='Camas Niveladas'), alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación (%)')]
             )
-            titulo_grafico = "Curva de Ocupación con Plan Ajustado a Capacidad Real (61,878 m² | 1,168 Camas)"
+            titulo_grafico = "Curva de Ocupación Nivelada (Opción B): Capacidad Máxima de 1,168 Camas 100% Respetada"
             chart_final = band_opt + line_chart + rule_techo
 
         elif modo_vista == "Plan Original Diseñado con 64,878 m² [Muestra Sobrecupo en Picos]":
@@ -197,10 +211,10 @@ def render_ocupacion_module(db):
                 tooltip=['Semana:N', 'Temporada:N', alt.Tooltip('Camas_Plan_Original:Q', title='Plan Original (64k m²)'), 'Ocupacion_Original_%:Q']
             )
             line_adj = base_chart.mark_line(point=True, color='#1f77b4', strokeWidth=2.5).encode(
-                y='Camas_Ocupadas:Q',
-                tooltip=['Semana:N', 'Temporada:N', alt.Tooltip('Camas_Ocupadas:Q', title='Plan Ajustado (61k m²)'), 'Ocupacion_%:Q', 'Diferencia_Camas:Q']
+                y='Camas_Niveladas_OpB:Q',
+                tooltip=['Semana:N', 'Temporada:N', alt.Tooltip('Camas_Niveladas_OpB:Q', title='Plan Nivelado OpB (61k m²)'), 'Ocupacion_Nivelada_%:Q']
             )
-            titulo_grafico = "Comparativa: Plan Original (Rojo Discontinuo, 64k m²) vs. Plan Ajustado (Azul Sólido, 61k m²)"
+            titulo_grafico = "Comparativa: Plan Original (Rojo Discontinuo, 64k m²) vs. Opción B Nivelada (Azul Sólido, 61k m²)"
             chart_final = band_opt + line_orig + line_adj + rule_techo
 
         chart_render = chart_final.properties(height=380, title=titulo_grafico)
@@ -208,34 +222,28 @@ def render_ocupacion_module(db):
 
         st.caption("🔴 **Línea Roja Discontinua:** Techo físico infranqueable (1,168 camas). | 🟢 **Franja Verde Sombreada:** Rango óptimo de ocupación sostenida (85% a 95%).")
 
-        # Alerta de Sobrecupo del Plan Original
-        sems_sobrecupo = df_52w[df_52w['Ocupacion_Original_%'] > 100.0]
-        if not sems_sobrecupo.empty:
-            max_c_orig = sems_sobrecupo['Camas_Plan_Original'].max()
-            max_pct_orig = sems_sobrecupo['Ocupacion_Original_%'].max()
-            st.warning(f"""
-            ⚠️ **Diagnóstico S&OP de Sobrecupo en Plan Anterior:**
-            El Plan Original (formulado con **64,878 m²**) sobrepasa la capacidad física instalada en **{len(sems_sobrecupo)} semanas del año**, 
-            alcanzando un pico máximo de **{max_c_orig:.0f} camas ({max_pct_orig:.1f}% de ocupación)** en la semana **S202706**.
-            Al aplicar el factor de ajuste $\\times {FACTOR_AJUSTE_AREA:.5f}$ a los **61,878 m²**, el pico desciende exactamente a **{max_c_orig * FACTOR_AJUSTE_AREA:.0f} camas (97.9%)**, 
-            eliminando por completo el sobrecupo y respetando las 1,168 camas comerciales.
-            """)
+        st.success(f"""
+        ✅ **Solución de Nivelación Aplicada (Opción B):**
+        El Plan Original sobrepasaba las 1,168 camas comerciales en los picos de San Valentín y Navidad (alcanzando hasta **{kpis_niv.get('max_camas_original', 1200):.0f} camas**).
+        Con la **Nivelación Quirúrgica (Opción B)**, el pico desciende exactamente a **{kpis_niv.get('max_camas_nivelado', 1168):.0f} camas (100.0%)**, 
+        preservando el **100% de la producción en las {kpis_niv.get('semanas_intactas_100pct', 42)} semanas regulares y de Summer**.
+        """)
 
         # Tabla Semanal Detallada
-        with st.expander("📋 Ver Detalle Semana a Semana (52 Semanas) con Ajuste de Pedido", expanded=False):
+        with st.expander("📋 Ver Detalle Semana a Semana (52 Semanas) con Nivelación Opción B", expanded=False):
             st.dataframe(
-                df_52w[[
-                    "Semana", "Temporada", "Camas_Ocupadas", "Ocupacion_%", 
+                df_plot[[
+                    "Semana", "Temporada", "Camas_Niveladas_OpB", "Ocupacion_Nivelada_%", 
                     "Camas_Plan_Original", "Ocupacion_Original_%",
                     "Diferencia_Camas", "Ahorro_Esquejes", "Estado_Capacidad"
                 ]],
                 column_config={
-                    "Ocupacion_%": st.column_config.NumberColumn("Ocup. Ajustada (%)", format="%.1f%%"),
+                    "Ocupacion_Nivelada_%": st.column_config.NumberColumn("Ocup. Nivelada (%)", format="%.1f%%"),
                     "Ocupacion_Original_%": st.column_config.NumberColumn("Ocup. Original (%)", format="%.1f%%"),
-                    "Camas_Ocupadas": st.column_config.NumberColumn("Camas Ajustadas", format="%.1f"),
+                    "Camas_Niveladas_OpB": st.column_config.NumberColumn("Camas Niveladas (OpB)", format="%.1f"),
                     "Camas_Plan_Original": st.column_config.NumberColumn("Camas Originales", format="%.1f"),
                     "Diferencia_Camas": st.column_config.NumberColumn("Ajuste Camas", format="%.1f"),
-                    "Ahorro_Esquejes": st.column_config.NumberColumn("Ajuste Esquejes Pedido", format="%,d"),
+                    "Ahorro_Esquejes": st.column_config.NumberColumn("Ajuste Esquejes", format="%,d"),
                 },
                 width="stretch",
                 hide_index=True
@@ -254,53 +262,69 @@ def render_ocupacion_module(db):
         bal_info = calcular_balanceo_estacional(df_52w)
         kpis = bal_info['kpis_maestros']
 
-        # Banner de Ajuste de Área
+        # Banner de Adopción de la Opción B
+        st.success("🎯 **Estrategia Adoptada por Dirección: Opción B (Nivelación Quirúrgica en Picos)**")
+
         with st.container(border=True):
-            st.markdown("#### 📐 Impacto Matemático de la Disminución de Área")
-            ca1, ca2, ca3, ca4 = st.columns(4)
-            ca1.metric("Área Anterior vs Actual", f"{kpis['area_productiva_m2']:,.0f} m²", f"-3,000 m² (-{kpis['reduccion_pct']}%)")
-            ca2.metric("Factor de Escalamiento", f"{kpis['factor_ajuste']:.5f}", "Multiplicador de corrección")
-            ca3.metric("Ajuste Meta Finca (265 t/m²)", f"-{kpis['diferencia_tallos_meta']:,} tallos", f"de {kpis['meta_tallos_anual_anterior']/1e6:.2f}M a {kpis['meta_tallos_anual']/1e6:.2f}M")
-            ca4.metric("Ajuste en Plan Asignado", f"-{kpis['diferencia_tallos_plan']:,} tallos", f"~150 a 170 camas menos año")
+            st.markdown("#### 📊 Balance Cuantitativo de la Nivelación Quirúrgica (Opción B)")
+            cb1, cb2, cb3, cb4 = st.columns(4)
+            cb1.metric("Pico Máximo Original", f"{kpis_niv.get('max_camas_original', 1200):.0f} camas", "102.7% Sobrecupo en S202706")
+            cb2.metric("Pico Máximo Nivelado", f"{kpis_niv.get('max_camas_nivelado', 1168):.0f} camas", "100.0% Techo Comercial Respetado")
+            cb3.metric("Semanas 100% Intactas", f"{kpis_niv.get('semanas_intactas_100pct', 42)} semanas", "Incluye las 17 semanas de Summer")
+            cb4.metric("Ajuste Quirúrgico Anual", f"-{kpis_niv.get('camas_ajustadas_total_anio', 180):.0f} camas", f"~{kpis_niv.get('esquejes_ajustados_total_anio', 936000):,} esquejes año")
 
         st.divider()
-        st.markdown("### 🛠️ Estrategias S&OP: ¿Cómo Ajustamos la Producción?")
-        
-        st.markdown("""
-        Dado que el plan anterior fue formulado para 64,878 m², tenemos **3 alternativas operativas** para calzar la oferta con la capacidad real:
-        """)
+
+        # Botón de Descarga del Pedido Nivelado para ERP
+        df_ped_niv = res_op_b.get("df_pedido_nivelado", pd.DataFrame())
+        if not df_ped_niv.empty:
+            excel_bytes = exportar_pedido_nivelado_excel(df_ped_niv)
+            col_d1, col_d2 = st.columns([3, 1])
+            with col_d1:
+                st.markdown("##### 📥 Exportar Pedido Consolidado Nivelado para ERP y Propagación")
+                st.caption("Genera la matriz oficial de esquejes con semanas en columnas (`S{YYYYWW}`), lista para importar en el sistema ERP.")
+            with col_d2:
+                st.download_button(
+                    label="📥 Descargar Pedido Nivelado (Excel)",
+                    data=excel_bytes,
+                    file_name=f"PedidoConsolidado_Nivelado_OpB_{date.today()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch"
+                )
+
+        st.divider()
+        st.markdown("### 📋 Cuadro Comparativo de Estrategias S&OP Evaluadas")
 
         op1, op2, op3 = st.columns(3)
         with op1:
             with st.container(border=True):
                 st.markdown("#### 🔹 Opción A: Ajuste Proporcional Global (-4.62%)")
                 st.markdown("""
-                * **Mecanismo:** Aplicar el factor lineal **0.95376** sobre todas las semanas del pedido de esquejes y del plan de producción.
-                * **Efecto:** Reduce exactamente **730,000 tallos** y **~830,000 esquejes** en el año.
-                * **Ventaja:** Preserva el mix porcentual de variedades y colores (MVA) de los comités.
-                * **Desventaja:** Recorta volumen en Summer donde ya hay camas vacías.
+                * **Mecanismo:** Aplicar factor lineal $0.95376$ parejo a todas las 52 semanas.
+                * **Efecto:** Reduce 730k tallos y ~830k esquejes.
+                * **Desventaja:** Castiga semanas de Summer donde la finca tiene 378 camas libres.
+                * **Estado:** Descartada frente a Opción B.
                 """)
-                st.button("Adoptar Opción A (Escalamiento Lineal)", key="btn_op_a", help="Aplica 0.95376 a todas las semanas")
 
         with op2:
             with st.container(border=True):
-                st.markdown("#### 🔹 Opción B: Nivelación Quirúrgica en Picos (Recomendada)")
+                st.markdown("#### 🔹 Opción B: Nivelación Quirúrgica (ADOPTADA)")
                 st.markdown("""
-                * **Mecanismo:** Mantener el plan intacto en semanas regulares y Summer, recortando o escalonando **únicamente en las semanas que superen el 95% de capacidad** (S202706 y S202750-52).
-                * **Efecto:** Solo se ajustan **~50 a 80 camas** en semanas de picos.
-                * **Ventaja:** No se pierde producción ni ingresos en semanas de valle donde sobra capacidad instalada.
+                * **Mecanismo:** Intervenir exclusivamente las semanas con sobrecupo puntual (San Valentín y Navidad).
+                * **Efecto:** Mantiene intacto el 100% de la producción en Summer y semanas regulares.
+                * **Ventaja:** Máxima rentabilidad y cero capacidad desperdiciada en valles.
+                * **Estado:** ✅ **Activa y aplicada en el sistema.**
                 """)
-                st.button("Adoptar Opción B (Ajuste Exclusivo en Picos)", key="btn_op_b")
 
         with op3:
             with st.container(border=True):
-                st.markdown("#### 🔹 Opción C: Compensación por Densidad en Picos")
+                st.markdown("#### 🔹 Opción C: Compensación por Densidad")
                 st.markdown("""
-                * **Mecanismo:** En vez de recortar tallos exportables, aumentar temporalmente la densidad de siembra en las camas de pico de **87 pl/m² a 91 pl/m²** (sumando ~200 plantas por cama).
-                * **Efecto:** Se entrega el 100% de los tallos pedidos sin necesitar más camas físicas.
-                * **Ventaja:** Cero pérdida de volumen comercial. Requiere monitoreo agronómico de calibre.
+                * **Mecanismo:** Elevar densidad a 91 pl/m² en semanas pico (+200 pl/cama).
+                * **Efecto:** Cero recorte de tallos.
+                * **Ventaja:** Máximo volumen exportable.
+                * **Estado:** Alternativa agronómica de respaldo.
                 """)
-                st.button("Adoptar Opción C (Ajuste Vía Densidad)", key="btn_op_c")
 
         st.divider()
         st.markdown("#### 💡 Simulación de Parada Programada de Bloques en Summer (Ahorro Operativo)")

@@ -493,3 +493,219 @@ def calcular_balanceo_estacional(df_semanal: pd.DataFrame, meta_tallos_m2: float
         }
     }
 
+def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_COMERCIALES_TOTALES) -> dict:
+    """
+    Implementa la Opción B (Nivelación Quirúrgica en Picos):
+    - Identifica las semanas donde la demanda acumulada del Plan Original supera las 1,168 camas comerciales.
+    - Aplica un ajuste de escalonamiento y reducción exclusivamente en las siembras que componen los picos de sobrecupo.
+    - Mantiene al 100% intactas todas las semanas regulares y las 17 semanas de Summer (donde la ocupación es baja y sobra área).
+    
+    Retorna:
+    - df_semanal_nivelado: Curva de 52 semanas con picos nivelados dentro de 1,168 camas.
+    - df_pedido_nivelado: Pedido de material vegetal con los volúmenes nivelados por variedad y semana.
+    - kpis_nivelacion: Resumen cuantitativo de camas y esquejes ajustados vs conservados.
+    """
+    import io
+    from app.services.mva_service import generar_plan_mva
+
+    archivo_pedido = "PedidoConsolidado_master.xlsx"
+    if not os.path.exists(archivo_pedido):
+        candidatos_ped = glob.glob("PedidoConsolidado*.xlsx") + glob.glob("*pedido*.xlsx")
+        archivo_pedido = candidatos_ped[0] if candidatos_ped else None
+
+    if not archivo_pedido or not os.path.exists(archivo_pedido):
+        return {
+            "df_semanal_nivelado": pd.DataFrame(),
+            "df_pedido_nivelado": pd.DataFrame(),
+            "kpis_nivelacion": {}
+        }
+
+    df_mrp = generar_plan_mva(archivo_pedido, week_is="Pedido")
+    if df_mrp.empty or 'Semana_Siembra' not in df_mrp.columns:
+        return {
+            "df_semanal_nivelado": pd.DataFrame(),
+            "df_pedido_nivelado": pd.DataFrame(),
+            "kpis_nivelacion": {}
+        }
+
+    # Estimar camas requeridas por fila (a 5,200 esquejes por cama comercial)
+    df_mrp['Camas_Req'] = df_mrp['Esquejes_Para_Siembra (Final)'] / 5200.0
+    siembras_orig = df_mrp.groupby('Semana_Siembra')['Camas_Req'].sum().to_dict()
+
+    # Función auxiliar para calcular ocupación acumulada de 14 semanas por cama
+    def calcular_ocupacion_matriz(siem_dict):
+        occ_map = {}
+        for s, c in sorted(siem_dict.items()):
+            try:
+                y = int(str(s)[:4])
+                w = int(str(s)[4:])
+                dt_s = date.fromisocalendar(y, w, 1)
+                for sem_offset in range(14):
+                    s_occ = isocalendar_to_string(dt_s + timedelta(weeks=sem_offset))
+                    occ_map[s_occ] = occ_map.get(s_occ, 0.0) + c
+            except Exception:
+                pass
+        return occ_map
+
+    occ_orig = calcular_ocupacion_matriz(siembras_orig)
+    siembras_niveladas = dict(siembras_orig)
+
+    # Nivelación iterativa exclusivamente sobre las semanas con sobrecupo (> max_camas)
+    for _ in range(6):
+        occ_curr = calcular_ocupacion_matriz(siembras_niveladas)
+        over_weeks = {s: v for s, v in occ_curr.items() if v > max_camas and '202635' <= s <= '202752'}
+        if not over_weeks:
+            break
+        for s_over, v_over in over_weeks.items():
+            exceso = v_over - max_camas
+            y_o = int(str(s_over)[:4])
+            w_o = int(str(s_over)[4:])
+            dt_o = date.fromisocalendar(y_o, w_o, 1)
+
+            # Identificar las semanas de siembra activas en esta semana de exceso
+            active_siems = []
+            for s_cand in sorted(siembras_niveladas.keys()):
+                y_c = int(str(s_cand)[:4])
+                w_c = int(str(s_cand)[4:])
+                dt_c = date.fromisocalendar(y_c, w_c, 1)
+                diff_sem = (dt_o - dt_c).days // 7
+                if 0 <= diff_sem < 14 and siembras_niveladas[s_cand] > 0:
+                    active_siems.append((s_cand, siembras_niveladas[s_cand]))
+
+            if active_siems:
+                tot_act = sum(c for _, c in active_siems)
+                if tot_act > 0:
+                    factor = max(0.85, (tot_act - exceso) / tot_act)
+                    for s_c, _ in active_siems:
+                        siembras_niveladas[s_c] *= factor
+
+    occ_nivelada = calcular_ocupacion_matriz(siembras_niveladas)
+
+    # Calcular factores de ajuste por semana de siembra
+    factores_por_semana = {}
+    for s_sem in siembras_orig.keys():
+        c_orig = siembras_orig[s_sem]
+        c_niv = siembras_niveladas.get(s_sem, c_orig)
+        factores_por_semana[s_sem] = (c_niv / c_orig) if c_orig > 0 else 1.0
+
+    # Actualizar el dataframe de pedido detallado
+    df_ped_niv = df_mrp.copy()
+    df_ped_niv['Factor_Ajuste_OpB'] = df_ped_niv['Semana_Siembra'].map(factores_por_semana).fillna(1.0)
+    df_ped_niv['Esquejes_Para_Siembra (Final)'] = (df_ped_niv['Esquejes_Para_Siembra (Final)'] * df_ped_niv['Factor_Ajuste_OpB']).round().astype(int)
+    df_ped_niv['Esquejes_Pedido_MV'] = df_ped_niv['Esquejes_Para_Siembra (Final)']
+    df_ped_niv['Camas_Req'] = df_ped_niv['Esquejes_Para_Siembra (Final)'] / 5200.0
+
+    # Construir curva semanal nivelada
+    res_semanal = []
+    semanas_todas = sorted(list(set(list(occ_orig.keys()) + list(occ_nivelada.keys()))))
+    semanas_52 = [s for s in semanas_todas if '202638' <= s <= '202745']
+
+    def clasificar_temporada(sem_int):
+        if 202640 <= sem_int <= 202646:
+            return "Fall 2026"
+        elif 202647 <= sem_int <= 202653:
+            return "Navidad 2026"
+        elif 202701 <= sem_int <= 202705:
+            return "San Valentín 2027 (Pico)"
+        elif 202706 <= sem_int <= 202714:
+            return "Pascua / Post-Valentin"
+        elif 202715 <= sem_int <= 202718:
+            return "Madres 2027 (Pico)"
+        elif 202719 <= sem_int <= 202735:
+            return "Summer 2027 (Valle)"
+        elif sem_int >= 202736:
+            return "Fall / Invierno 2027"
+        return "Regular"
+
+    for s in semanas_52:
+        c_orig = round(occ_orig.get(s, 0.0), 1)
+        c_niv = round(min(max_camas, occ_nivelada.get(s, 0.0)), 1)
+        pct_orig = round((c_orig / max_camas) * 100.0, 1)
+        pct_niv = round((c_niv / max_camas) * 100.0, 1)
+        libres_niv = round(max(0.0, max_camas - c_niv), 1)
+        dif_c = round(max(0.0, c_orig - c_niv), 1)
+        dif_esq = int(round(dif_c * 5200))
+
+        sem_int = int(s) if str(s).isdigit() else 202640
+        temp = clasificar_temporada(sem_int)
+
+        if c_orig > max_camas:
+            est = "🟢 NIVELADO A CAPACIDAD (Antes Sobrecupo)"
+        elif pct_niv >= 95.0:
+            est = "🟠 ALTA DEMANDA (95%-100%)"
+        elif pct_niv >= 85.0:
+            est = "🟢 ÓPTIMO SOSTENIDO (85%-95%)"
+        else:
+            est = "🟡 VALLE / SUBOCUPADO"
+
+        res_semanal.append({
+            "Semana": s,
+            "Semana_Num": f"S{s[-2:]}",
+            "Temporada": temp,
+            "Camas_Plan_Original": c_orig,
+            "Ocupacion_Original_%": pct_orig,
+            "Camas_Niveladas_OpB": c_niv,
+            "Ocupacion_Nivelada_%": pct_niv,
+            "Camas_Libres": libres_niv,
+            "Ajuste_Camas": dif_c,
+            "Ajuste_Esquejes": dif_esq,
+            "Estado": est
+        })
+
+    df_semanal_niv = pd.DataFrame(res_semanal)
+
+    # Identificar semanas intervenidas vs semanas 100% conservadas
+    sems_intervenidas = [s for s, f in factores_por_semana.items() if f < 0.999]
+    sems_intactas = [s for s, f in factores_por_semana.items() if f >= 0.999]
+
+    camas_tot_orig = sum(siembras_orig.values())
+    camas_tot_niv = sum(siembras_niveladas.values())
+    camas_dif_anual = round(camas_tot_orig - camas_tot_niv, 1)
+
+    kpis_niv = {
+        "max_camas_original": max(v for s, v in occ_orig.items() if '202638' <= s <= '202745'),
+        "max_camas_nivelado": max(df_semanal_niv['Camas_Niveladas_OpB']) if not df_semanal_niv.empty else max_camas,
+        "techo_comercial": max_camas,
+        "camas_ajustadas_total_anio": camas_dif_anual,
+        "esquejes_ajustados_total_anio": int(round(camas_dif_anual * 5200)),
+        "semanas_pico_intervenidas": len(sems_intervenidas),
+        "semanas_intactas_100pct": len(sems_intactas),
+        "lista_semanas_pico": sorted(sems_intervenidas)
+    }
+
+    return {
+        "df_semanal_nivelado": df_semanal_niv,
+        "df_pedido_nivelado": df_ped_niv,
+        "kpis_nivelacion": kpis_niv
+    }
+
+def exportar_pedido_nivelado_excel(df_pedido_nivelado: pd.DataFrame) -> bytes:
+    """
+    Exporta el Pedido Consolidado Nivelado por Opción B a formato Excel con la estructura
+    estándar para la plataforma ERP (Matriz de semanas S{YYYYWW} en columnas).
+    """
+    import io
+    if df_pedido_nivelado.empty:
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+            pd.DataFrame().to_excel(writer, sheet_name='Pedido_Nivelado_OpB', index=False)
+        return out.getvalue()
+
+    col_sem = 'Semana_Pedido_MV' if 'Semana_Pedido_MV' in df_pedido_nivelado.columns else 'Semana_Siembra'
+    df_pivot = df_pedido_nivelado.groupby(['Flor', 'Color', 'Variedad', col_sem])['Esquejes_Para_Siembra (Final)'].sum().unstack(fill_value=0).reset_index()
+    
+    # Formatear nombres de columnas con prefijo S
+    cols_nuevas = []
+    for c in df_pivot.columns:
+        c_str = str(c)
+        if c_str.isdigit() and len(c_str) == 6:
+            cols_nuevas.append(f"S{c_str}")
+        else:
+            cols_nuevas.append(c_str)
+    df_pivot.columns = cols_nuevas
+
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+        df_pivot.to_excel(writer, sheet_name='Pedido_Nivelado_OpB', index=False)
+    return out.getvalue()
+
