@@ -297,7 +297,7 @@ def render_accuracy_module(db):
                     tooltip=['Flor', 'iteracion', 'alpha', 'num_ciclos', 'wape_%', 'bias_%', 'error_tallos']
                 ).properties(height=340, title=f"Búsqueda de Grilla: WAPE vs. Ponderación Alpha ({flor_chart_sel})")
 
-                st.altair_chart(chart_iter, use_container_width=True)
+                st.altair_chart(chart_iter, width='stretch')
 
                 # Tabla comparativa Antes vs. Calibrado ML
                 st.markdown("#### 🔬 Variedades con Mayor Reducción de Error Biológico")
@@ -340,7 +340,7 @@ def render_accuracy_module(db):
                 xOffset='Tipo:N',
                 tooltip=['Variedad', 'Tipo', 'Tallos']
             ).properties(height=320, title=f"Top 15 Variedades Semana S{semana_activa}: Real Recepcionado vs. Estimado ForeCast")
-            st.altair_chart(chart_sem, use_container_width=True)
+            st.altair_chart(chart_sem, width='stretch')
 
         # -----------------------------------------------------------------
         # EXPANDER: TENDENCIA TEMPORAL MULTI-CICLO DEL DATA LAKE (93 SEMANAS)
@@ -356,7 +356,7 @@ def render_accuracy_module(db):
                 y=alt.Y('Real_Recepcionado:Q', title='Tallos Recepcionados', scale=alt.Scale(zero=False)),
                 tooltip=['Semana_Num', 'Real_Recepcionado']
             ).properties(height=350, title="Histórico de Cosecha Total en Poscosecha (Data Lake)")
-            st.altair_chart(chart_trend, use_container_width=True)
+            st.altair_chart(chart_trend, width='stretch')
 
     # =========================================================================
     # TAB 2: PRUEBA DE CONCEPTO ML (XGBOOST)

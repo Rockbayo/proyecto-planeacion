@@ -103,7 +103,7 @@ if modulo == "Dashboard General":
                     "Plantas Sembradas": "{:,.0f}",
                     "Área Ocupada (m²)": "{:,.2f}"
                 }),
-                use_container_width=True
+                width='stretch'
             )
             
     # Panel de Gobernanza y Alertas S&OP
@@ -392,7 +392,7 @@ elif modulo == "ForeCast y Exportación":
                 margin=dict(l=40, r=40, t=60, b=40)
             )
             
-            st.plotly_chart(fig_fc, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False})
+            st.plotly_chart(fig_fc, width='stretch', config={'scrollZoom': False, 'displayModeBar': False})
             
             st.markdown("**Comparativo ForeCast vs Plan Aprobado:**")
             df_comp = pd.DataFrame(index=semanas_futuras)
@@ -408,7 +408,7 @@ elif modulo == "ForeCast y Exportación":
             df_comp_display['Plan Aprobado'] = df_comp_display['Plan Aprobado'].apply(lambda x: f"{int(x):,}")
             df_comp_display['Variación %'] = df_comp_display['Variación %'].apply(lambda x: f"{x:+.1f}%")
             
-            st.dataframe(df_comp_display.T, use_container_width=True)
+            st.dataframe(df_comp_display.T, width='stretch')
             
         st.divider()
         # Filtrar por variedades que tengan inventario vivo (sembradas actualmente)
@@ -427,7 +427,7 @@ elif modulo == "ForeCast y Exportación":
             total_row_flor = pd.DataFrame(resumen_flor.sum()).T
             total_row_flor.index = ['TOTAL GENERAL']
             resumen_flor = pd.concat([resumen_flor, total_row_flor])
-            st.dataframe(resumen_flor.style.format("{:,.0f}"), use_container_width=True)
+            st.dataframe(resumen_flor.style.format("{:,.0f}"), width='stretch')
 
         st.subheader("Matriz ForeCast Detallada")
         if semanas_futuras:
@@ -447,9 +447,9 @@ elif modulo == "ForeCast y Exportación":
             df_forecast_display = df_forecast[meta_cols + cols_num].copy()
             
             df_forecast_display = pd.concat([df_forecast_display, total_row], ignore_index=True)
-            st.dataframe(df_forecast_display.style.format(formatter={col: "{:,.0f}" for col in cols_num}), use_container_width=True)
+            st.dataframe(df_forecast_display.style.format(formatter={col: "{:,.0f}" for col in cols_num}), width='stretch')
         else:
-            st.dataframe(df_forecast, use_container_width=True)
+            st.dataframe(df_forecast, width='stretch')
 
         st.divider()
         
@@ -707,7 +707,7 @@ elif modulo == "Programación Diaria y Temporadas":
         with col_ed1:
             dias_cols = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo", "Total"]
             format_config = {d: "{:.0f}%" for d in dias_cols}
-            st.dataframe(df_config.style.format(format_config), use_container_width=True, hide_index=True)
+            st.dataframe(df_config.style.format(format_config), width='stretch', hide_index=True)
             
         with col_ed2:
             st.info("💡 **Nota de Capacidad**: Estos porcentajes reflejan la capacidad operativa estándar (Lun, Mar, Jue, Vie: 6am-2pm [8h] | Mie: 6am-1:30pm [7.5h] | Sab: 6am-11am [5h]).")
@@ -848,12 +848,12 @@ elif modulo == "Programación Diaria y Temporadas":
                             st.markdown("#### Distribución en Porcentajes (Enteros exactos al 100%)")
                             cols_pct = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo", "Total %"]
                             format_dict = {d: "{:.0f}%" for d in cols_pct}
-                            st.dataframe(df_pcts.style.format(format_dict), use_container_width=True)
+                            st.dataframe(df_pcts.style.format(format_dict), width='stretch')
                             
                             st.markdown("#### Distribución en Tallos Diarios")
                             cols_tallos = ["Vol. Semanal", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo", "Total Tallos"]
                             format_tallos = {col: "{:,.0f}" for col in cols_tallos}
-                            st.dataframe(df_diario.style.format(format_tallos), use_container_width=True)
+                            st.dataframe(df_diario.style.format(format_tallos), width='stretch')
                             
                             import io
                             output = io.BytesIO()
@@ -888,7 +888,7 @@ elif modulo == "Programación Diaria y Temporadas":
             ]
             
         df_seasons = pd.DataFrame(seasons)
-        df_seasons_edited = st.data_editor(df_seasons, num_rows="dynamic", use_container_width=True)
+        df_seasons_edited = st.data_editor(df_seasons, num_rows="dynamic", width='stretch')
         
         if st.button("Guardar Temporadas"):
             with open(seasons_file, "w", encoding="utf-8") as f:
@@ -986,7 +986,7 @@ elif modulo == "Programación Diaria y Temporadas":
             
             col_chart1, col_chart2 = st.columns([1, 2])
             with col_chart1:
-                st.dataframe(df_res_seasons_display.style.format({"Tallos Proyectados": "{:,.0f}"}), use_container_width=True)
+                st.dataframe(df_res_seasons_display.style.format({"Tallos Proyectados": "{:,.0f}"}), width='stretch')
             with col_chart2:
                 if not df_res_seasons.empty and df_res_seasons["Tallos Proyectados"].sum() > 0:
                     import altair as alt
@@ -995,7 +995,7 @@ elif modulo == "Programación Diaria y Temporadas":
                         y=alt.Y('Tallos Proyectados:Q', title='Tallos'),
                         tooltip=['Temporada', 'Tallos Proyectados']
                     ).properties(height=350)
-                    st.altair_chart(chart, use_container_width=True)
+                    st.altair_chart(chart, width='stretch')
                 else:
                     st.info("Las proyecciones actuales no alcanzan las semanas de las temporadas configuradas.")
 
@@ -1069,7 +1069,7 @@ elif modulo == "Plan de Producción (MVA)":
                         "Suma de Tallos": "{:,.0f}",
                         "Variacion": "{:,.0f}"
                     }),
-                    use_container_width=True
+                    width='stretch'
                 )
             
                 st.divider()

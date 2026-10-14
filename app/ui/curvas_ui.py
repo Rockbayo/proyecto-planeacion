@@ -146,7 +146,7 @@ def render_curvas_module(db):
                             df_show['Aprovechamiento'] = (df_show['Aprovechamiento'] * 100).map("{:.1f}%".format)
                             df_show['Día Inicio (Promedio)'] = df_show['Día Inicio (Promedio)'].map("{:.0f}".format)
                             df_show['Día Pico (Promedio)'] = df_show['Día Pico (Promedio)'].map("{:.0f}".format)
-                            st.dataframe(df_show, use_container_width=True)
+                            st.dataframe(df_show, width='stretch')
                             
                             st.markdown("#### Comportamiento Fenológico por Días de Vida")
                             df_plot = pd.DataFrame(records_plot).sort_values(['Serie', 'Día de Vida'])
@@ -166,7 +166,7 @@ def render_curvas_module(db):
                                 yaxis=dict(title="% de Producción Semanal/Corte", ticksuffix="%"),
                                 hovermode="x unified"
                             )
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width='stretch')
                     else:
                         # Modo Por Variedad
                         flores_disponibles = sorted([f for f in df_filtered['Flor'].unique() if f and f != 'Desconocida'])
@@ -268,7 +268,7 @@ def render_curvas_module(db):
                                 df_show_v['Aprovechamiento'] = (df_show_v['Aprovechamiento'] * 100).map("{:.1f}%".format)
                                 df_show_v['Día Inicio (Promedio)'] = df_show_v['Día Inicio (Promedio)'].map("{:.0f}".format)
                                 df_show_v['Día Pico (Promedio)'] = df_show_v['Día Pico (Promedio)'].map("{:.0f}".format)
-                                st.dataframe(df_show_v, use_container_width=True)
+                                st.dataframe(df_show_v, width='stretch')
                                 
                                 st.markdown("#### Comportamiento Fenológico por Días de Vida")
                                 df_plot_v = pd.DataFrame(records_plot_var).sort_values(['Serie', 'Día de Vida'])
@@ -288,7 +288,7 @@ def render_curvas_module(db):
                                     yaxis=dict(title="% de Producción Semanal/Corte", ticksuffix="%"),
                                     hovermode="x unified"
                                 )
-                                st.plotly_chart(fig, use_container_width=True)
+                                st.plotly_chart(fig, width='stretch')
                         
     with tab2:
         st.subheader("Ingreso de Datos y Motor de Suavización")
@@ -472,7 +472,7 @@ def render_curvas_module(db):
                         df_res = pd.DataFrame(resultados)
                         st.subheader("📊 Previsualización Dinámica de Cambios")
                         cols_to_show = ['Variedad', 'Lotes en Cálculo', 'APROV Crudo (Total)', 'APROV N Ciclos', 'APROV Suavizado', 'Nuevo D. Inicio', 'Nuevo D. Desb', 'Nuevo D. Pico'] + [f'C{i}' for i in range(1, 16)]
-                        st.dataframe(df_res[cols_to_show], use_container_width=True)
+                        st.dataframe(df_res[cols_to_show], width='stretch')
                         st.info("💡 **Nota:** Las curvas suavizadas **no** se guardan estáticamente en la base de datos. La plataforma las calcula en tiempo real a partir del CSV y parámetros de Forecast. Esta tabla es un simulador interactivo.")
                         
                         if st.button("Limpiar Simulador", type="secondary"):

@@ -104,11 +104,11 @@ def render_actas_module(db: Session):
                         "Porcentaje Actual (%)": st.column_config.NumberColumn("Porcentaje Actual (%)", disabled=True),
                         "Nuevo Porcentaje (%)": st.column_config.NumberColumn("Nuevo Porcentaje (%)", min_value=0.0, max_value=100.0)
                     },
-                    use_container_width=True
+                    width='stretch'
                 )
                 st.session_state["mva_edits"][temp] = edited_df
             else:
-                st.dataframe(df_temp.drop(columns=["Nuevo Porcentaje (%)"]), use_container_width=True)
+                st.dataframe(df_temp.drop(columns=["Nuevo Porcentaje (%)"]), width='stretch')
 
     st.divider()
     st.markdown("### 🚀 Variedades en Fast Track")
@@ -131,7 +131,7 @@ def render_actas_module(db: Session):
             df_ft_original,
             num_rows="dynamic",
             key="editor_fasttrack",
-            use_container_width=True,
+            width='stretch',
             column_config={
                 "Flor": st.column_config.SelectboxColumn("Flor", options=flores_list),
                 "Color": st.column_config.SelectboxColumn("Color", options=colores_list),
@@ -149,7 +149,7 @@ def render_actas_module(db: Session):
             st.rerun()
             
     else:
-        st.dataframe(df_ft_original, use_container_width=True)
+        st.dataframe(df_ft_original, width='stretch')
 
     if modo_edicion:
         st.divider()
@@ -206,7 +206,7 @@ def render_actas_module(db: Session):
                     df_display = df_cambios.sort_values(by="Estado").reset_index(drop=True)
                     df_display["Porcentaje Actual"] = df_display["_pct_num"].apply(lambda x: f"{x:.2f}%")
                     df_display["Porcentaje Nuevo"] = df_display["_pct_num_nuevo"].apply(lambda x: f"{x:.2f}%")
-                    st.dataframe(df_display[["Flor", "Color", "Variedad", "Porcentaje Actual", "Porcentaje Nuevo", "Estado"]], use_container_width=True)
+                    st.dataframe(df_display[["Flor", "Color", "Variedad", "Porcentaje Actual", "Porcentaje Nuevo", "Estado"]], width='stretch')
         
         # Check Fast Track changes
         if "ft_edits" in st.session_state:
