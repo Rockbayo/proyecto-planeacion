@@ -13,21 +13,37 @@ def procesar_plantillas_plataforma(templates_dict, df_forecast, df_plan=None):
     """
     resultados = {}
     
-    # Asegurarnos de que el forecast este agrupado por Variedad y Semana_Cosecha
+    # Preparar df_forecast agrupado de forma insensible a mayúsculas/minúsculas
     if not df_forecast.empty:
-        # El df_forecast devuelto por generar_forecast_13wk ya es un pivot table
-        # con index=['Sede', 'Flor', 'Color', 'Variedad'] y columns=['Semana_Cosecha']
-        # Vamos a colapsarlo a nivel de variedad para facilitar la busqueda
-        fc_var = df_forecast.groupby('Variedad').sum()
-        # Normalizar el indice (nombres de variedades) para evitar errores de mayusculas/minusculas
-        fc_var.index = fc_var.index.str.strip().str.lower()
+        df_fc = df_forecast.copy()
+        if 'Variedad' in df_fc.columns:
+            df_fc['Variedad_norm'] = df_fc['Variedad'].astype(str).str.strip().str.lower()
+            cols_num = [c for c in df_fc.columns if str(c).startswith('202')]
+            fc_var = df_fc.groupby('Variedad_norm')[cols_num].sum()
+        else:
+            fc_var = pd.DataFrame()
     else:
         fc_var = pd.DataFrame()
         
+    # Preparar df_plan agrupado de forma insensible a mayúsculas/minúsculas
+    plan_var = pd.DataFrame()
+    if df_plan is not None and not df_plan.empty:
+        df_p = df_plan.copy()
+        if 'Variedad' in df_p.columns:
+            df_p['Variedad_norm'] = df_p['Variedad'].astype(str).str.strip().str.lower()
+            cols_num = [c for c in df_p.columns if str(c).startswith('202')]
+            plan_var = df_p.groupby('Variedad_norm')[cols_num].sum()
+        else:
+            df_p.index = df_p.index.astype(str).str.strip().str.lower()
+            cols_num = [c for c in df_p.columns if str(c).startswith('202')]
+            plan_var = df_p.groupby(level=0)[cols_num].sum()
+        
     for filename, filebytes in templates_dict.items():
         try:
-            # Cargar la plantilla
-            df = pd.read_excel(io.BytesIO(filebytes), sheet_name=0)
+            # Cargar la plantilla preservando el nombre de hoja original
+            excel_file = pd.ExcelFile(io.BytesIO(filebytes))
+            sheet_name = excel_file.sheet_names[0] if excel_file.sheet_names else 'Plantilla'
+            df = pd.read_excel(excel_file, sheet_name=sheet_name)
             
             # Extraer las columnas que son semanas
             cols_semanas = [c for c in df.columns if str(c).startswith('202')]
@@ -46,22 +62,36 @@ def procesar_plantillas_plataforma(templates_dict, df_forecast, df_plan=None):
                     sem_str = str(int(sem)) if isinstance(sem, float) else str(sem)
                     valor_proyectado = 0
                     if not fc_var.empty and sem_str in fc_var.columns and variedad_norm in fc_var.index:
-                        valor_proyectado = fc_var.loc[variedad_norm, sem_str]
-                    df.at[idx, sem] = int(valor_proyectado)
+                        val = fc_var.loc[variedad_norm, sem_str]
+                        if hasattr(val, 'iloc'):
+                            val = val.iloc[0] if len(val) > 0 else 0
+                        if pd.notna(val):
+                            try:
+                                valor_proyectado = int(round(float(val)))
+                            except (ValueError, TypeError):
+                                valor_proyectado = 0
+                    df.at[idx, sem] = valor_proyectado
                 
                 # 2. Rellenar las ultimas semanas con el Plan de Produccion
                 for sem in semanas_plan:
                     sem_str = str(int(sem)) if isinstance(sem, float) else str(sem)
                     valor_plan = 0
-                    if df_plan is not None and not df_plan.empty and sem_str in df_plan.columns and variedad_norm in df_plan.index:
-                        valor_plan = df_plan.loc[variedad_norm, sem_str]
+                    if not plan_var.empty and sem_str in plan_var.columns and variedad_norm in plan_var.index:
+                        val = plan_var.loc[variedad_norm, sem_str]
+                        if hasattr(val, 'iloc'):
+                            val = val.iloc[0] if len(val) > 0 else 0
+                        if pd.notna(val):
+                            try:
+                                valor_plan = int(round(float(val)))
+                            except (ValueError, TypeError):
+                                valor_plan = 0
                     
-                    df.at[idx, sem] = int(valor_plan)
+                    df.at[idx, sem] = valor_plan
             
             # Guardar en memoria
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Plantilla')
+                df.to_excel(writer, index=False, sheet_name=sheet_name)
             output.seek(0)
             
             resultados[filename] = output.getvalue()

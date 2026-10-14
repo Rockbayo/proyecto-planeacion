@@ -255,17 +255,25 @@ def llenar_plantilla_52_semanas(template_bytes, df_52_semanas):
     Toma una plantilla Excel de 52 semanas subida por el usuario,
     busca la columna 'Variedad' y rellena las columnas de semanas
     con los datos de df_52_semanas. Mantiene las variedades en 0 si no hay datos.
-    Retorna los bytes del archivo Excel modificado.
+    Preserva el nombre de la hoja original de la plantilla y es tolerante a diferencias
+    de mayúsculas/minúsculas y espacios. Retorna los bytes del archivo Excel modificado.
     """
     import io
     import pandas as pd
     
-    # Pre-procesar df_52_semanas para búsquedas rápidas
-    df_data = df_52_semanas.groupby('Variedad').sum()
-    df_data.index = df_data.index.astype(str).str.strip().str.lower()
+    # Pre-procesar df_52_semanas para búsquedas rápidas con deduplicación insensible a mayúsculas
+    df_temp = df_52_semanas.copy()
+    if 'Variedad' in df_temp.columns:
+        df_temp['Variedad_norm'] = df_temp['Variedad'].astype(str).str.strip().str.lower()
+        cols_num = [c for c in df_temp.columns if str(c).startswith('202')]
+        df_data = df_temp.groupby('Variedad_norm')[cols_num].sum()
+    else:
+        df_data = pd.DataFrame()
     
-    # Leer la plantilla
-    df_template = pd.read_excel(io.BytesIO(template_bytes), sheet_name=0)
+    # Leer la plantilla preservando el nombre de hoja original
+    excel_file = pd.ExcelFile(io.BytesIO(template_bytes))
+    sheet_name = excel_file.sheet_names[0] if excel_file.sheet_names else 'Plantilla'
+    df_template = pd.read_excel(excel_file, sheet_name=sheet_name)
     
     # Identificar las columnas de semanas (ej. 202640, 202701)
     cols_semanas = [c for c in df_template.columns if str(c).startswith('202')]
@@ -279,14 +287,22 @@ def llenar_plantilla_52_semanas(template_bytes, df_52_semanas):
                 sem_str = str(int(sem)) if isinstance(sem, float) else str(sem)
                 valor = 0
                 if not df_data.empty and variedad_orig in df_data.index and sem_str in df_data.columns:
-                    valor = df_data.loc[variedad_orig, sem_str]
+                    val = df_data.loc[variedad_orig, sem_str]
+                    if hasattr(val, 'iloc'):
+                        val = val.iloc[0] if len(val) > 0 else 0
+                    if pd.notna(val):
+                        try:
+                            valor = int(round(float(val)))
+                        except (ValueError, TypeError):
+                            valor = 0
                 
-                df_template.at[idx, sem] = int(valor)
+                df_template.at[idx, sem] = valor
     
-    # Guardar en memoria
+    # Guardar en memoria respetando el nombre de la hoja original
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_template.to_excel(writer, index=False, sheet_name='Proyeccion_52W')
+        df_template.to_excel(writer, index=False, sheet_name=sheet_name)
     output.seek(0)
     
     return output.getvalue()
+

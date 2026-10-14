@@ -234,10 +234,17 @@ def generar_forecast_13wk(db: Session, start_date: date = None, alpha: float = N
     else:
         df_pivot = pd.DataFrame()
         
-    # Obtener TODAS las variedades de la base de datos para no omitir ninguna
+    # Obtener TODAS las variedades de la base de datos para no omitir ninguna (deduplicadas insensibles a mayúsculas)
     todas_variedades = db.query(Variedad).all()
     lista_vars = []
+    seen_vars = set()
     for v in todas_variedades:
+        if not v.nombre:
+            continue
+        v_key = (str(v.flor).strip().capitalize() if v.flor else '', str(v.nombre).strip().lower())
+        if v_key in seen_vars:
+            continue
+        seen_vars.add(v_key)
         lista_vars.append({
             "Sede": "",
             "Flor": v.flor,

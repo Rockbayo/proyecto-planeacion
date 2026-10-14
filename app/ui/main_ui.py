@@ -476,8 +476,10 @@ elif modulo == "ForeCast y Exportación":
                         if not df_mrp.empty:
                             df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
                             if not df_proyeccion_mva.empty:
-                                df_plan = df_proyeccion_mva.groupby('Variedad').sum()
-                                df_plan.index = df_plan.index.astype(str).str.strip().str.lower()
+                                df_plan = df_proyeccion_mva.copy()
+                                df_plan['Variedad_norm'] = df_plan['Variedad'].astype(str).str.strip().str.lower()
+                                cols_num_mva = [c for c in df_plan.columns if str(c).startswith('202')]
+                                df_plan = df_plan.groupby('Variedad_norm')[cols_num_mva].sum()
                                 
                         import sys
                         import os
@@ -487,10 +489,14 @@ elif modulo == "ForeCast y Exportación":
                         templates_dict = {f.name: f.getvalue() for f in uploaded_templates}
                         resultados = procesar_plantillas_plataforma(templates_dict, df_forecast_vivo, df_plan)
                         
-                        st.success(f"Se procesaron {len(resultados)} plantillas exitosamente.")
+                        if resultados:
+                            st.success(f"✅ Se procesaron {len(resultados)} de {len(uploaded_templates)} plantillas exitosamente.")
+                        
+                        faltantes = [name for name in templates_dict if name not in resultados]
+                        if faltantes:
+                            st.warning(f"⚠️ Las siguientes plantillas no pudieron procesarse: {', '.join(faltantes)}")
                         
                         import base64
-
                         import streamlit.components.v1 as components
                         
                         files_data = []
@@ -498,68 +504,146 @@ elif modulo == "ForeCast y Exportación":
                             b64 = base64.b64encode(filebytes).decode("utf-8")
                             files_data.append({"filename": filename, "b64": b64})
                         
-                        js_code = f"""
-                        <script>
-                        function downloadAll() {{
-                            const files = {json.dumps(files_data)};
-                            files.forEach((file, index) => {{
-                                setTimeout(() => {{
-                                    const link = document.createElement("a");
-                                    link.href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + file.b64;
-                                    link.download = file.filename;
-                                    document.body.appendChild(link);
-                                    link.click();
-                                    document.body.removeChild(link);
-                                }}, index * 500); 
-                            }});
-                        }}
-                        </script>
-                        <button onclick="downloadAll()" style="background-color: #FF4B4B; border: none; color: white; padding: 10px 20px; text-align: center; text-decoration: none; display: inline-block; font-size: 16px; margin: 4px 2px; cursor: pointer; border-radius: 5px; font-family: sans-serif; font-weight: bold;">
-                            ⬇️ Descargar Todos los Archivos (1 Clic)
-                        </button>
-                        """
-                        
-                        components.html(js_code, height=60)
+                        if len(resultados) == 1:
+                            fname, fbytes = next(iter(resultados.items()))
+                            st.download_button(
+                                label=f"⬇️ Descargar {fname}",
+                                data=fbytes,
+                                file_name=fname,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                type="primary"
+                            )
+                        elif len(resultados) > 1:
+                            js_code = f"""
+                            <script>
+                            function downloadAll() {{
+                                const files = {json.dumps(files_data)};
+                                files.forEach((file, index) => {{
+                                    setTimeout(() => {{
+                                        const link = document.createElement("a");
+                                        link.href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + file.b64;
+                                        link.download = file.filename;
+                                        document.body.appendChild(link);
+                                        link.click();
+                                        document.body.removeChild(link);
+                                    }}, index * 500); 
+                                }});
+                            }}
+                            </script>
+                            <button onclick="downloadAll()" style="background-color: #FF4B4B; border: none; color: white; padding: 10px 20px; text-align: center; text-decoration: none; display: inline-block; font-size: 16px; margin: 4px 2px; cursor: pointer; border-radius: 5px; font-family: sans-serif; font-weight: bold;">
+                                ⬇️ Descargar Todos los Archivos (1 Clic)
+                            </button>
+                            """
+                            components.html(js_code, height=60)
+                            
+                            with st.expander("Descargas Individuales", expanded=False):
+                                for filename, filebytes in resultados.items():
+                                    st.download_button(
+                                        label=f"⬇️ {filename}",
+                                        data=filebytes,
+                                        file_name=filename,
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        key=f"dl_13_{filename}"
+                                    )
         else:
             st.subheader("📤 Exportación 52 Semanas")
             st.info("🕒 **Línea de Tiempo Operativa**: Pedido Confirmado / Recepción (Semana **S**) ➔ 3 Semanas Enraizamiento ➔ Siembra a Campo (Semana **S+4**).")
             
-            uploaded_template_52 = st.file_uploader("📋 Cargar Plantilla Vacía 52 Semanas (Excel)", type=["xlsx", "xls"])
+            uploaded_templates_52 = st.file_uploader(
+                "📋 Cargar Plantilla(s) Vacía(s) 52 Semanas (Excel)", 
+                type=["xlsx", "xls"], 
+                accept_multiple_files=True
+            )
             
-            if uploaded_template_52 is not None:
-                if st.button("Procesar y Descargar Plantilla 52 Semanas"):
-                    with st.spinner("Procesando archivos para descarga..."):
+            if uploaded_templates_52:
+                if st.button("Procesar y Llenar Plantilla(s) 52 Semanas", type="primary"):
+                    with st.spinner("Procesando archivos para proyección 52 semanas..."):
                         import io
-                        # Descargar Archivos de MVA original
+                        import base64
+                        import streamlit.components.v1 as components
+                        
+                        # Generar MVA original
                         output_mrp = io.BytesIO()
                         if not df_mrp.empty:
                             with pd.ExcelWriter(output_mrp, engine='xlsxwriter') as writer:
                                 df_mrp.to_excel(writer, index=False, sheet_name="Explosion_MVA")
                             
-                        # Si subió plantilla, usarla.
+                        # Proyección combinada 52 semanas
                         df_proy_mva = proyectar_cosecha_desde_mva(df_mrp, db) if not df_mrp.empty else pd.DataFrame()
                         df_52_semanas = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proy_mva)
                         
-                        filled_template_bytes = llenar_plantilla_52_semanas(uploaded_template_52.getvalue(), df_52_semanas)
-                        proy_data = filled_template_bytes
-                        proy_filename = uploaded_template_52.name
+                        resultados_52 = {}
+                        errores_52 = {}
+                        for f in uploaded_templates_52:
+                            try:
+                                filled_template_bytes = llenar_plantilla_52_semanas(f.getvalue(), df_52_semanas)
+                                resultados_52[f.name] = filled_template_bytes
+                            except Exception as e:
+                                errores_52[f.name] = str(e)
                     
-                    col_dl1, col_dl2 = st.columns(2)
-                    if not df_mrp.empty:
-                        col_dl1.download_button(
-                            label="⬇️ Descargar Plan de Siembras (MVA)",
-                            data=output_mrp.getvalue(),
-                            file_name="Plan_Siembras_Proyectadas.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            type="primary"
-                        )
-                    col_dl2.download_button(
-                        label="⬇️ Descargar Proyección 52 Semanas",
-                        data=proy_data,
-                        file_name=proy_filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary"
-                    )
+                        if resultados_52:
+                            st.success(f"✅ Se procesaron {len(resultados_52)} de {len(uploaded_templates_52)} plantillas exitosamente.")
+                        
+                        if errores_52:
+                            for fname, err in errores_52.items():
+                                st.error(f"❌ Error procesando {fname}: {err}")
+                    
+                        col_dl1, col_dl2 = st.columns(2)
+                        if not df_mrp.empty:
+                            col_dl1.download_button(
+                                label="⬇️ Descargar Plan de Siembras (MVA)",
+                                data=output_mrp.getvalue(),
+                                file_name="Plan_Siembras_Proyectadas.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        
+                        if len(resultados_52) == 1:
+                            fname, fbytes = next(iter(resultados_52.items()))
+                            col_dl2.download_button(
+                                label=f"⬇️ Descargar {fname}",
+                                data=fbytes,
+                                file_name=fname,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                type="primary"
+                            )
+                        elif len(resultados_52) > 1:
+                            files_data_52 = []
+                            for filename, filebytes in resultados_52.items():
+                                b64 = base64.b64encode(filebytes).decode("utf-8")
+                                files_data_52.append({"filename": filename, "b64": b64})
+                            
+                            js_code_52 = f"""
+                            <script>
+                            function downloadAll52() {{
+                                const files = {json.dumps(files_data_52)};
+                                files.forEach((file, index) => {{
+                                    setTimeout(() => {{
+                                        const link = document.createElement("a");
+                                        link.href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + file.b64;
+                                        link.download = file.filename;
+                                        document.body.appendChild(link);
+                                        link.click();
+                                        document.body.removeChild(link);
+                                    }}, index * 500); 
+                                }});
+                            }}
+                            </script>
+                            <button onclick="downloadAll52()" style="background-color: #FF4B4B; border: none; color: white; padding: 10px 20px; text-align: center; text-decoration: none; display: inline-block; font-size: 16px; margin: 4px 2px; cursor: pointer; border-radius: 5px; font-family: sans-serif; font-weight: bold;">
+                                ⬇️ Descargar Todos los Archivos 52 Wk (1 Clic)
+                            </button>
+                            """
+                            with col_dl2:
+                                components.html(js_code_52, height=60)
+                            
+                            with st.expander("Descargas Individuales (52 Semanas)", expanded=False):
+                                for fname, fbytes in resultados_52.items():
+                                    st.download_button(
+                                        label=f"⬇️ {fname}",
+                                        data=fbytes,
+                                        file_name=fname,
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        key=f"dl_52_{fname}"
+                                    )
 
 elif modulo == "Programación Diaria y Temporadas":
     st.header("📅 Programación Diaria y Gestión de Temporadas")
