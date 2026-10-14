@@ -709,3 +709,120 @@ def exportar_pedido_nivelado_excel(df_pedido_nivelado: pd.DataFrame) -> bytes:
         df_pivot.to_excel(writer, sheet_name='Pedido_Nivelado_OpB', index=False)
     return out.getvalue()
 
+def obtener_dimensiones_camas_bloques(db: Session = None, base_area: str = "productiva", densidad_pl_m2: float = 87.1, pct_buffer: float = 5.0) -> dict:
+    """
+    Retorna el dimensionamiento físico de camas para cada bloque comercial (01 a 06),
+    el promedio ponderado de la finca y el estándar de 5,200.
+    
+    base_area: 'productiva' (normalizada a 61,878 m2) o 'bruta' (planos físicos)
+    densidad_pl_m2: Densidad agronómica de siembra (default 87.1 plantas / m2)
+    pct_buffer: Margen de seguridad para cubrir pérdidas de enraizamiento/transporte (default 5.0%)
+    """
+    if db is None:
+        from app.core.database import SessionLocal
+        local_db = SessionLocal()
+        close_on_exit = True
+    else:
+        local_db = db
+        close_on_exit = False
+
+    try:
+        inicializar_o_cargar_capacidad(local_db)
+        bloques = local_db.query(CapacidadBloque).filter(CapacidadBloque.es_comercial == True).order_by(CapacidadBloque.bloque).all()
+
+        info = {}
+        tot_camas = 0
+        tot_area = 0.0
+
+        for b in bloques:
+            b_code = str(b.bloque).strip()
+            camas = b.camas
+            area = b.area_productiva_m2 if base_area == "productiva" else b.area_bruta_m2
+            m2_cama = round(area / camas, 2) if camas > 0 else 0.0
+            plantas_cama = round(m2_cama * densidad_pl_m2)
+            esquejes_cama = round(plantas_cama * (1.0 + (pct_buffer / 100.0)))
+            dif_vs_5200 = esquejes_cama - 5200
+
+            tot_camas += camas
+            tot_area += area
+
+            info[b_code] = {
+                "bloque": b_code,
+                "nombre": f"Bloque {b_code}",
+                "camas": camas,
+                "area_total_m2": area,
+                "m2_cama": m2_cama,
+                "densidad_pl_m2": densidad_pl_m2,
+                "plantas_cama": plantas_cama,
+                "pct_buffer": pct_buffer,
+                "esquejes_cama": esquejes_cama,
+                "dif_vs_5200": dif_vs_5200
+            }
+
+        m2_cama_finca = round(tot_area / tot_camas, 2) if tot_camas > 0 else 52.98
+        pl_cama_finca = round(m2_cama_finca * densidad_pl_m2)
+        esq_cama_finca = round(pl_cama_finca * (1.0 + (pct_buffer / 100.0)))
+
+        info["FINCA"] = {
+            "bloque": "FINCA",
+            "nombre": "Promedio Ponderado Finca (61,878 m²)",
+            "camas": tot_camas,
+            "area_total_m2": round(tot_area, 2),
+            "m2_cama": m2_cama_finca,
+            "densidad_pl_m2": densidad_pl_m2,
+            "plantas_cama": pl_cama_finca,
+            "pct_buffer": pct_buffer,
+            "esquejes_cama": esq_cama_finca,
+            "dif_vs_5200": esq_cama_finca - 5200
+        }
+
+        info["STD_5200"] = {
+            "bloque": "STD_5200",
+            "nombre": "Estándar Fijo Anterior (5,200)",
+            "camas": tot_camas,
+            "area_total_m2": round(tot_area, 2),
+            "m2_cama": 56.71,
+            "densidad_pl_m2": densidad_pl_m2,
+            "plantas_cama": round(5200 / (1.0 + (pct_buffer / 100.0))),
+            "pct_buffer": pct_buffer,
+            "esquejes_cama": 5200,
+            "dif_vs_5200": 0
+        }
+
+        return info
+    finally:
+        if close_on_exit:
+            local_db.close()
+
+def resolver_bloque_tentativo(sem_siembra: str, df_bloques_52w: pd.DataFrame = None, modo_bloque: str = "AUTO", dict_dimensiones: dict = None) -> tuple:
+    """
+    Resuelve el bloque comercial de destino y sus parámetros de dimensionamiento.
+    
+    modo_bloque:
+    - 'AUTO': Determina el bloque con menor ocupación en sem_siembra
+    - 'FINCA': Promedio ponderado de la finca
+    - 'STD_5200': Estándar anterior fijo de 5,200
+    - '01', '02', '03', '04', '05', '06': Bloque específico
+    
+    Retorna: (codigo_bloque, info_dict)
+    """
+    if dict_dimensiones is None:
+        dict_dimensiones = obtener_dimensiones_camas_bloques()
+
+    if modo_bloque in dict_dimensiones and modo_bloque != "AUTO":
+        return modo_bloque, dict_dimensiones[modo_bloque]
+
+    # Modo AUTO: buscar bloque con menor ocupación en esa semana
+    if modo_bloque == "AUTO" and df_bloques_52w is not None and not df_bloques_52w.empty:
+        sem_clean = str(sem_siembra).replace("S", "").strip()
+        df_sem = df_bloques_52w[(df_bloques_52w['Semana'].astype(str) == sem_clean) & (df_bloques_52w['Bloque'] != 'INV')]
+        if not df_sem.empty:
+            df_sem_sorted = df_sem.sort_values(by='Camas_Ocupadas', ascending=True)
+            best_b = str(df_sem_sorted.iloc[0]['Bloque']).strip()
+            if best_b in dict_dimensiones:
+                return best_b, dict_dimensiones[best_b]
+
+    # Fallback a promedio ponderado de finca
+    return "FINCA", dict_dimensiones.get("FINCA", dict_dimensiones.get("01"))
+
+

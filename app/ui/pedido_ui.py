@@ -7,6 +7,11 @@ from app.models.models import Variedad
 from app.services.forecast_service import calcular_curvas_dinamicas, generar_forecast_13wk, isocalendar_to_string
 from app.services.mva_service import generar_plan_mva, proyectar_cosecha_desde_mva, combinar_proyecciones_52_semanas
 from app.services.alertas_service import obtener_alertas_sop
+from app.services.ocupacion_service import (
+    obtener_dimensiones_camas_bloques,
+    resolver_bloque_tentativo,
+    calcular_ocupacion_semanal_52w
+)
 
 def get_iso_week_string(dt: date) -> str:
     y, w, _ = dt.isocalendar()
@@ -197,22 +202,121 @@ def render_pedido_module(db):
     # =========================================================================
     with tab_firme:
         st.subheader("📦 Pedido Regular en Firme (+24 Semanas)")
-        st.markdown(f"""
-        Emisión mensual estándar según el ciclo S&OP. Abarca el horizonte en firme desde **+24 semanas** ({sem_firme_default}) 
-        hacia adelante para garantizar la reserva de material parental en propagación.
-        """)
+        
+        # Banner de Gobernanza S&OP - Ventana Congelada (24 Semanas)
+        with st.container(border=True):
+            st.markdown(f"""
+            🔒 **Horizonte Congelado Inmutable (24 Semanas — S&OP Freeze Zone):**
+            * **Regla Inmutable:** Las semanas entre la semana actual (**{sem_actual}**) y **{sem_firme_default}** (24 semanas) ya se encuentran comprometidas en firme y contratadas con las casas de propagación. **No pueden modificarse ni recalcularse en este ciclo regular**.
+            * **Horizonte Ejecutable en Firme:** El cálculo del pedido regular aplica estrictamente a partir de **{sem_firme_default}** en adelante.
+            """)
 
-        col1, col2 = st.columns([1.5, 2.5])
-        with col1:
+        col_h1, col_h2 = st.columns([1.5, 2.5])
+        with col_h1:
             sem_inicio_firme = st.text_input("Semana Inicio de Pedido Firme", value=sem_firme_default, key="sem_inicio_firme")
-        with col2:
-            st.info(f"💡 Pedidos calculados desde **{sem_inicio_firme}** en adelante. Para semanas anteriores (< 24 semanas), utilice la pestaña de **Pedidos Extemporáneos**.")
+            if sem_inicio_firme < sem_firme_default:
+                st.warning(f"⚠️ Semana inferior a la ventana de 24 semanas ({sem_firme_default}). Por gobernanza S&OP, se fuerza el inicio en {sem_firme_default}.")
+                sem_inicio_firme = sem_firme_default
+        with col_h2:
+            st.info(f"💡 Pedidos calculados desde **{sem_inicio_firme}** en adelante. Para contingencias o excepciones justificadas (< 24 semanas), use la pestaña **Pedidos Extemporáneos**.")
+
+        st.markdown("#### 📐 Configuración de Dimensionamiento de Camas y Material Vegetal")
+        with st.container(border=True):
+            col_cfg1, col_cfg2, col_cfg3 = st.columns([1.8, 1.6, 1.2])
+            with col_cfg1:
+                modo_dim = st.selectbox(
+                    "Modo de Dimensionamiento de Camas:",
+                    [
+                        "🎯 Calibración por Bloque Tentativo de Destino (Recomendado)",
+                        "🌐 Promedio Ponderado de Finca (61,878 m² / 1,168 Camas)",
+                        "📏 Estándar Fijo Anterior (5,200 Esquejes/Cama)"
+                    ],
+                    key="sel_modo_dim"
+                )
+
+            with col_cfg2:
+                if modo_dim.startswith("🎯"):
+                    sel_bloque = st.selectbox(
+                        "Asignación de Bloque Tentativo:",
+                        [
+                            "🔄 Rotación Dinámica según Disponibilidad (Auto)",
+                            "Bloque 01 (240 Camas - 55.3 m²)",
+                            "Bloque 02 (160 Camas - 55.7 m²)",
+                            "Bloque 03 (184 Camas - 57.1 m²)",
+                            "Bloque 04 (232 Camas - 51.8 m²)",
+                            "Bloque 05 (160 Camas - 49.1 m²)",
+                            "Bloque 06 (192 Camas - 48.6 m²)"
+                        ],
+                        key="sel_bloque_dest"
+                    )
+                elif modo_dim.startswith("🌐"):
+                    st.text_input("Asignación de Bloque:", value="🌐 Finca Consolidada (1,168 Camas)", disabled=True)
+                    sel_bloque = "FINCA"
+                else:
+                    st.text_input("Asignación de Bloque:", value="📏 Estándar Fijo Anterior", disabled=True)
+                    sel_bloque = "STD_5200"
+
+            with col_cfg3:
+                pct_buffer_val = st.slider(
+                    "% Pérdida / Margen Seguridad:",
+                    min_value=3.0,
+                    max_value=10.0,
+                    value=5.0,
+                    step=0.5,
+                    help="Margen de seguridad para cubrir mermas de enraizamiento, transporte y selección, garantizando que ninguna cama quede corta de plantas.",
+                    key="slider_pct_buffer"
+                )
+
+            col_sub1, col_sub2 = st.columns([2, 1])
+            with col_sub1:
+                base_area_sel = st.radio(
+                    "Base de Área de Cama:",
+                    ["Área Productiva Normalizada (61,878 m² - Recomendado)", "Área Bruta de Planos (Planos sección.csv)"],
+                    horizontal=True,
+                    key="radio_base_area"
+                )
+            with col_sub2:
+                base_area_code = "productiva" if "Productiva" in base_area_sel else "bruta"
+                dims_demo = obtener_dimensiones_camas_bloques(db, base_area=base_area_code, pct_buffer=pct_buffer_val)
+                finca_demo = dims_demo.get("FINCA", {})
+                st.caption(f"📊 **Promedio Finca:** {finca_demo.get('m2_cama', 52.98)} m²/cama → **{finca_demo.get('esquejes_cama', 4845):,} esquejes/cama** (+{pct_buffer_val}% buffer)")
+
+            with st.expander("🔍 Ver Tabla Maestra de Calibración de Camas por Bloque", expanded=False):
+                tbl_rows = []
+                for b_k in ['01', '02', '03', '04', '05', '06', 'FINCA']:
+                    d_b = dims_demo.get(b_k, {})
+                    tbl_rows.append({
+                        "Bloque": d_b.get("nombre", b_k),
+                        "Camas Instaladas": d_b.get("camas", 0),
+                        "m² por Cama": d_b.get("m2_cama", 0.0),
+                        "Plantas Netas / Cama (87.1 pl/m²)": d_b.get("plantas_cama", 0),
+                        f"Esquejes a Pedir (+{pct_buffer_val}% Buffer)": d_b.get("esquejes_cama", 0),
+                        "Ajuste vs Estándar 5,200": f"{d_b.get('dif_vs_5200', 0):+d} esq/cama"
+                    })
+                st.dataframe(pd.DataFrame(tbl_rows), width="stretch", hide_index=True)
 
         if st.button("Calcular Pedido Consolidado en Firme", type="primary", key="btn_gen_pedido_firme"):
-            with st.spinner("Calculando curvas dinámicas, fallbacks jerárquicos y consolidando semanas..."):
+            with st.spinner("Calculando curvas dinámicas, rotación de bloques y dimensionamiento de esquejes..."):
                 try:
                     records_firme = []
                     records_audit = []
+
+                    # Cargar dimensiones físicas calibradas
+                    dict_dims = obtener_dimensiones_camas_bloques(db, base_area=base_area_code, pct_buffer=pct_buffer_val)
+                    
+                    # Cargar ocupación de bloques para rotación automática si aplica
+                    _, df_bloques_52w = calcular_ocupacion_semanal_52w(db)
+
+                    # Determinar código de modo de bloque
+                    if modo_dim.startswith("🎯"):
+                        if sel_bloque.startswith("🔄"):
+                            modo_bloque_cod = "AUTO"
+                        else:
+                            modo_bloque_cod = sel_bloque.split()[1] # '01', '02', etc.
+                    elif modo_dim.startswith("🌐"):
+                        modo_bloque_cod = "FINCA"
+                    else:
+                        modo_bloque_cod = "STD_5200"
 
                     for _, row in df_plan.iterrows():
                         variedad = str(row['Variedad']).strip()
@@ -231,38 +335,65 @@ def render_pedido_module(db):
                             variedad, flor, color, dyn_lower, fc_stats, f_stats, global_stats
                         )
 
-                        plantas_teoricas = meta_tallos / aprov
-                        camas = round(plantas_teoricas / 5200.0)
-                        if camas == 0 and plantas_teoricas > 0:
-                            camas = 1
-
-                        esquejes_pedir = camas * 5200
-                        if esquejes_pedir == 0:
-                            continue
-
+                        # Fechas y semanas operativas
                         try:
                             sem_clean = sem_cosecha_raw.replace(".0", "")
                             year = int(sem_clean[:4])
                             week = int(sem_clean[4:])
                             fecha_pico = date.fromisocalendar(year, week, 4)
                             fecha_siembra = fecha_pico - timedelta(days=dia_pico)
+                            sem_siembra = isocalendar_to_string(fecha_siembra)
                             fecha_pedido = fecha_siembra - timedelta(weeks=4)
                             sem_pedido = get_iso_week_string(fecha_pedido)
                         except Exception:
                             continue
+
+                        # Resolver dimensionamiento del bloque de destino
+                        b_cod, b_info = resolver_bloque_tentativo(
+                            sem_siembra=sem_siembra,
+                            df_bloques_52w=df_bloques_52w,
+                            modo_bloque=modo_bloque_cod,
+                            dict_dimensiones=dict_dims
+                        )
+
+                        plantas_cama = b_info.get("plantas_cama", 4615)
+                        esquejes_cama = b_info.get("esquejes_cama", 4845)
+                        area_cama_m2 = b_info.get("m2_cama", 52.98)
+                        nombre_bloque = b_info.get("nombre", f"Bloque {b_cod}")
+
+                        plantas_teoricas = meta_tallos / aprov
+                        camas = round(plantas_teoricas / float(plantas_cama))
+                        if camas == 0 and plantas_teoricas > 0:
+                            camas = 1
+
+                        esquejes_pedir = camas * esquejes_cama
+                        if esquejes_pedir == 0:
+                            continue
+
+                        # Comparativa vs Estándar Anterior 5,200
+                        camas_5200 = max(1, round(plantas_teoricas / 5200.0))
+                        esquejes_5200 = camas_5200 * 5200
+                        dif_esquejes = esquejes_pedir - esquejes_5200
 
                         records_audit.append({
                             "Flor": flor,
                             "Color": color,
                             "Variedad": variedad,
                             "Semana_Cosecha": f"S{sem_clean}",
+                            "Semana_Siembra": f"S{sem_siembra}",
                             "Semana_Pedido": sem_pedido,
+                            "Bloque_Destino": nombre_bloque,
+                            "Area_Cama_m2": area_cama_m2,
+                            "Plantas_Cama": plantas_cama,
+                            "Esquejes_Cama": esquejes_cama,
                             "Tallos_Plan": capacidad,
                             "Aprovechamiento_%": aprov * 100.0,
                             "Dia_Pico": dia_pico,
                             "Metodo_Curva": metodo,
-                            "Camas_5200": camas,
-                            "Esquejes_Pedir": esquejes_pedir
+                            "Camas": camas,
+                            "Esquejes_Pedir": esquejes_pedir,
+                            "Esquejes_Std_5200": esquejes_5200,
+                            "Ajuste_vs_5200": dif_esquejes
                         })
 
                         sem_inicio_f_fmt = sem_inicio_firme if sem_inicio_firme.startswith("S") else f"S{sem_inicio_firme}"
@@ -283,7 +414,9 @@ def render_pedido_module(db):
                     else:
                         st.session_state['df_pedido_firme_raw'] = df_ped_firme
                         st.session_state['df_pedido_firme_audit'] = df_audit
-                        st.success("✅ Pedido Consolidado en Firme generado exitosamente.")
+                        st.session_state['pedido_modo_dim'] = modo_dim
+                        st.session_state['pedido_pct_buffer'] = pct_buffer_val
+                        st.success("✅ Pedido Consolidado en Firme generado con calibración de material vegetal.")
 
                 except Exception as e:
                     st.error(f"Error generando pedido en firme: {e}")
@@ -298,30 +431,68 @@ def render_pedido_module(db):
             df_pivot_f.columns.name = None
 
             total_esq = df_pivot_f[semanas_cols].sum().sum()
-            total_cam = total_esq / 5200.0
+            sem_inicio_f_fmt = sem_inicio_firme if sem_inicio_firme.startswith("S") else f"S{sem_inicio_firme}"
+            df_audit_firme = df_audit[df_audit['Semana_Pedido'] >= sem_inicio_f_fmt] if not df_audit.empty else df_audit
+            total_cam = df_audit_firme['Camas'].sum() if 'Camas' in df_audit_firme.columns else (total_esq / 4845.0)
+            prom_esq_cama = (total_esq / total_cam) if total_cam > 0 else 4845.0
+
+            total_esq_5200 = df_audit_firme['Esquejes_Std_5200'].sum() if 'Esquejes_Std_5200' in df_audit_firme.columns else (total_cam * 5200.0)
+            dif_neta = total_esq - total_esq_5200
             total_v = df_pivot_f['Variedad'].nunique()
 
-            m1, m2, m3, m4 = st.columns(4)
+            m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("Total Esquejes Firme", f"{total_esq:,.0f}")
-            m2.metric("Total Camas (5,200)", f"{total_cam:,.0f}")
-            m3.metric("Variedades en Pedido", f"{total_v:,}")
-            m4.metric("Semanas en Firme", f"{len(semanas_cols)}")
+            m2.metric("Total Camas Calibradas", f"{total_cam:,.0f} camas")
+            m3.metric("Promedio Esquejes/Cama", f"{prom_esq_cama:,.0f} esq", f"vs 5,200 std")
+            if dif_neta < 0:
+                m4.metric("Ahorro por Sobre-Pedido", f"{abs(dif_neta):,.0f} esq", "Evita pérdidas en B05/B06", delta_color="normal")
+            else:
+                m4.metric("Protección Faltantes", f"+{dif_neta:,.0f} esq", "Camas grandes B01/B03 abastecidas", delta_color="normal")
+            m5.metric("Variedades en Pedido", f"{total_v:,}", f"{len(semanas_cols)} semanas")
 
             st.dataframe(df_pivot_f, width='stretch')
 
-            with st.expander("🔍 Auditoría de Rendimientos y Curvas Jerárquicas", expanded=False):
-                metodos_resumen = df_audit.groupby('Metodo_Curva')['Variedad'].nunique()
-                col_m1, col_m2 = st.columns([1, 2])
-                with col_m1:
-                    st.markdown("**Variedades por Origen de Curva:**")
-                    for m_name, count in metodos_resumen.items():
-                        st.write(f"- **{m_name}:** {count} variedades")
-                with col_m2:
-                    df_audit_unique = df_audit.drop_duplicates(subset=['Variedad'])[['Flor', 'Color', 'Variedad', 'Aprovechamiento_%', 'Dia_Pico', 'Metodo_Curva']]
-                    st.dataframe(
-                        df_audit_unique.style.format({'Aprovechamiento_%': '{:.1f}%', 'Dia_Pico': '{:.0f} d'}),
-                        width='stretch'
-                    )
+            with st.expander("🔍 Auditoría Detallada: Dimensionamiento por Bloque, Curvas y Rendimientos", expanded=False):
+                st.markdown("##### 📊 Distribución de Camas y Esquejes por Bloque Tentativo")
+                if not df_audit_firme.empty and 'Bloque_Destino' in df_audit_firme.columns:
+                    col_ab1, col_ab2 = st.columns([1.5, 2.5])
+                    with col_ab1:
+                        df_bloque_sum = df_audit_firme.groupby('Bloque_Destino').agg(
+                            Camas=('Camas', 'sum'),
+                            Esquejes=('Esquejes_Pedir', 'sum'),
+                            Ahorro_vs_5200=('Ajuste_vs_5200', lambda x: -x.sum())
+                        ).reset_index()
+                        st.dataframe(
+                            df_bloque_sum.style.format({
+                                'Camas': '{:,.0f}',
+                                'Esquejes': '{:,.0f}',
+                                'Ahorro_vs_5200': '{:+,.0f}'
+                            }),
+                            width='stretch',
+                            hide_index=True
+                        )
+                    with col_ab2:
+                        metodos_resumen = df_audit_firme.groupby('Metodo_Curva')['Variedad'].nunique()
+                        st.markdown("**Variedades por Origen de Curva Biológica:**")
+                        for m_name, count in metodos_resumen.items():
+                            st.write(f"- **{m_name}:** {count} variedades")
+
+                st.divider()
+                st.markdown("##### 📋 Detalle Fila por Fila (Auditoría Integral)")
+                cols_show = ['Flor', 'Color', 'Variedad', 'Semana_Cosecha', 'Semana_Pedido', 'Bloque_Destino', 'Area_Cama_m2', 'Esquejes_Cama', 'Camas', 'Esquejes_Pedir', 'Aprovechamiento_%', 'Dia_Pico', 'Metodo_Curva']
+                cols_avail = [c for c in cols_show if c in df_audit_firme.columns]
+                st.dataframe(
+                    df_audit_firme[cols_avail].head(200).style.format({
+                        'Area_Cama_m2': '{:.1f} m²',
+                        'Esquejes_Cama': '{:,.0f}',
+                        'Camas': '{:.0f}',
+                        'Esquejes_Pedir': '{:,.0f}',
+                        'Aprovechamiento_%': '{:.1f}%',
+                        'Dia_Pico': '{:.0f} d'
+                    }),
+                    width='stretch',
+                    hide_index=True
+                )
 
             excel_firme_erp = exportar_matriz_estandar_erp(df_raw_f, col_semana='Semana_Pedido', col_valor='Esquejes')
 

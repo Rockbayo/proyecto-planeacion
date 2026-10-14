@@ -275,22 +275,20 @@ def render_ocupacion_module(db):
 
         st.divider()
 
-        # Botón de Descarga del Pedido Nivelado para ERP
-        df_ped_niv = res_op_b.get("df_pedido_nivelado", pd.DataFrame())
-        if not df_ped_niv.empty:
-            excel_bytes = exportar_pedido_nivelado_excel(df_ped_niv)
-            col_d1, col_d2 = st.columns([3, 1])
-            with col_d1:
-                st.markdown("##### 📥 Exportar Pedido Consolidado Nivelado para ERP y Propagación")
-                st.caption("Genera la matriz oficial de esquejes con semanas en columnas (`S{YYYYWW}`), lista para importar en el sistema ERP.")
-            with col_d2:
-                st.download_button(
-                    label="📥 Descargar Pedido Nivelado (Excel)",
-                    data=excel_bytes,
-                    file_name=f"PedidoConsolidado_Nivelado_OpB_{date.today()}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    width="stretch"
-                )
+        # Gobernanza S&OP: Separación de Responsabilidades y Ventana Congelada (24 Semanas)
+        with st.container(border=True):
+            st.markdown("#### 🏛️ Gobernanza S&OP: Separación de Responsabilidades y Ventana Congelada (24 Semanas)")
+            st.markdown("""
+            * **Alcance del Módulo de Ocupación:** Este módulo establece los techos físicos de capacidad (**1,168 camas comerciales**), 
+              detecta sobrecupos en picos estacionales (San Valentín y Navidad) y programa descansos y paradas de bloques en Summer.
+            * **Generación y Emisión de Pedidos de Esquejes:** La nivelación cuantitativa, calibración física por cama y exportación oficial 
+              del Pedido Consolidado se gestiona **exclusivamente desde el módulo de Pedido de Material Vegetal**.
+            * **Regla Inmutable de Ventana Congelada (24 Semanas):** Los pedidos de las próximas 24 semanas ya están contratados y comprometidos 
+              en firme con las casas matrices y propagadores; **no pueden modificarse retroactivamente**.
+            * **Calibración Dinámica por Bloque Tentativo:** En el módulo de Pedido, el estándar plano anterior de 5,200 esquejes/cama 
+              ha sido sustituido por el dimensionamiento dinámico según el bloque de destino (Bloques 01 a 06), 
+              eliminando pérdidas por exceso en bloques pequeños (B05 y B06) y garantizando que ningún bloque grande quede desabastecido.
+            """)
 
         st.divider()
         st.markdown("### 📋 Cuadro Comparativo de Estrategias S&OP Evaluadas")
