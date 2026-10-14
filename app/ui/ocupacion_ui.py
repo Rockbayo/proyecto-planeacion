@@ -201,7 +201,13 @@ def render_ocupacion_module(db):
         if modo_vista == "Plan Nivelado Quirúrgico (Opción B) [Adoptado - Techo 1,168 Camas Respetado]":
             line_chart = base_chart.mark_line(point=True, color='#1f77b4', strokeWidth=2.5).encode(
                 y=alt.Y('Camas_Niveladas_OpB:Q', title='Camas Ocupadas Niveladas', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
-                tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Niveladas_OpB:Q', title='Camas Niveladas'), alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación (%)')]
+                tooltip=[
+                    'Semana_Label:N', 'Semana:N', 'Temporada:N',
+                    alt.Tooltip('Camas_Siembra:Q', title='Siembras Semanales (Camas)'),
+                    alt.Tooltip('Esquejes_Siembra:Q', title='Siembras Semanales (Esquejes)', format=',d'),
+                    alt.Tooltip('Camas_Niveladas_OpB:Q', title='Camas Totales en Suelo'),
+                    alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación (%)')
+                ]
             )
             titulo_grafico = "Curva de Ocupación Nivelada (Opción B): Capacidad Máxima de 1,168 Camas 100% Respetada"
             chart_final = band_opt + line_chart + rule_techo
@@ -209,7 +215,14 @@ def render_ocupacion_module(db):
         elif modo_vista == "Plan Original Diseñado con 64,878 m² [Muestra Sobrecupo en Picos]":
             line_chart = base_chart.mark_line(point=True, color='#d62728', strokeWidth=2.5).encode(
                 y=alt.Y('Camas_Plan_Original:Q', title='Camas Requeridas (Plan Original)', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
-                tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', 'Camas_Plan_Original:Q', 'Ocupacion_Original_%:Q', 'Estado_Capacidad:N']
+                tooltip=[
+                    'Semana_Label:N', 'Semana:N', 'Temporada:N',
+                    alt.Tooltip('Camas_Siembra:Q', title='Siembras Semanales (Camas)'),
+                    alt.Tooltip('Esquejes_Siembra:Q', title='Siembras Semanales (Esquejes)', format=',d'),
+                    alt.Tooltip('Camas_Plan_Original:Q', title='Camas Totales en Suelo (Original)'),
+                    alt.Tooltip('Ocupacion_Original_%:Q', title='Ocupación Original (%)'),
+                    'Estado_Capacidad:N'
+                ]
             )
             titulo_grafico = "Curva de Ocupación con Plan Original (Base 64,878 m² - Evidencia Sobrecupo en Picos)"
             chart_final = band_opt + line_chart + rule_techo
@@ -217,11 +230,11 @@ def render_ocupacion_module(db):
         else: # Comparativa Ambos Planes
             line_orig = base_chart.mark_line(point=False, color='#d62728', strokeDash=[4, 3], strokeWidth=2.0).encode(
                 y=alt.Y('Camas_Plan_Original:Q', title='Camas Requeridas', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
-                tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Plan_Original:Q', title='Plan Original (64k m²)'), 'Ocupacion_Original_%:Q']
+                tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Siembra:Q', title='Siembra Semanal (Camas)'), alt.Tooltip('Camas_Plan_Original:Q', title='Plan Original (64k m²)'), 'Ocupacion_Original_%:Q']
             )
             line_adj = base_chart.mark_line(point=True, color='#1f77b4', strokeWidth=2.5).encode(
                 y='Camas_Niveladas_OpB:Q',
-                tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Niveladas_OpB:Q', title='Plan Nivelado OpB (61k m²)'), 'Ocupacion_Nivelada_%:Q']
+                tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Siembra:Q', title='Siembra Semanal (Camas)'), alt.Tooltip('Camas_Niveladas_OpB:Q', title='Plan Nivelado OpB (61k m²)'), 'Ocupacion_Nivelada_%:Q']
             )
             titulo_grafico = "Comparativa: Plan Original (Rojo Discontinuo, 64k m²) vs. Opción B Nivelada (Azul Sólido, 61k m²)"
             chart_final = band_opt + line_orig + line_adj + rule_techo
@@ -230,6 +243,12 @@ def render_ocupacion_module(db):
         st.altair_chart(chart_render, width="stretch")
 
         st.caption("🔴 **Línea Roja Discontinua:** Techo físico infranqueable (1,168 camas). | 🟢 **Franja Verde Sombreada:** Rango óptimo de ocupación sostenida (85% a 95%).")
+
+        st.info("""
+        💡 **Distinción Clave entre Siembra y Cosecha (San Valentín 2027):**
+        * 🌱 **Ventana de Siembra:** Ocurre entre las semanas **S2643 y S2647** (Pico en **S2646 con 130.8 camas sembradas / 680,000 esquejes**). En esta ventana, la finca sostiene una ocupación en suelo de **~980 a 996 camas (85.2%)**, ya que las nuevas siembras coexisten con el cultivo previo en cosecha.
+        * 🌹 **Ventana de Cosecha:** Ocurre 14 semanas después, entre **S2701 y S2706** (Pico en **S2706 con 1,168 camas** niveladas al 100.0% de capacidad comercial).
+        """)
 
         st.success(f"""
         ✅ **Solución de Nivelación Aplicada (Opción B):**
@@ -245,12 +264,17 @@ def render_ocupacion_module(db):
             df_plot_tbl['Ahorro_Esquejes'] = (df_plot_tbl['Diferencia_Camas'] * 5200).round().astype(int)
             st.dataframe(
                 df_plot_tbl[[
-                    "Semana", "Semana_Label", "Temporada", "Camas_Niveladas_OpB", "Ocupacion_Nivelada_%", 
+                    "Semana", "Semana_Label", "Temporada", 
+                    "Camas_Siembra", "Esquejes_Siembra",
+                    "Camas_Niveladas_OpB", "Ocupacion_Nivelada_%", 
                     "Camas_Plan_Original", "Ocupacion_Original_%",
                     "Diferencia_Camas", "Ahorro_Esquejes", "Estado_Capacidad"
                 ]],
                 column_config={
                     "Semana_Label": st.column_config.TextColumn("Semana Ops"),
+                    "Temporada": st.column_config.TextColumn("Temporada / Etapa"),
+                    "Camas_Siembra": st.column_config.NumberColumn("Siembra (Camas)", format="%.1f"),
+                    "Esquejes_Siembra": st.column_config.NumberColumn("Siembra (Esquejes)", format="%,d"),
                     "Ocupacion_Nivelada_%": st.column_config.NumberColumn("Ocup. Nivelada (%)", format="%.1f%%"),
                     "Ocupacion_Original_%": st.column_config.NumberColumn("Ocup. Original (%)", format="%.1f%%"),
                     "Camas_Niveladas_OpB": st.column_config.NumberColumn("Camas Niveladas (OpB)", format="%.1f"),

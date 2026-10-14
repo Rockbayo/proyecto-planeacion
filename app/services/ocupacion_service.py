@@ -248,11 +248,13 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
 
     # 2. Rastrear permanencia en cama del inventario vivo
     siembras_vivas = db.query(Siembra).filter(Siembra.estado == EstadoSiembra.EN_PRODUCCION).all()
+    sem_corte_bd = max([isocalendar_to_string(s.fecha_siembra) for s in siembras_vivas] or ['202641'])
     ocupacion_matrix = {
         s: {
             'camas_vivas': 0,
             'camas_pedido_original': 0.0,
             'camas_pedido_ajustado': 0.0,
+            'siembra_camas': 0.0,
             'por_bloque': {b: 0 for b in ['01', '02', '03', '04', '05', '06', 'INV']}
         } for s in semanas_lista
     }
@@ -261,6 +263,8 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
     camas_vivas_por_sem = {s: set() for s in semanas_lista}
 
     for siembra in siembras_vivas:
+        if isocalendar_to_string(siembra.fecha_siembra) > sem_corte_bd:
+            continue
         var = siembra.variedad
         ubi = siembra.ubicacion
         dia_ini = var.dia_inicio if (var and var.dia_inicio and var.dia_inicio > 0) else 84
@@ -305,9 +309,17 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
                 siembras_por_sem = df_mrp.groupby('Semana_Siembra')['Camas_Req'].sum().to_dict()
 
                 for sem_s, camas_req in siembras_por_sem.items():
+                    s_str = str(sem_s)
+                    if s_str in ocupacion_matrix:
+                        ocupacion_matrix[s_str]['siembra_camas'] += camas_req
+
+                    # Solo acumular siembras futuras a partir de la semana posterior al corte de BD
+                    if s_str <= sem_corte_bd:
+                        continue
+
                     try:
-                        y = int(str(sem_s)[:4])
-                        w = int(str(sem_s)[4:])
+                        y = int(s_str[:4])
+                        w = int(s_str[4:])
                         dt_s = date.fromisocalendar(y, w, 1)
 
                         # Una cama sembrada en sem_s permanece ocupada 14 semanas (ciclo de cultivo + 1 sem descanso)
@@ -332,16 +344,18 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
     bloques_detalle = []
 
     def clasificar_temporada(sem_int):
-        if 202640 <= sem_int <= 202646:
-            return "Fall 2026"
-        elif 202647 <= sem_int <= 202653:
-            return "Navidad 2026"
-        elif 202701 <= sem_int <= 202705:
-            return "San Valentín 2027 (Pico)"
-        elif 202706 <= sem_int <= 202714:
-            return "Pascua / Post-Valentin"
+        if 202640 <= sem_int <= 202642:
+            return "Fall 2026 (Cosecha)"
+        elif 202643 <= sem_int <= 202647:
+            return "Siembra San Valentín 2027"
+        elif 202648 <= sem_int <= 202653:
+            return "Navidad 2026 (Cosecha)"
+        elif 202701 <= sem_int <= 202706:
+            return "San Valentín 2027 (Pico Cosecha)"
+        elif 202707 <= sem_int <= 202714:
+            return "Siembra Madres / Pascua"
         elif 202715 <= sem_int <= 202718:
-            return "Madres 2027 (Pico)"
+            return "Madres 2027 (Pico Cosecha)"
         elif 202719 <= sem_int <= 202735:
             return "Summer 2027 (Valle Baja Demanda)"
         elif sem_int >= 202736:
@@ -354,13 +368,9 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
         c_ped_orig = info['camas_pedido_original']
         c_ped_adj = info['camas_pedido_ajustado']
 
-        # En semanas futuras donde se libera el inventario vivo, entra la demanda del pedido
-        if sem > semana_actual and c_ped_orig > 0:
-            camas_tot_orig = max(float(c_vivas), c_ped_orig)
-            camas_tot_adj = max(float(c_vivas), c_ped_adj)
-        else:
-            camas_tot_orig = float(c_vivas)
-            camas_tot_adj = float(c_vivas)
+        # La ocupación total es la suma aditiva de camas vivas remanentes + siembras futuras en suelo
+        camas_tot_orig = float(c_vivas + c_ped_orig)
+        camas_tot_adj = float(c_vivas + c_ped_adj)
 
         sem_int = int(sem) if sem.isdigit() else 202640
         temp = clasificar_temporada(sem_int)
@@ -397,6 +407,7 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
 
         dif_camas = round(max(0.0, camas_tot_orig - c_adj_clamped), 1)
         ahorro_esquejes = int(round(dif_camas * 5200))
+        s_camas = round(info['siembra_camas'], 1)
 
         res_semanal.append({
             "Semana": sem,
@@ -405,6 +416,8 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
             "Temporada": temp,
             "Regimen_Area": regimen_area,
             "Area_Capacidad_m2": area_cap_sem,
+            "Camas_Siembra": s_camas,
+            "Esquejes_Siembra": int(round(s_camas * 5200)),
             "Camas_Ocupadas": round(c_adj_clamped, 1),
             "Camas_Libres": round(libres_adj, 1),
             "Ocupacion_%": pct_adj,
@@ -616,33 +629,37 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
     res_semanal = []
     if df_52w is not None and not df_52w.empty:
         semanas_52 = sorted(list(df_52w['Semana'].unique()))
-        live_camas_map = dict(zip(df_52w['Semana'], df_52w['Camas_Ocupadas']))
+        orig_camas_map = dict(zip(df_52w['Semana'], df_52w['Camas_Plan_Original']))
+        siembra_camas_map = dict(zip(df_52w['Semana'], df_52w['Camas_Siembra'])) if 'Camas_Siembra' in df_52w.columns else {}
     else:
         semanas_todas = sorted(list(set(list(occ_orig.keys()) + list(occ_nivelada.keys()))))
         semanas_52 = [s for s in semanas_todas if '202640' <= s <= '202740']
-        live_camas_map = {}
+        orig_camas_map = {}
+        siembra_camas_map = {}
 
     def clasificar_temporada(sem_int):
-        if 202640 <= sem_int <= 202646:
-            return "Fall 2026"
-        elif 202647 <= sem_int <= 202653:
-            return "Navidad 2026"
-        elif 202701 <= sem_int <= 202705:
-            return "San Valentín 2027 (Pico)"
-        elif 202706 <= sem_int <= 202714:
-            return "Pascua / Post-Valentin"
+        if 202640 <= sem_int <= 202642:
+            return "Fall 2026 (Cosecha)"
+        elif 202643 <= sem_int <= 202647:
+            return "Siembra San Valentín 2027"
+        elif 202648 <= sem_int <= 202653:
+            return "Navidad 2026 (Cosecha)"
+        elif 202701 <= sem_int <= 202706:
+            return "San Valentín 2027 (Pico Cosecha)"
+        elif 202707 <= sem_int <= 202714:
+            return "Siembra Madres / Pascua"
         elif 202715 <= sem_int <= 202718:
-            return "Madres 2027 (Pico)"
+            return "Madres 2027 (Pico Cosecha)"
         elif 202719 <= sem_int <= 202735:
-            return "Summer 2027 (Valle)"
+            return "Summer 2027 (Valle Baja Demanda)"
         elif sem_int >= 202736:
             return "Fall / Invierno 2027"
         return "Regular"
 
     for s in semanas_52:
-        c_live = float(live_camas_map.get(s, 0.0))
-        c_orig = round(max(c_live, occ_orig.get(s, 0.0)), 1)
-        c_niv = round(max(c_live, min(max_camas, occ_nivelada.get(s, 0.0))), 1)
+        c_orig = round(float(orig_camas_map.get(s, occ_orig.get(s, 0.0))), 1)
+        c_niv = round(min(max_camas, c_orig), 1)
+        s_camas = round(float(siembra_camas_map.get(s, 0.0)), 1)
         pct_orig = round((c_orig / max_camas) * 100.0, 1)
         pct_niv = round((c_niv / max_camas) * 100.0, 1)
         libres_niv = round(max(0.0, max_camas - c_niv), 1)
@@ -666,6 +683,8 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
             "Semana_Num": f"S{s[-2:]}",
             "Semana_Label": f"S{s[2:]}",
             "Temporada": temp,
+            "Camas_Siembra": s_camas,
+            "Esquejes_Siembra": int(round(s_camas * 5200)),
             "Camas_Plan_Original": c_orig,
             "Ocupacion_Original_%": pct_orig,
             "Camas_Niveladas_OpB": c_niv,
