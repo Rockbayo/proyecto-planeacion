@@ -64,6 +64,25 @@ class Ubicacion(Base):
     siembras = relationship("Siembra", back_populates="ubicacion")
 
 
+class CapacidadBloque(Base):
+    """
+    Representa la capacidad física instalada por bloque o sección de la finca
+    según el archivo maestro 'Planos sección.csv'.
+    """
+    __tablename__ = "capacidad_bloques"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sede = Column(String, default="CH")
+    bloque = Column(String, unique=True, index=True, nullable=False) # 'INV', '01', '02', '03', '04', '05', '06'
+    naves = Column(Integer, nullable=False, default=0)
+    camas = Column(Integer, nullable=False, default=0)
+    area_bruta_m2 = Column(Float, nullable=False, default=0.0)
+    area_productiva_m2 = Column(Float, nullable=False, default=0.0)
+    es_comercial = Column(Boolean, default=True)                     # False para INV
+    observaciones = Column(String, nullable=True)
+
+
+
 class Siembra(Base):
     """
     Representa un 'Lote' o un ciclo especfico sembrado en una cama (Datos_Campo / Siembra Actual).

@@ -29,11 +29,21 @@ def get_db():
 db = next(get_db())
 
 st.sidebar.title("Navegación")
-modulo = st.sidebar.radio("Ir a:", ["Dashboard General", "Curvas e Índices (Campo)", "ForeCast y Exportación", "Programación Diaria y Temporadas", "Plan de Producción (MVA)", "Pedido Material Vegetal", "Precisión y ML (Accuracy)"])
+modulo = st.sidebar.radio("Ir a:", [
+    "Dashboard General", 
+    "Curvas e Índices (Campo)", 
+    "ForeCast y Exportación", 
+    "Programación Diaria y Temporadas", 
+    "Plan de Producción (MVA)", 
+    "Ocupación de Área y Capacidad",
+    "Pedido Material Vegetal", 
+    "Precisión y ML (Accuracy)"
+])
 
 from app.ui.curvas_ui import render_curvas_module
 from app.ui.accuracy_ui import render_accuracy_module
 from app.ui.actas_ui import render_actas_module
+from app.ui.ocupacion_ui import render_ocupacion_module
 
 if modulo == "Dashboard General":
     st.header("📊 Dashboard General")
@@ -1054,6 +1064,9 @@ elif modulo == "Plan de Producción (MVA)":
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
+
+elif modulo == "Ocupación de Área y Capacidad":
+    render_ocupacion_module(db)
 
 elif modulo == "Pedido Material Vegetal":
     from app.ui.pedido_ui import render_pedido_module
