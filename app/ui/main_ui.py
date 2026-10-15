@@ -245,7 +245,21 @@ elif modulo == "ForeCast y Exportación":
         
         df_mrp = pd.DataFrame()
         has_mva = False
-        if os.path.exists(file_path):
+        if os.path.exists("Plan_Aprobado_Detallado.csv"):
+            try:
+                df_app_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
+                df_app_det['Esquejes_Para_Siembra (Final)'] = df_app_det['Esquejes']
+                df_proyeccion_mva = proyectar_cosecha_desde_mva(df_app_det, db)
+                df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
+                has_mva = not df_proyeccion_mva.empty
+                if vista == "13 Semanas Móviles":
+                    st.info("💡 **Diferenciación visual:** La línea **Verde** corresponde al **Plano de Siembras** (inventario vivo en campo). La línea **Naranja** corresponde al **Plan de Enraizamiento y Siembra Aprobado**.")
+                else:
+                    st.info("💡 **Diferenciación visual:** Las primeras 10 semanas (**Verde**) provienen del **Plano de Siembras** (inventario vivo). A partir de la semana 11 (**Naranja**), la proyección proviene del **Plan de Enraizamiento y Siembra Aprobado**.")
+            except Exception as e:
+                st.warning(f"Error procesando Plan Aprobado: {e}")
+                df_forecast = df_forecast_vivo
+        elif os.path.exists(file_path):
             try:
                 df_mrp = generar_plan_mva(file_path, week_is="Pedido")
                 df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
@@ -259,7 +273,7 @@ elif modulo == "ForeCast y Exportación":
                 st.warning(f"Error procesando el archivo Maestro MVA: {e}")
                 df_forecast = df_forecast_vivo
         else:
-            st.warning("No se encontró el Pedido Consolidado Maestro. Mostrando únicamente el inventario vivo.")
+            st.warning("No se encontró el Pedido Consolidado Maestro ni el Plan Aprobado. Mostrando únicamente el inventario vivo.")
             df_forecast = df_forecast_vivo
         
     if df_forecast.empty:

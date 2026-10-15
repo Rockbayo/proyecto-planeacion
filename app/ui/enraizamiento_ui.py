@@ -22,60 +22,18 @@ from app.services.enraizamiento_service import (
 
 def render_enraizamiento_module(db):
     st.header("🌱 Plan y Plano Operativo de Enraizamiento")
-    st.markdown("""
-    Este módulo genera el **plano operativo oficial de enraizamiento** para entrega directa a la jefatura de propagación.
-    Alinea los pedidos comerciales con la ventana fenológica óptima (**cosecha en pico los jueves**),
+    st.markdown(f"""
+    Genera el **plano operativo oficial de enraizamiento** para entrega directa a la jefatura de propagación.
+    Alinea los requerimientos de siembra con el día óptimo (**cosecha en pico los jueves**),
     estandariza a **bandejas de 112 cavidades**, asigna el **bloque de campo tentativo** de destino,
-    nivela la carga de trabajo diaria (Lunes a Sábado, 44.5h legales) y modela la **cuadrilla de mano de obra**.
+    nivela la jornada laboral semanal (**{TOTAL_HORAS_SEMANA_ESTANDAR:.1f}h efectivas**, deduciendo 30 min de almuerzo L-V) y proyecta la **cosecha resultante**.
     """)
 
-    # Selector de Escenario de Planificación
-    with st.container(border=True):
-        st.markdown("#### 🎯 Escenario Operativo y Capacidad de Proceso")
-        col_esc, col_opt = st.columns([1.6, 1.2])
-        with col_esc:
-            escenario_sel = st.radio(
-                "Seleccione el modelo operativo de enraizamiento:",
-                options=[
-                    "⭐ Plan Operativo Aprobado S&OP (Alineación a Cosecha Jueves y Nivelación 44.5h)",
-                    "📋 Base Histórica Plataforma (Valores Originales Sin Ajuste)"
-                ],
-                index=0,
-                help="El Plan Operativo Aprobado S&OP respeta las órdenes ejecutadas y en ejecución (S2642), y optimiza día a día de S2643 en adelante según dia_pico y jornada legal."
-            )
+    # 1. Cargar semanas disponibles en el Pedido Aprobado
+    modo_plan = "aprobado"
+    factor_expansion = 1.0
+    correr_variedades = True
 
-        modo_plan = "aprobado"
-        factor_expansion = 1.0
-        correr_variedades = True
-
-        if "Plan Operativo Aprobado" in escenario_sel:
-            modo_plan = "aprobado"
-            factor_expansion = 1.0
-            correr_variedades = True
-            with col_esc:
-                st.info(
-                    "🔒 **Inmutabilidad Temporal:** La semana **S202642** está en ejecución conforme a pedido (**551,200 esq / 106 cam**). "
-                    "Las variedades tardías ya fueron sembradas en semanas previas. "
-                    "Los ajustes de nivelación diaria y optimización aplican de la **Semana S202643** en adelante."
-                )
-
-            with col_opt:
-                st.success(
-                    "🌿 **Plan Operativo Oficial S&OP:**\n\n"
-                    "• **S202642 (En Ejecución):** 551,200 esquejes (106 camas) | Siembra S2645\n\n"
-                    "• **S202643 (Pico Clavado):** **769,600 esquejes (148 camas)** | Siembra S2646 | Cuadrilla de 9 clavadores\n\n"
-                    "• **S202644 (Cierre SV):** 660,400 esquejes (127 camas) | Siembra S2647\n\n"
-                    "• **Volumen San Valentín:** **1,981,200 esquejes** (381 camas) ➔ **~1.41M a 1.60M tallos exportables**.\n\n"
-                    "✅ **Ajuste Espacial:** Preparación de suelo acelerada a 3 días garantiza disponibilidad de camas vivas en campo."
-                )
-        else:
-            modo_plan = "plataforma_base"
-            factor_expansion = 1.0
-            correr_variedades = False
-            with col_opt:
-                st.info("📋 Mostrando las órdenes históricas sin actualizar al pedido aprobado ni curvas biológicas.")
-
-    # 1. Cargar semanas disponibles en el Pedido Aprobado según el modo seleccionado
     semanas_disp = obtener_semanas_enraizamiento_disponibles(
         modo_plan=modo_plan,
         factor_expansion=factor_expansion,
@@ -86,16 +44,16 @@ def render_enraizamiento_module(db):
         st.warning("⚠️ No se encontraron órdenes de siembra en el archivo de pedidos consolidado maestro.")
         return
 
-    # Buscar semana por defecto: pico de San Valentín (ej. 202643) o la primera
+    # Buscar semana por defecto: S202643 o la primera
     default_idx = 0
     for idx, s in enumerate(semanas_disp):
         if s.get("Semana_Enraizamiento") == "202643":
             default_idx = idx
             break
 
-    # Selector de Semana y Parámetros
+    # Selector de Semana y Parámetros Operativos
     with st.container(border=True):
-        st.markdown("#### 📅 Selección de Semana y Objetivos de Temporada")
+        st.markdown("#### 📅 Selección de Semana y Programa Operativo")
         
         def format_semana(opt):
             cam_txt = f" | {opt.get('Total_Camas', 0):.0f} cam." if opt.get('Total_Camas') else ""
@@ -105,7 +63,7 @@ def render_enraizamiento_module(db):
                 f"{opt['Total_Esquejes']:,d} esq. ({opt['Total_Bandejas_112']:,d} bandejas 112{cam_txt})"
             )
 
-        col_sem, col_info = st.columns([2, 1])
+        col_sem, col_mod = st.columns([2.2, 1.0])
         with col_sem:
             semana_sel = st.selectbox(
                 "Semana de enraizamiento a programar:",
@@ -114,12 +72,25 @@ def render_enraizamiento_module(db):
                 format_func=format_semana,
                 help="Seleccione la semana en la que ingresa el material vegetal a las camas de nebulización en propagación."
             )
+        with col_mod:
+            modelo_sel = st.selectbox(
+                "Modelo operativo:",
+                options=["⭐ Plan Operativo Aprobado S&OP", "📋 Base Histórica Plataforma"],
+                index=0,
+                help="El Plan Operativo Aprobado sincroniza directamente con el pedido aprobado de S&OP y curvas reales de extracción."
+            )
+            if "Base Histórica" in modelo_sel:
+                modo_plan = "plataforma_base"
 
-        with col_info:
-            if semana_sel:
-                st.caption(f"**Temporada Objetivo:** {semana_sel['Temporada']}")
-                st.caption(f"**Desfase a Siembra:** -{SEMANAS_ENRAIZAMIENTO} semanas ({DIAS_PERMANENCIA_BANCO} días en banco)")
-                st.caption(f"**Variedades en Lote:** {semana_sel['Num_Variedades']} variedades")
+        # Resumen Dinámico Adaptado a la Semana Seleccionada (sin textos defensivos)
+        if semana_sel:
+            st.info(
+                f"📋 **Programa Operativo Semana {semana_sel['Semana_Enraizamiento_Label']}:** "
+                f"Siembra en Campo: **{semana_sel['Semana_Siembra_Label']}** (Desfase: -{SEMANAS_ENRAIZAMIENTO} sem en banco) | "
+                f"Cosecha Estimada: **{semana_sel.get('Semana_Cosecha_Label', '')}** | "
+                f"Temporada: **{semana_sel['Temporada']}** | "
+                f"Volumen: **{semana_sel['Total_Esquejes']:,d} esquejes** ({semana_sel['Total_Camas']:.1f} camas, {semana_sel['Total_Bandejas_112']:,d} bandejas 112, {semana_sel['Num_Variedades']} variedades)."
+            )
 
     # Configuración de Mano de Obra y Rendimientos (Personalizable)
     with st.expander("👥 Configuración de Cuadrilla y Rendimientos de Clavado", expanded=False):
@@ -230,7 +201,7 @@ def render_enraizamiento_module(db):
         k4.metric(
             "Operarios Requeridos", 
             f"{op_req_prom:.1f}", 
-            f"Base: 44.5h legal"
+            f"Base: {TOTAL_HORAS_SEMANA_ESTANDAR:.1f}h efectiva"
         )
         k5.metric(
             "Balance Cuadrilla", 
@@ -248,7 +219,7 @@ def render_enraizamiento_module(db):
     tab_plano, tab_mano_obra, tab_comparativa, tab_fenologia = st.tabs([
         "📋 Plano Operativo Semanal (Detalle por Lote)",
         "⏱️ Distribución Diaria y Cuadrilla",
-        "📈 Proyección Plataforma vs Pedido y Rotación de Camas",
+        "📈 Proyección de Cosecha, ForeCast y Camas",
         "🌿 Ventana Fenológica y Parámetros"
     ])
 
@@ -259,7 +230,7 @@ def render_enraizamiento_module(db):
         st.markdown("##### 📄 Hoja de Ruta de Clavado por Lote y Variedad")
         st.caption(
             "Este plano contiene la programación día a día de enraizamiento. Los días están nivelados para respetar "
-            "las jornadas legales y concentrar la cosecha en el pico objetivo de los jueves. "
+            "las jornadas laborales efectivas y concentrar la cosecha en el pico objetivo de los jueves. "
             "El archivo PDF exportado cuenta con casillas de ejecución real y firmas para control físico en invernadero."
         )
 
@@ -374,8 +345,8 @@ def render_enraizamiento_module(db):
     with tab_mano_obra:
         st.markdown("##### ⏱️ Balance de Capacidad y Mano de Obra Semanal")
         st.caption(
-            "Consolida las horas de labor demandadas por el volumen total de enraizamiento contra la capacidad "
-            "efectiva de la cuadrilla asignada para la semana completa (base legal 44.5h)."
+            f"Consolida las horas de labor demandadas por el volumen total de enraizamiento contra la capacidad "
+            f"efectiva de la cuadrilla asignada para la semana completa (base laboral {TOTAL_HORAS_SEMANA_ESTANDAR:.1f}h efectivas, deduciendo 30 min de almuerzo L-V)."
         )
 
         # 1. Tabla de Operarios Requeridos Consolidada por Semana
@@ -383,7 +354,7 @@ def render_enraizamiento_module(db):
         estado_sem = "🟢 CUBIERTA" if bal >= 0 else ("🟡 AJUSTADA" if bal >= -1.0 else f"🔴 SOBRECARGA (+{abs(bal):.0f} ref.)")
         df_resumen_semanal = pd.DataFrame([{
             "Semana": res_plano['semana_enraizamiento_label'],
-            "Jornada Legal": "44.5 h",
+            "Jornada Efectiva": f"{TOTAL_HORAS_SEMANA_ESTANDAR:.1f} h",
             "Total Esquejes": kpis['total_esquejes'],
             "Bandejas (112)": kpis['total_bandejas'],
             "Rendimiento Ponderado": f"{kpis['rendimiento_ponderado']:,.0f} esq/h",
@@ -398,7 +369,7 @@ def render_enraizamiento_module(db):
             df_resumen_semanal,
             column_config={
                 "Semana": st.column_config.TextColumn("Semana"),
-                "Jornada Legal": st.column_config.TextColumn("Jornada Legal"),
+                "Jornada Efectiva": st.column_config.TextColumn("Jornada Efectiva"),
                 "Total Esquejes": st.column_config.NumberColumn("Total Esquejes", format="%d"),
                 "Bandejas (112)": st.column_config.NumberColumn("Bandejas (112)", format="%d"),
                 "Rendimiento Ponderado": st.column_config.TextColumn("Rend. Ponderado"),
@@ -418,7 +389,7 @@ def render_enraizamiento_module(db):
                 df_res_dia,
                 column_config={
                     "Día": st.column_config.TextColumn("Día"),
-                    "Jornada (Horas)": st.column_config.NumberColumn("Jornada Legal", format="%.1f h"),
+                    "Jornada (Horas)": st.column_config.NumberColumn("Jornada Efectiva", format="%.1f h"),
                     "Esquejes": st.column_config.NumberColumn("Esquejes", format="%d"),
                     "Bandejas (112)": st.column_config.NumberColumn("Bandejas (112)", format="%d"),
                     "% Semana": st.column_config.NumberColumn("% Semana", format="%.1f %%"),
@@ -482,121 +453,279 @@ def render_enraizamiento_module(db):
             st.success("✅ **La capacidad de la cuadrilla cubre holgadamente la demanda de enraizamiento de esta semana.**")
 
     # -------------------------------------------------------------
-    # TAB 3: PROYECCIÓN PLATAFORMA VS PEDIDO Y ROTACIÓN DE CAMAS
+    # TAB 3: PROYECCIÓN DE COSECHA, FORECAST Y CAMAS
     # -------------------------------------------------------------
     with tab_comparativa:
-        st.markdown("##### 📈 Comportamiento de Enraizamiento: Plataforma vs Pedido Programado")
-        st.caption(
-            "Compara la curva semanal de enraizamiento calculada por la plataforma contra la lógica oficial del pedido "
-            "programado (Excel de Analítica S&OP) para cumplir con el pico de 1,410,000 tallos de San Valentín (S03-S05)."
-        )
-
         datos_comp = obtener_datos_comparativos_enraizamiento_y_camas(
             db,
             modo_plan=modo_plan,
             factor_expansion=factor_expansion,
             correr_variedades=correr_variedades
         )
-        df_comp = datos_comp['df_comp_enraizamiento']
-        df_lib = datos_comp['df_liberacion_camas']
+        df_comp = datos_comp.get('df_comp_enraizamiento', pd.DataFrame())
+        df_lib = datos_comp.get('df_liberacion_camas', pd.DataFrame())
+        df_cvp = datos_comp.get('df_cosecha_vs_plan', pd.DataFrame())
+        df_proy_c = res_plano.get('df_proyeccion_cosecha', pd.DataFrame())
 
-        # Gráfico 1: Comparativa de Esquejes por Semana
-        df_melt_enr = pd.melt(
-            df_comp,
-            id_vars=['Semana_Enraizamiento_Label', 'Temporada'],
-            value_vars=['Enraizamiento_Plataforma', 'Enraizamiento_Analitica'],
-            var_name='Fuente',
-            value_name='Esquejes'
+        # ---------------------------------------------------------
+        # 1. Proyección Biológica de Cosecha del Plano Seleccionado
+        # ---------------------------------------------------------
+        st.markdown(f"##### 🌿 Proyección Biológica de Cosecha — Enraizamiento {res_plano['semana_enraizamiento_label']} (Siembra {res_plano['semana_siembra_label']})")
+        st.caption(
+            f"Distribución de cosecha resultante calculada lote a lote aplicando las curvas fenológicas dinámicas "
+            f"de cada variedad (días inicio, días pico y perfil c₁ a c₁₅). Temporada objetivo: **{res_plano['temporada']}**."
         )
-        df_melt_enr['Fuente'] = df_melt_enr['Fuente'].map({
-            'Enraizamiento_Plataforma': 'Plataforma S&OP',
-            'Enraizamiento_Analitica': 'Pedido Programado (Analítica)'
-        })
 
-        chart_comp = alt.Chart(df_melt_enr).mark_bar(opacity=0.85).encode(
-            x=alt.X('Semana_Enraizamiento_Label:N', title="Semana de Enraizamiento"),
-            y=alt.Y('Esquejes:Q', title="Esquejes a Enraizar"),
-            color=alt.Color('Fuente:N', scale=alt.Scale(domain=['Plataforma S&OP', 'Pedido Programado (Analítica)'], range=['#2e7d32', '#1565c0'])),
-            xOffset='Fuente:N',
-            tooltip=['Semana_Enraizamiento_Label', 'Fuente', alt.Tooltip('Esquejes:Q', format=',d'), 'Temporada']
-        ).properties(height=340)
+        if not df_proy_c.empty:
+            tot_proy_sem = int(df_proy_c['Tallos_Proyectados'].sum())
+            row_pico_c = df_proy_c.loc[df_proy_c['Tallos_Proyectados'].idxmax()]
+            sem_pico_lbl = str(row_pico_c['Semana_Cosecha_Label'])
+            tallos_pico_val = int(row_pico_c['Tallos_Proyectados'])
+            pct_pico = float(row_pico_c['% del Total Lote'])
+            ventana_c = f"{df_proy_c['Semana_Cosecha_Label'].iloc[0]} a {df_proy_c['Semana_Cosecha_Label'].iloc[-1]} ({len(df_proy_c)} semanas)"
 
-        st.altair_chart(chart_comp, width="stretch")
+            col_pc1, col_pc2, col_pc3, col_pc4 = st.columns(4)
+            col_pc1.metric("Tallos Proyectados Cosecha", f"{tot_proy_sem:,d}", f"Aprovechamiento biológico")
+            col_pc2.metric("Semana Pico de Corte", f"{sem_pico_lbl}", f"{tallos_pico_val:,d} tallos")
+            col_pc3.metric("Concentración en Pico", f"{pct_pico:.1f} %", "Volumen en semana pico")
+            col_pc4.metric("Ventana de Corte", ventana_c, f"{res_plano['temporada']}")
 
-        with st.expander("📋 Ver Tabla Comparativa Numérica por Semana", expanded=False):
-            st.dataframe(
-                df_comp[['Semana_Enraizamiento_Label', 'Semana_Siembra_Label', 'Semana_Cosecha_Label', 'Temporada', 'Enraizamiento_Plataforma', 'Enraizamiento_Analitica', 'Diferencia_Esquejes', 'Tallos_Esperados_Cosecha']],
-                column_config={
-                    "Semana_Enraizamiento_Label": st.column_config.TextColumn("Sem. Enraiz."),
-                    "Semana_Siembra_Label": st.column_config.TextColumn("Sem. Siembra"),
-                    "Semana_Cosecha_Label": st.column_config.TextColumn("Sem. Cosecha"),
-                    "Temporada": st.column_config.TextColumn("Temporada Objetivo"),
-                    "Enraizamiento_Plataforma": st.column_config.NumberColumn("Plataforma (Esq)", format="%d"),
-                    "Enraizamiento_Analitica": st.column_config.NumberColumn("Pedido Analítica (Esq)", format="%d"),
-                    "Diferencia_Esquejes": st.column_config.NumberColumn("Diferencia", format="%+d"),
-                    "Tallos_Esperados_Cosecha": st.column_config.NumberColumn("Tallos Cosecha (~80% Aprov)", format="%d")
-                },
-                hide_index=True,
-                width="stretch"
-            )
+            # Gráfico de Proyección de Cosecha Semanal
+            chart_proy_c = alt.Chart(df_proy_c).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color="#2e7d32").encode(
+                x=alt.X('Semana_Cosecha_Label:N', sort=df_proy_c['Semana_Cosecha_Label'].tolist(), title="Semana de Cosecha"),
+                y=alt.Y('Tallos_Proyectados:Q', title="Tallos Proyectados a Cosecha"),
+                tooltip=['Semana_Cosecha_Label', 'Temporada', alt.Tooltip('Tallos_Proyectados:Q', format=',d'), alt.Tooltip('% del Total Lote:Q', format='.1f')]
+            ).properties(height=260)
+            st.altair_chart(chart_proy_c, width="stretch")
+
+            with st.expander(f"📋 Ver Detalle Numérico de Cosecha para {res_plano['semana_enraizamiento_label']}", expanded=False):
+                st.dataframe(
+                    df_proy_c[['Semana_Cosecha_Label', 'Temporada', 'Tallos_Proyectados', '% del Total Lote']],
+                    column_config={
+                        "Semana_Cosecha_Label": st.column_config.TextColumn("Semana Cosecha"),
+                        "Temporada": st.column_config.TextColumn("Temporada"),
+                        "Tallos_Proyectados": st.column_config.NumberColumn("Tallos Proyectados", format="%d"),
+                        "% del Total Lote": st.column_config.NumberColumn("% Distribución", format="%.1f %%")
+                    },
+                    hide_index=True,
+                    width="stretch"
+                )
+        else:
+            st.info("No se registran curvas de cosecha para la selección actual.")
 
         st.markdown("---")
-        st.markdown("##### 🚜 Análisis de Liberación de Camas Vivas en Campo (Ajuste de Suelo: 3 vs 7 Días)")
+
+        # ---------------------------------------------------------
+        # 2. Alineación de Cosecha vs Plan de Producción (ForeCast)
+        # ---------------------------------------------------------
+        st.markdown("##### 🎯 Alineación Cosecha vs Plan de Producción (ForeCast)")
+        st.caption(
+            "Compara la curva consolidada de cosecha que arroja la ejecución del plan de enraizamiento contra las metas semanales "
+            "aprobadas en el módulo de Plan de Producción / ForeCast, garantizando sincronía entre propagación y corte comercial."
+        )
+
+        if not df_cvp.empty:
+            temporadas_cvp = ["Todas las Semanas"] + [t for t in df_cvp['Temporada'].dropna().unique().tolist() if t]
+            idx_temp_def = 0
+            for idx_t, t_nom in enumerate(temporadas_cvp):
+                if res_plano['temporada'].lower() in t_nom.lower() or t_nom.lower() in res_plano['temporada'].lower():
+                    idx_temp_def = idx_t
+                    break
+
+            col_sel_f, col_spacer_f = st.columns([2, 3])
+            with col_sel_f:
+                filtro_temp = st.selectbox(
+                    "Filtrar ventana de comparación:",
+                    options=temporadas_cvp,
+                    index=idx_temp_def,
+                    help="Filtra la comparativa para la temporada de la semana seleccionada o visualiza todas las semanas del horizonte."
+                )
+
+            df_cvp_disp = df_cvp.copy()
+            if filtro_temp != "Todas las Semanas":
+                df_cvp_disp = df_cvp_disp[df_cvp_disp['Temporada'] == filtro_temp]
+
+            tot_enr_cvp = int(df_cvp_disp['Tallos_Enraizamiento'].sum())
+            tot_plan_cvp = int(df_cvp_disp['Tallos_Plan_Produccion'].sum())
+            cumpl_glob = (tot_enr_cvp / tot_plan_cvp * 100.0) if tot_plan_cvp > 0 else 0.0
+            diff_glob = tot_enr_cvp - tot_plan_cvp
+
+            col_cp1, col_cp2, col_cp3, col_cp4 = st.columns(4)
+            col_cp1.metric("Cosecha Enraizamiento", f"{tot_enr_cvp:,d}", "Curvas fenológicas")
+            col_cp2.metric("Meta Plan Producción", f"{tot_plan_cvp:,d}", "Plan ForeCast Aprobado")
+            col_cp3.metric(
+                "Alineación Global", 
+                f"{cumpl_glob:.1f} %", 
+                f"{diff_glob:+,d} tallos",
+                delta_color="normal" if cumpl_glob >= 95.0 else "inverse"
+            )
+            sem_pico_cvp = df_cvp_disp.loc[df_cvp_disp['Tallos_Enraizamiento'].idxmax()]['Semana_Cosecha_Label'] if not df_cvp_disp.empty else "-"
+            col_cp4.metric("Semana Pico Enraizamiento", f"{sem_pico_cvp}", f"Ventana: {filtro_temp}")
+
+            # Gráfico Comparativo: Enraizamiento Cosecha vs Plan de Producción
+            df_melt_cvp = pd.melt(
+                df_cvp_disp,
+                id_vars=['Semana_Cosecha_Label', 'Temporada'],
+                value_vars=['Tallos_Enraizamiento', 'Tallos_Plan_Produccion'],
+                var_name='Fuente',
+                value_name='Tallos'
+            )
+            df_melt_cvp['Fuente'] = df_melt_cvp['Fuente'].map({
+                'Tallos_Enraizamiento': 'Cosecha Proyectada Enraizamiento',
+                'Tallos_Plan_Produccion': 'Meta Plan Producción (ForeCast)'
+            })
+
+            chart_cvp = alt.Chart(df_melt_cvp).mark_bar(opacity=0.85).encode(
+                x=alt.X('Semana_Cosecha_Label:N', sort=df_cvp_disp['Semana_Cosecha_Label'].tolist(), title="Semana de Cosecha"),
+                y=alt.Y('Tallos:Q', title="Tallos Semanales"),
+                color=alt.Color('Fuente:N', scale=alt.Scale(
+                    domain=['Cosecha Proyectada Enraizamiento', 'Meta Plan Producción (ForeCast)'],
+                    range=['#2e7d32', '#1565c0']
+                )),
+                xOffset='Fuente:N',
+                tooltip=['Semana_Cosecha_Label', 'Fuente', alt.Tooltip('Tallos:Q', format=',d'), 'Temporada']
+            ).properties(height=320)
+
+            st.altair_chart(chart_cvp, width="stretch")
+
+            with st.expander("📋 Ver Tabla Comparativa Numérica: Cosecha Enraizamiento vs Plan Producción", expanded=False):
+                st.dataframe(
+                    df_cvp_disp[['Semana_Cosecha_Label', 'Temporada', 'Tallos_Enraizamiento', 'Tallos_Plan_Produccion', 'Diferencia', 'Cumplimiento_%']],
+                    column_config={
+                        "Semana_Cosecha_Label": st.column_config.TextColumn("Semana Cosecha"),
+                        "Temporada": st.column_config.TextColumn("Temporada"),
+                        "Tallos_Enraizamiento": st.column_config.NumberColumn("Cosecha Enraizamiento", format="%d"),
+                        "Tallos_Plan_Produccion": st.column_config.NumberColumn("Meta Producción (ForeCast)", format="%d"),
+                        "Diferencia": st.column_config.NumberColumn("Diferencia (Tallos)", format="%+d"),
+                        "Cumplimiento_%": st.column_config.NumberColumn("Alineación %", format="%.1f %%")
+                    },
+                    hide_index=True,
+                    width="stretch"
+                )
+
+        st.markdown("---")
+
+        # ---------------------------------------------------------
+        # 3. Comparativa de Esquejes por Semana (Plataforma vs Pedido)
+        # ---------------------------------------------------------
+        st.markdown("##### 📊 Comportamiento de Enraizamiento: Plataforma S&OP vs Pedido Programado")
+        st.caption(
+            f"Compara el volumen semanal de esquejes a ingresar en propagación entre la plataforma y el pedido programado "
+            f"para el ciclo productivo ({res_plano['temporada']})."
+        )
+
+        if not df_comp.empty:
+            df_melt_enr = pd.melt(
+                df_comp,
+                id_vars=['Semana_Enraizamiento_Label', 'Temporada'],
+                value_vars=['Enraizamiento_Plataforma', 'Enraizamiento_Analitica'],
+                var_name='Fuente',
+                value_name='Esquejes'
+            )
+            df_melt_enr['Fuente'] = df_melt_enr['Fuente'].map({
+                'Enraizamiento_Plataforma': 'Plataforma S&OP',
+                'Enraizamiento_Analitica': 'Pedido Programado (Analítica)'
+            })
+
+            chart_comp = alt.Chart(df_melt_enr).mark_bar(opacity=0.85).encode(
+                x=alt.X('Semana_Enraizamiento_Label:N', title="Semana de Enraizamiento"),
+                y=alt.Y('Esquejes:Q', title="Esquejes a Enraizar"),
+                color=alt.Color('Fuente:N', scale=alt.Scale(domain=['Plataforma S&OP', 'Pedido Programado (Analítica)'], range=['#2e7d32', '#1565c0'])),
+                xOffset='Fuente:N',
+                tooltip=['Semana_Enraizamiento_Label', 'Fuente', alt.Tooltip('Esquejes:Q', format=',d'), 'Temporada']
+            ).properties(height=320)
+
+            st.altair_chart(chart_comp, width="stretch")
+
+            with st.expander("📋 Ver Tabla Comparativa Numérica por Semana de Enraizamiento", expanded=False):
+                st.dataframe(
+                    df_comp[['Semana_Enraizamiento_Label', 'Semana_Siembra_Label', 'Semana_Cosecha_Label', 'Temporada', 'Enraizamiento_Plataforma', 'Enraizamiento_Analitica', 'Diferencia_Esquejes', 'Tallos_Esperados_Cosecha']],
+                    column_config={
+                        "Semana_Enraizamiento_Label": st.column_config.TextColumn("Sem. Enraiz."),
+                        "Semana_Siembra_Label": st.column_config.TextColumn("Sem. Siembra"),
+                        "Semana_Cosecha_Label": st.column_config.TextColumn("Sem. Cosecha"),
+                        "Temporada": st.column_config.TextColumn("Temporada Objetivo"),
+                        "Enraizamiento_Plataforma": st.column_config.NumberColumn("Plataforma (Esq)", format="%d"),
+                        "Enraizamiento_Analitica": st.column_config.NumberColumn("Pedido Analítica (Esq)", format="%d"),
+                        "Diferencia_Esquejes": st.column_config.NumberColumn("Diferencia", format="%+d"),
+                        "Tallos_Esperados_Cosecha": st.column_config.NumberColumn("Tallos Cosecha", format="%d")
+                    },
+                    hide_index=True,
+                    width="stretch"
+                )
+
+        st.markdown("---")
+
+        # ---------------------------------------------------------
+        # 4. Disponibilidad y Rotación de Camas Vivas en Campo
+        # ---------------------------------------------------------
+        st.markdown("##### 🚜 Análisis de Liberación y Rotación de Camas en Campo (Ajuste de Suelo: 3 vs 7 Días)")
         st.caption(
             "Evalúa la disponibilidad física de camas en campo provenientes del inventario vivo actual a medida que se "
             "cosechan y liberan, comparando la preparación de suelo estándar (7 días) contra el ajuste acelerado a 3 días."
         )
 
-        row_pico = df_lib[df_lib['Semana_Siembra'] == '202646']
-        c_pico_3d = int(row_pico['Camas_Liberadas_3d'].values[0]) if not row_pico.empty else (int(df_lib['Camas_Liberadas_3d'].max()) if not df_lib.empty else 0)
-        c_gain_pico = int(row_pico['Ganancia_Camas_Anticipadas'].values[0]) if not row_pico.empty else 0
-        demanda_tot_sv = int(df_lib['Camas_Requeridas_Semana'].sum()) if not df_lib.empty else 0
-        row_bal = df_lib[df_lib['Semana_Siembra'] == '202647']
-        balance_sv = int(row_bal['Balance_Disponibilidad_3d'].values[0]) if not row_bal.empty else (int(df_lib['Balance_Disponibilidad_3d'].iloc[-1]) if not df_lib.empty else 0)
+        if not df_lib.empty:
+            sem_s_act = str(res_plano['semana_siembra'])
+            row_act = df_lib[df_lib['Semana_Siembra'] == sem_s_act]
+            if row_act.empty:
+                row_act = df_lib.iloc[-1:]
 
-        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-        col_m1.metric("Camas Liberadas al Pico (S2646)", f"{c_pico_3d} camas", f"+{c_gain_pico} camas con 3 días")
-        col_m2.metric("Demanda San Valentín", f"{demanda_tot_sv} camas", "S2645 a S2647 (3 semanas)")
-        col_m3.metric("Superávit de Espacio", f"+{balance_sv} camas libres", "Holgura positiva garantizada")
-        col_m4.metric("Días de Preparación", "3 Días", "-4 días de descanso")
+            c_lib_3d = int(row_act['Camas_Liberadas_3d'].values[0])
+            c_lib_7d = int(row_act['Camas_Liberadas_7d'].values[0])
+            c_gain = int(row_act['Ganancia_Camas_Anticipadas'].values[0])
+            c_req_sem = float(row_act['Camas_Requeridas_Semana'].values[0])
+            c_req_acum = float(row_act['Camas_Requeridas_Acumuladas'].values[0])
+            bal_disp = float(row_act['Balance_Disponibilidad_3d'].values[0])
+            sem_lbl = str(row_act['Semana_Siembra_Label'].values[0])
 
-        # Gráfico 2: Liberación de Camas vs Demanda
-        df_melt_lib = pd.melt(
-            df_lib,
-            id_vars=['Semana_Siembra_Label'],
-            value_vars=['Camas_Liberadas_7d', 'Camas_Liberadas_3d', 'Camas_Requeridas_Acumuladas'],
-            var_name='Concepto',
-            value_name='Camas'
-        )
-        df_melt_lib['Concepto'] = df_melt_lib['Concepto'].map({
-            'Camas_Liberadas_7d': 'Liberación Estándar (7 días suelo)',
-            'Camas_Liberadas_3d': 'Liberación Acelerada (3 días suelo)',
-            'Camas_Requeridas_Acumuladas': 'Demanda Camas San Valentín Acumulada'
-        })
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            col_m1.metric(f"Camas Liberadas ({sem_lbl})", f"{c_lib_3d} camas", f"+{c_gain} camas con 3 días")
+            col_m2.metric(f"Demanda Camas {sem_lbl}", f"{c_req_sem:.1f} camas", f"Acumulada: {c_req_acum:.1f} camas")
+            col_m3.metric(
+                "Superávit de Espacio", 
+                f"{bal_disp:+.1f} camas", 
+                "Holgura positiva garantizada" if bal_disp >= 0 else "Déficit de espacio",
+                delta_color="normal" if bal_disp >= 0 else "inverse"
+            )
+            col_m4.metric("Días de Suelo", "3 Días", "-4 días vs estándar 7d")
 
-        chart_lib = alt.Chart(df_melt_lib).mark_line(point=True).encode(
-            x=alt.X('Semana_Siembra_Label:N', title="Semana de Siembra en Campo"),
-            y=alt.Y('Camas:Q', title="Camas Físicas Acumuladas"),
-            color=alt.Color('Concepto:N', scale=alt.Scale(
-                domain=['Liberación Estándar (7 días suelo)', 'Liberación Acelerada (3 días suelo)', 'Demanda Camas San Valentín Acumulada'],
-                range=['#757575', '#2e7d32', '#d32f2f']
-            )),
-            strokeDash=alt.condition(
-                alt.datum.Concepto == 'Demanda Camas San Valentín Acumulada',
-                alt.value([5, 5]),
-                alt.value([0])
-            ),
-            tooltip=['Semana_Siembra_Label', 'Concepto', alt.Tooltip('Camas:Q', format='.1f')]
-        ).properties(height=320)
+            # Gráfico de Liberación de Camas vs Demanda
+            df_melt_lib = pd.melt(
+                df_lib,
+                id_vars=['Semana_Siembra_Label'],
+                value_vars=['Camas_Liberadas_7d', 'Camas_Liberadas_3d', 'Camas_Requeridas_Acumuladas'],
+                var_name='Concepto',
+                value_name='Camas'
+            )
+            df_melt_lib['Concepto'] = df_melt_lib['Concepto'].map({
+                'Camas_Liberadas_7d': 'Liberación Estándar (7 días suelo)',
+                'Camas_Liberadas_3d': 'Liberación Acelerada (3 días suelo)',
+                'Camas_Requeridas_Acumuladas': 'Demanda de Camas Acumulada'
+            })
 
-        st.altair_chart(chart_lib, width="stretch")
+            chart_lib = alt.Chart(df_melt_lib).mark_line(point=True).encode(
+                x=alt.X('Semana_Siembra_Label:N', title="Semana de Siembra en Campo"),
+                y=alt.Y('Camas:Q', title="Camas Físicas Acumuladas"),
+                color=alt.Color('Concepto:N', scale=alt.Scale(
+                    domain=['Liberación Estándar (7 días suelo)', 'Liberación Acelerada (3 días suelo)', 'Demanda de Camas Acumulada'],
+                    range=['#757575', '#2e7d32', '#d32f2f']
+                )),
+                strokeDash=alt.condition(
+                    alt.datum.Concepto == 'Demanda de Camas Acumulada',
+                    alt.value([5, 5]),
+                    alt.value([0])
+                ),
+                tooltip=['Semana_Siembra_Label', 'Concepto', alt.Tooltip('Camas:Q', format='.1f')]
+            ).properties(height=320)
 
-        st.success(
-            f"✅ **Conclusión Agronómica de Espacio:** Reduciendo la preparación de suelo a **3 días**, se liberan "
-            f"**{c_pico_3d} camas** para la semana pico S2646 (ganando **+{c_gain_pico} camas de anticipación**). "
-            f"La demanda acumulada de las 3 semanas de San Valentín ({demanda_tot_sv} camas) queda holgadamente "
-            f"cubierta con un saldo a favor de **+{balance_sv} camas libres**."
-        )
+            st.altair_chart(chart_lib, width="stretch")
+
+            st.success(
+                f"✅ **Evaluación de Espacio en Campo:** Reduciendo la preparación de suelo a **3 días**, se disponen de "
+                f"**{c_lib_3d} camas liberadas** para la siembra en **{sem_lbl}** (ganando **+{c_gain} camas de anticipación**). "
+                f"El balance acumulado arroja un saldo favorable de **{bal_disp:+.1f} camas libres**, garantizando holgura de área."
+            )
 
     # -------------------------------------------------------------
     # TAB 4: VENTANA FENOLÓGICA Y PARÁMETROS
@@ -612,18 +741,24 @@ def render_enraizamiento_module(db):
         2. **Trasplante a Suelo / Campo ({res_plano['semana_siembra_label']}):**
            - Desfase temporal: `Semana_Siembra = Semana_Enraizamiento + {SEMANAS_ENRAIZAMIENTO} semanas`.
            - **Pico de siembra:** Tradicionalmente programado los **jueves** para acoplar el fotoperiodo de iluminación nocturna.
-           - **Camas estimadas:** A razón de ~5,000 plantas por cama estándar.
+           - **Camas estimadas:** A razón de ~5,200 plantas por cama estándar.
         
         3. **Floración y Cosecha Comercial ({res_plano.get('semana_cosecha_label', '')} | {res_plano['temporada']}):**
            - **Ciclo vegetativo:** Entre 68 y 84 días según la respuesta lumínica y fenológica de la variedad.
            - **Meta de calidad:** Concentrar el pico de corte los **jueves** de las semanas oficiales de temporada.
         """)
 
-        st.markdown("##### 🕒 Horarios de Jornada Laboral Legal Vigente")
+        st.markdown(f"##### 🕒 Horarios y Jornada Laboral Efectiva ({TOTAL_HORAS_SEMANA_ESTANDAR:.1f}h / Operario)")
+        st.caption("A todos los días de lunes a viernes se les deduce 30 minutos (0.5 h) de almuerzo. El sábado no tiene deducción de almuerzo.")
         jornadas_data = [
-            {"Día": d, "Horas Laborales": f"{h:.1f} h", "Detalle": "Jornada estándar legal (6:00 am - 2:00 pm)" if h == 8.0 else ("Jornada recortada (6:00 am - 1:30 pm)" if h == 7.5 else "Media jornada de sábado (6:00 am - 11:00 am)")}
-            for d, h in HORAS_JORNADA.items() if h > 0
+            {"Día": "Lunes", "Horario Bruto": "6:00 am - 2:00 pm (8.0 h)", "Almuerzo Deducido": "30 min (0.5 h)", "Jornada Efectiva": "7.5 h", "Observación": "Jornada ordinaria completa"},
+            {"Día": "Martes", "Horario Bruto": "6:00 am - 2:00 pm (8.0 h)", "Almuerzo Deducido": "30 min (0.5 h)", "Jornada Efectiva": "7.5 h", "Observación": "Jornada ordinaria completa"},
+            {"Día": "Miércoles", "Horario Bruto": "6:00 am - 1:30 pm (7.5 h)", "Almuerzo Deducido": "30 min (0.5 h)", "Jornada Efectiva": "7.0 h", "Observación": "Jornada ordinaria recortada"},
+            {"Día": "Jueves", "Horario Bruto": "6:00 am - 2:00 pm (8.0 h)", "Almuerzo Deducido": "30 min (0.5 h)", "Jornada Efectiva": "7.5 h", "Observación": "Pico de clavado de variedades"},
+            {"Día": "Viernes", "Horario Bruto": "6:00 am - 2:00 pm (8.0 h)", "Almuerzo Deducido": "30 min (0.5 h)", "Jornada Efectiva": "7.5 h", "Observación": "Jornada ordinaria completa"},
+            {"Día": "Sábado", "Horario Bruto": "6:00 am - 11:00 am (5.0 h)", "Almuerzo Deducido": "0 min (Sin deducción)", "Jornada Efectiva": "5.0 h", "Observación": "Media jornada sin almuerzo"},
         ]
-        st.table(pd.DataFrame(jornadas_data))
-        st.caption(f"**Total Jornada Semanal Legal:** {TOTAL_HORAS_SEMANA_ESTANDAR:.1f} horas / operario.")
+        df_jornadas = pd.DataFrame(jornadas_data)
+        st.table(df_jornadas)
+        st.caption(f"**Total Jornada Semanal Efectiva:** {TOTAL_HORAS_SEMANA_ESTANDAR:.1f} horas / operario.")
 

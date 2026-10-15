@@ -19,17 +19,17 @@ CAVIDADES_POR_BANDEJA = 112             # Bandeja estándar de propagación (112
 DIAS_PERMANENCIA_BANCO = 21            # 3 semanas exactas bajo cámara de nebulización
 SEMANAS_ENRAIZAMIENTO = 3              # Desfase temporal hacia atrás: Sem_Siembra - 3
 
-# Jornadas Laborales Estándar (según Módulo de Programación Diaria)
+# Jornadas Laborales Efectivas (con deducción de 30 min de almuerzo Lunes a Viernes)
 HORAS_JORNADA = {
-    "Lunes": 8.0,       # 6:00 am - 2:00 pm (8h)
-    "Martes": 8.0,      # 6:00 am - 2:00 pm (8h)
-    "Miércoles": 7.5,   # 6:00 am - 1:30 pm (7.5h)
-    "Jueves": 8.0,      # 6:00 am - 2:00 pm (8h) - Pico de siembra en campo
-    "Viernes": 8.0,     # 6:00 am - 2:00 pm (8h)
-    "Sábado": 5.0,      # 6:00 am - 11:00 am (5h)
+    "Lunes": 7.5,       # 6:00 am - 2:00 pm (8.0h brutas - 0.5h almuerzo = 7.5h)
+    "Martes": 7.5,      # 6:00 am - 2:00 pm (8.0h brutas - 0.5h almuerzo = 7.5h)
+    "Miércoles": 7.0,   # 6:00 am - 1:30 pm (7.5h brutas - 0.5h almuerzo = 7.0h)
+    "Jueves": 7.5,      # 6:00 am - 2:00 pm (8.0h brutas - 0.5h almuerzo = 7.5h) - Pico de siembra en campo
+    "Viernes": 7.5,     # 6:00 am - 2:00 pm (8.0h brutas - 0.5h almuerzo = 7.5h)
+    "Sábado": 5.0,      # 6:00 am - 11:00 am (5.0h sin almuerzo = 5.0h)
     "Domingo": 0.0      # 0h estándar (activo sólo en contingencia pico)
 }
-TOTAL_HORAS_SEMANA_ESTANDAR = sum(HORAS_JORNADA.values()) # 44.5 horas
+TOTAL_HORAS_SEMANA_ESTANDAR = sum(HORAS_JORNADA.values()) # 42.0 horas efectivas
 
 # Rendimientos Estándar de Mano de Obra (Esquejes / Hora)
 RENDIMIENTO_NORMAL = 2016.0         # 18 bandejas/hora (1 cada 3.33 min)
@@ -94,9 +94,6 @@ def clasificar_temporada_semana(sem_int: int) -> str:
 def aplicar_corrimiento_fenologico_a_plan(df_det: pd.DataFrame, db: Session = None) -> pd.DataFrame:
     """
     Enriquece el plan aprobado con parámetros fenológicos y biológicos dinámicos:
-    - Respeta la inmutabilidad temporal: hacia atrás no se puede cambiar nada.
-      La semana S202642 se ejecuta según lo pedido y las variedades tardías ya fueron
-      sembradas en semanas previas conforme a sus órdenes originales.
     - Semana_Enraizamiento = restar_semanas_iso(Semana_Siembra, 3).
     - Semana_Pedido_MV = restar_semanas_iso(Semana_Siembra, 4).
     - Asigna dia_pico, dia_inicio y aprovechamiento biológico individual por variedad.
@@ -353,7 +350,7 @@ def nivelar_distribucion_diaria(lotes: list[dict], horas_jornada: dict = None) -
     if not horas_jornada:
         horas_jornada = HORAS_JORNADA.copy()
 
-    total_horas = sum(horas_jornada.values()) or 44.5
+    total_horas = sum(horas_jornada.values()) or TOTAL_HORAS_SEMANA_ESTANDAR
     total_esquejes = sum(l['Esquejes'] for l in lotes)
     
     if total_esquejes == 0:
@@ -646,6 +643,64 @@ def generar_plano_enraizamiento_semanal(
         })
     df_resumen_diario = pd.DataFrame(resumen_diario_rows)
 
+    # Proyección Biológica de Cosecha Semanal a partir de este plano
+    try:
+        curvas_dyn = calcular_curvas_dinamicas(alpha=1.0, num_ciclos=9, db=db)
+    except Exception:
+        curvas_dyn = {}
+
+    recs_cosecha = []
+    for l in lotes_nivelados:
+        v_nom = l['Variedad']
+        v_norm = v_nom.lower().strip()
+        esq = l['Esquejes']
+        sem_s_lote = str(l['Semana_Siembra'])
+
+        if v_nom in curvas_dyn:
+            dyn = curvas_dyn[v_nom]
+            dp = int(dyn['dia_pico'])
+            di = int(dyn['dia_inicio'])
+            c_p = [dyn[f'c{i}'] for i in range(1, 16)]
+        elif v_norm in variedades_db:
+            vo = variedades_db[v_norm]
+            dp = int(vo.dia_pico) if vo.dia_pico else 77
+            di = int(vo.dia_inicio) if vo.dia_inicio else 70
+            c_p = [getattr(vo, f'c{i}') or 0.0 for i in range(1, 16)]
+        else:
+            dp, di, c_p = 77, 70, [0.806] + [0.0] * 14
+
+        y_s, w_s = int(sem_s_lote[:4]), int(sem_s_lote[4:])
+        dt_s = date.fromisocalendar(y_s, w_s, 1)
+        for d in range(1, 8):
+            dt_test = date.fromisocalendar(y_s, w_s, d)
+            if (dt_test + timedelta(days=dp)).isoweekday() == 4:
+                dt_s = dt_test
+                break
+
+        dt_ini = dt_s + timedelta(days=di)
+        for i_dia, pct in enumerate(c_p):
+            if pct and pct > 0:
+                dt_c = dt_ini + timedelta(days=i_dia)
+                sem_c = isocalendar_to_string(dt_c)
+                recs_cosecha.append({
+                    "Flor": l['Flor'],
+                    "Color": l['Color'],
+                    "Variedad": v_nom,
+                    "Semana_Cosecha": sem_c,
+                    "Semana_Cosecha_Label": f"S{sem_c[2:]}",
+                    "Tallos": esq * pct
+                })
+
+    df_proyeccion_cosecha = pd.DataFrame()
+    if recs_cosecha:
+        df_rc = pd.DataFrame(recs_cosecha)
+        grp_c = df_rc.groupby(['Semana_Cosecha', 'Semana_Cosecha_Label'])['Tallos'].sum().reset_index()
+        grp_c['Tallos_Proyectados'] = grp_c['Tallos'].round().astype(int)
+        tot_tallos_c = grp_c['Tallos_Proyectados'].sum()
+        grp_c['% del Total Lote'] = ((grp_c['Tallos_Proyectados'] / tot_tallos_c) * 100.0).round(1) if tot_tallos_c > 0 else 0.0
+        grp_c['Temporada'] = grp_c['Semana_Cosecha'].apply(lambda x: clasificar_temporada_semana(int(x) if str(x).isdigit() else 202704))
+        df_proyeccion_cosecha = grp_c.sort_values('Semana_Cosecha')
+
     # Ordenar lotes detallados por Día de Programación y luego por Variedad
     dia_order_map = {d: i for i, d in enumerate(dias_orden)}
     lotes_nivelados = sorted(
@@ -664,6 +719,7 @@ def generar_plano_enraizamiento_semanal(
         "temporada": temporada_cosecha,
         "df_plano_detallado": df_plano_detallado,
         "df_resumen_diario": df_resumen_diario,
+        "df_proyeccion_cosecha": df_proyeccion_cosecha,
         "resumen_mano_obra": res_mano_obra,
         "kpis": {
             "total_esquejes": tot_esq_sem,
@@ -831,14 +887,14 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
     bal = mano.get("balance_semanal_operarios", 0)
     estado_sem = "🟢 CUBIERTA" if bal >= 0 else ("🟡 AJUSTADA" if bal >= -1.0 else f"🔴 SOBRECARGA (+{abs(bal):.0f} ref.)")
     labor_headers = [
-        "Semana", "Jornada Legal", "Total Esquejes", "Bandejas 112", 
+        "Semana", "Jornada Efectiva", "Total Esquejes", "Bandejas 112", 
         "Rend. Ponderado", "Horas Req.", "Op. Req.", "Op. Asignados", "Balance Semanal", "Estado Capacidad"
     ]
     labor_data = [
         [Paragraph(f"<b>{h}</b>", th_style) for h in labor_headers],
         [
             Paragraph(sem_e, tc_center),
-            Paragraph("44.5 h", tc_center),
+            Paragraph(f"{TOTAL_HORAS_SEMANA_ESTANDAR:.1f} h", tc_center),
             Paragraph(f"{tot_esq:,d}", tc_center),
             Paragraph(f"{tot_band:,d}", tc_center),
             Paragraph(f"{kpis.get('rendimiento_ponderado', 2016):,.0f} esq/h", tc_center),
@@ -1075,7 +1131,53 @@ def obtener_datos_comparativos_enraizamiento_y_camas(
 
     df_liberacion_camas = pd.DataFrame(rows_lib)
 
+    # 3. Proyección Biológica de Cosecha del Plan de Enraizamiento vs Plan de Producción (ForeCast)
+    df_cosecha_vs_plan = pd.DataFrame()
+    if os.path.exists("Plan_Aprobado_Detallado.csv") and db is not None:
+        try:
+            from app.services.mva_service import proyectar_cosecha_desde_mva
+            df_det_all = pd.read_csv("Plan_Aprobado_Detallado.csv")
+            df_det_all['Esquejes_Para_Siembra (Final)'] = df_det_all['Esquejes']
+            df_proj_all = proyectar_cosecha_desde_mva(df_det_all, db)
+
+            cols_sem_c = sorted([c for c in df_proj_all.columns if str(c).startswith('202')])
+            tot_cosecha_sem = df_proj_all[cols_sem_c].sum()
+
+            plan_prod_dict = {}
+            if os.path.exists("Plan_Aprobado.csv"):
+                df_pa = pd.read_csv("Plan_Aprobado.csv")
+                col_cap = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_pa.columns else 'Suma de Tallos'
+                if 'Semana' in df_pa.columns:
+                    for s_raw, val in df_pa.groupby('Semana')[col_cap].sum().items():
+                        try:
+                            s_clean = str(int(float(s_raw)))
+                            plan_prod_dict[s_clean] = int(round(val))
+                        except Exception:
+                            pass
+
+            rows_cvp = []
+            for sc in cols_sem_c:
+                tallos_enr = int(round(tot_cosecha_sem[sc]))
+                tallos_plan = plan_prod_dict.get(sc, 0)
+                diff = tallos_enr - tallos_plan
+                cumpl = (tallos_enr / tallos_plan * 100.0) if tallos_plan > 0 else 0.0
+                temp_c = clasificar_temporada_semana(int(sc) if sc.isdigit() else 202704)
+
+                rows_cvp.append({
+                    "Semana_Cosecha": sc,
+                    "Semana_Cosecha_Label": f"S{sc[2:]}",
+                    "Temporada": temp_c,
+                    "Tallos_Enraizamiento": tallos_enr,
+                    "Tallos_Plan_Produccion": tallos_plan,
+                    "Diferencia": diff,
+                    "Cumplimiento_%": round(cumpl, 1)
+                })
+            df_cosecha_vs_plan = pd.DataFrame(rows_cvp)
+        except Exception:
+            pass
+
     return {
         "df_comp_enraizamiento": df_comp_enraizamiento,
-        "df_liberacion_camas": df_liberacion_camas
+        "df_liberacion_camas": df_liberacion_camas,
+        "df_cosecha_vs_plan": df_cosecha_vs_plan
     }
