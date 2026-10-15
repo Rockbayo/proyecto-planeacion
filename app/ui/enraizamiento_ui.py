@@ -264,8 +264,25 @@ def render_enraizamiento_module(db):
         ]
         columnas_orden = [c for c in columnas_orden if c in df_display.columns]
 
+        # Fila de Totales
+        row_totales = {
+            "Dia_Programado": "TOTAL GENERAL",
+            "Flor": "-",
+            "Color": "-",
+            "Variedad": f"{len(df_display)} Variedades",
+            "Esquejes": int(df_display['Esquejes'].sum()),
+            "Bandejas_112": int(df_display['Bandejas_112'].sum()),
+            "Camas_Campo": round(float(df_display['Camas_Campo'].sum()), 1),
+            "Bloque_Destino": "-",
+            "Semana_Siembra": "-",
+            "Semana_Cosecha": "-",
+            "Tallos_Esperados": int(df_display['Tallos_Esperados'].sum()),
+            "Nivelado": "-"
+        }
+        df_display_con_totales = pd.concat([df_display[columnas_orden], pd.DataFrame([row_totales])], ignore_index=True)
+
         st.dataframe(
-            df_display[columnas_orden],
+            df_display_con_totales,
             column_config={
                 "Dia_Programado": st.column_config.TextColumn("Día Programado"),
                 "Flor": st.column_config.TextColumn("Flor"),

@@ -572,6 +572,12 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
         alignment=1
     )
 
+    tc_center_bold = ParagraphStyle(
+        'TCellCenterBold',
+        parent=tc_bold,
+        alignment=1
+    )
+
     elements = []
 
     sem_e = res_plano.get("semana_enraizamiento_label", "S2643")
@@ -674,16 +680,33 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
                 Paragraph("[ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ]", tc_center),
             ])
 
+        # Fila de Totales
+        tot_esq_det = int(df_det['Esquejes'].sum())
+        tot_ban_det = int(df_det['Bandejas_112'].sum())
+        table_data.append([
+            Paragraph("<b>TOTAL GENERAL</b>", tc_bold),
+            Paragraph("-", tc_center),
+            Paragraph("-", tc_center),
+            Paragraph(f"<b>{len(df_det)} Variedades</b>", tc_bold),
+            Paragraph(f"<b>{tot_esq_det:,d}</b>", tc_center_bold),
+            Paragraph(f"<b>{tot_ban_det:,d}</b>", tc_center_bold),
+            Paragraph("-", tc_center),
+            Paragraph("-", tc_center),
+            Paragraph("[ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ]", tc_center),
+        ])
+
         t_det = Table(table_data, colWidths=[65, 60, 60, 195, 70, 75, 75, 72, 80], repeatRows=1)
         t_det.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1b5e20')),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cfd8dc')),
             ('TOPPADDING', (0, 0), (-1, -1), pad),
             ('BOTTOMPADDING', (0, 0), (-1, -1), pad),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f9fbe7')]),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f9fbe7')]),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e8f5e9')),
+            ('LINEABOVE', (0, -1), (-1, -1), 1.0, colors.HexColor('#1b5e20')),
         ]))
         elements.append(t_det)
-        elements.append(Spacer(1, 4))
+        elements.append(Spacer(1, 3))
 
     # 4. Pie de Control y Firmas de Aprobación Compacto
     sig_data = [
