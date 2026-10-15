@@ -190,14 +190,22 @@ elif modulo == "ForeCast y Exportación":
     st.markdown("Proyección de cosecha consolidada y exportación de plantillas (Webflowers / 52 Semanas).")
     
     # Selector de horizonte
-    vista = st.radio("Selecciona el horizonte de proyección:", ["13 Semanas Móviles", "52 Semanas (Año Completo)"], horizontal=True)
-    num_semanas = 14 if vista == "13 Semanas Móviles" else 52
+    vista = st.radio(
+        "Selecciona el horizonte de proyección:", 
+        ["52 Semanas (Año Completo)", "San Valentín (S2701 - S2706)", "13 Semanas Móviles", "Madres (S2715 - S2719)"], 
+        horizontal=True,
+        key="fc_vista_horizonte"
+    )
     
     # Alertas S&OP por horizonte
     alertas_sop = obtener_alertas_sop()
     if vista == "13 Semanas Móviles":
         a13 = alertas_sop.get("regla_13wk", {})
         st.caption(f"{a13.get('icono', '⏰')} **Regla 1 S&OP (13 Semanas / Webflowers):** Cierre los Miércoles antes de las 12:00 m. {a13.get('mensaje', '')}")
+    elif "San Valentín" in vista:
+        st.caption("🌹 **Horizonte Focal San Valentín (S2701 a S2706):** Muestra el comportamiento del pico comercial (1,410,000 tallos) y su sincronización con propagación.")
+    elif "Madres" in vista:
+        st.caption("💐 **Horizonte Focal Madres (S2715 a S2719):** Muestra la ventana comercial de corte para temporada de Madres.")
     else:
         a52 = alertas_sop.get("regla_52wk", {})
         st.caption(f"{a52.get('icono', '📅')} **Regla 2 S&OP (52 Semanas / Anual):** Carga los 4º Jueves de cada mes. {a52.get('mensaje', '')}")
@@ -283,9 +291,15 @@ elif modulo == "ForeCast y Exportación":
         semanas_cols = sorted(semanas_cols)
         
         semana_actual = isocalendar_to_string(date.today())
-        semanas_futuras = [s for s in semanas_cols if s >= semana_actual]
-        if len(semanas_futuras) > num_semanas:
-            semanas_futuras = semanas_futuras[:num_semanas]
+        
+        if "San Valentín" in vista:
+            semanas_futuras = [s for s in semanas_cols if any(s.startswith(w) for w in ['202701', '202702', '202703', '202704', '202705', '202706'])]
+        elif "Madres" in vista:
+            semanas_futuras = [s for s in semanas_cols if any(s.startswith(w) for w in ['202715', '202716', '202717', '202718', '202719'])]
+        elif vista == "13 Semanas Móviles":
+            semanas_futuras = [s for s in semanas_cols if s >= semana_actual][:14]
+        else:
+            semanas_futuras = [s for s in semanas_cols if s >= semana_actual][:52]
             
         # Resaltar la semana actual
         if semana_actual in df_forecast.columns:
@@ -315,13 +329,17 @@ elif modulo == "ForeCast y Exportación":
             
             # Intentar cargar el plan aprobado
             plan_aprobado_path = "Plan_Aprobado.csv"
-            plan_series = pd.Series(0.0, index=semanas_futuras)
+            plan_series_cap = pd.Series(0.0, index=semanas_futuras)
+            plan_series_ped = pd.Series(0.0, index=semanas_futuras)
+            has_pedidos_col = False
             
             if os.path.exists(plan_aprobado_path):
                 try:
                     df_plan_app = pd.read_csv(plan_aprobado_path)
                     col_capacidad = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_plan_app.columns else 'Suma de Tallos'
-                    if 'Semana' in df_plan_app.columns and col_capacidad in df_plan_app.columns:
+                    col_pedidos = 'Tallos Pedidos (Plan)' if 'Tallos Pedidos (Plan)' in df_plan_app.columns else 'Tallos Solicitados (Plan)'
+                    
+                    if 'Semana' in df_plan_app.columns:
                         def clean_semana(val):
                             if pd.isna(val):
                                 return ""
@@ -332,23 +350,29 @@ elif modulo == "ForeCast y Exportación":
                                 
                         df_plan_app['Semana'] = df_plan_app['Semana'].apply(clean_semana)
                         
-                        # Agrupar el plan aprobado por semana (Tallos a producir de la contrapropuesta)
-                        df_plan_grp = df_plan_app.groupby('Semana')[col_capacidad].sum()
-                        
-                        # Alinear con las semanas futuras del chart
-                        for sem_fut in semanas_futuras:
-                            # Limpiar nombre por si tiene " (Actual)"
-                            sem_clean = sem_fut.split(" ")[0]
-                            if sem_clean in df_plan_grp.index:
-                                plan_series[sem_fut] = df_plan_grp[sem_clean]
-                    st.success("✅ Comparando contra el Plan Aprobado (Contrapropuesta consolidada).")
-                except Exception:
-                    st.warning("No se pudo leer el Plan Aprobado, usando 0.")
+                        if col_capacidad in df_plan_app.columns:
+                            df_plan_grp_cap = df_plan_app.groupby('Semana')[col_capacidad].sum()
+                            for sem_fut in semanas_futuras:
+                                sem_clean = sem_fut.split(" ")[0]
+                                if sem_clean in df_plan_grp_cap.index:
+                                    plan_series_cap[sem_fut] = df_plan_grp_cap[sem_clean]
+                                    
+                        if col_pedidos in df_plan_app.columns:
+                            df_plan_grp_ped = df_plan_app.groupby('Semana')[col_pedidos].sum()
+                            for sem_fut in semanas_futuras:
+                                sem_clean = sem_fut.split(" ")[0]
+                                if sem_clean in df_plan_grp_ped.index:
+                                    plan_series_ped[sem_fut] = df_plan_grp_ped[sem_clean]
+                            has_pedidos_col = (plan_series_ped.sum() > 0)
+                                    
+                    st.success("✅ Comparando contra el Plan Aprobado (Capacidad de Siembra y Demanda Comercial).")
+                except Exception as e:
+                    st.warning(f"No se pudo leer el Plan Aprobado: {e}")
             else:
                 st.info("💡 No hay un 'Plan Aprobado' guardado en el módulo MVA. Usa el módulo 'Plan de Producción' para procesar y consolidar un plan.")
                 col_plan1, col_plan2 = st.columns([1, 3])
                 plan_fallback = col_plan1.number_input("Meta del Plan (Fallback)", value=400000, step=10000)
-                plan_series = pd.Series(plan_fallback, index=semanas_futuras)
+                plan_series_cap = pd.Series(plan_fallback, index=semanas_futuras)
                 
             fig_fc = go.Figure()
             
@@ -376,30 +400,42 @@ elif modulo == "ForeCast y Exportación":
                     hovertemplate="<b>Semana %{x}</b><br>Material Vegetal: %{y:,.0f} tallos<extra></extra>"
                 ))
                 
-            # 3. Línea de Plan Aprobado
+            # 3. Línea de Plan Aprobado (Capacidad de Siembra)
             fig_fc.add_trace(go.Scatter(
                 x=semanas_futuras,
-                y=plan_series,
+                y=plan_series_cap,
                 mode='lines+markers',
-                name="Plan Aprobado",
+                name="Plan Aprobado (Capacidad)",
                 line=dict(color='#1976D2', width=2.5, dash='dot'),
                 marker=dict(size=5, symbol='square'),
-                hovertemplate="<b>Semana %{x}</b><br>Plan Aprobado: %{y:,.0f} tallos<extra></extra>"
+                hovertemplate="<b>Semana %{x}</b><br>Plan Aprobado (Capacidad): %{y:,.0f} tallos<extra></extra>"
             ))
+            
+            # 4. Línea de Demanda Comercial (Plan Pedidos 1,410k)
+            if has_pedidos_col:
+                fig_fc.add_trace(go.Scatter(
+                    x=semanas_futuras,
+                    y=plan_series_ped,
+                    mode='lines+markers',
+                    name="Demanda Comercial (Plan Pedidos)",
+                    line=dict(color='#7B1FA2', width=2, dash='dash'),
+                    marker=dict(size=4, symbol='triangle-up'),
+                    hovertemplate="<b>Semana %{x}</b><br>Demanda Comercial: %{y:,.0f} tallos<extra></extra>"
+                ))
                 
             fig_fc.update_layout(
                 title=dict(text=f"Proyección Semanal vs Plan Aprobado ({vista})", font=dict(size=16)),
                 xaxis=dict(
-                    type='category',  # Evita formato numérico 202.64k y muestra los nombres exactos de semana
+                    type='category',
                     title="Semana Operativa",
                     tickangle=-45,
-                    fixedrange=True,  # Bloquea zoom y arrastre horizontal
+                    fixedrange=True,
                     gridcolor='#f0f0f0'
                 ),
                 yaxis=dict(
                     title="Tallos Proyectados",
                     tickformat=",.0f",
-                    fixedrange=True,  # Bloquea zoom y arrastre vertical
+                    fixedrange=True,
                     gridcolor='#f0f0f0'
                 ),
                 hovermode="x unified",
@@ -412,16 +448,20 @@ elif modulo == "ForeCast y Exportación":
             st.markdown("**Comparativo ForeCast vs Plan Aprobado:**")
             df_comp = pd.DataFrame(index=semanas_futuras)
             df_comp['Proyección (ForeCast)'] = fc_agrupado
-            df_comp['Plan Aprobado'] = plan_series
-            df_comp['Variación %'] = df_comp.apply(
-                lambda row: ((row['Proyección (ForeCast)'] / row['Plan Aprobado']) - 1) * 100 if row['Plan Aprobado'] > 0 else 0,
+            df_comp['Plan Aprobado (Capacidad)'] = plan_series_cap
+            if has_pedidos_col:
+                df_comp['Demanda Solicitada (Pedidos)'] = plan_series_ped
+            df_comp['Variación vs Capacidad %'] = df_comp.apply(
+                lambda row: ((row['Proyección (ForeCast)'] / row['Plan Aprobado (Capacidad)']) - 1) * 100 if row['Plan Aprobado (Capacidad)'] > 0 else 0,
                 axis=1
             )
             
             df_comp_display = df_comp.copy()
             df_comp_display['Proyección (ForeCast)'] = df_comp_display['Proyección (ForeCast)'].apply(lambda x: f"{int(x):,}")
-            df_comp_display['Plan Aprobado'] = df_comp_display['Plan Aprobado'].apply(lambda x: f"{int(x):,}")
-            df_comp_display['Variación %'] = df_comp_display['Variación %'].apply(lambda x: f"{x:+.1f}%")
+            df_comp_display['Plan Aprobado (Capacidad)'] = df_comp_display['Plan Aprobado (Capacidad)'].apply(lambda x: f"{int(x):,}")
+            if has_pedidos_col:
+                df_comp_display['Demanda Solicitada (Pedidos)'] = df_comp_display['Demanda Solicitada (Pedidos)'].apply(lambda x: f"{int(x):,}")
+            df_comp_display['Variación vs Capacidad %'] = df_comp_display['Variación vs Capacidad %'].apply(lambda x: f"{x:+.1f}%")
             
             st.dataframe(df_comp_display.T, width='stretch')
             
@@ -1022,13 +1062,85 @@ elif modulo == "Plan de Producción (MVA)":
         render_actas_module(db)
         
     with tab_plan:
-        st.markdown("""
-        Sube el archivo de plan semanal (Ej: `CH-ValentinesDay-Easter...xlsx`).
-        El sistema aplicará la distribución MVA, la regla de 2000 tallos mínimos acumulables en 2 semanas, 
-        el cálculo de Camas Completas (Siembra 4800 plantas), y finalmente, **Backward Scheduling** para Siembra y Enraizamiento.
-        """)
-    
-        plan_file = st.file_uploader("Subir Archivo de Plan Semanal (Excel)", type=["xlsx", "xls"])
+        from app.services.produccion_service import obtener_resumen_plan_vigente, sincronizar_plan_maestro_y_detallado
+        resumen_vigente = obtener_resumen_plan_vigente(db=db)
+        
+        # 1. Visor Permanente del Plan Maestro Aprobado Vigente
+        if resumen_vigente.get("activo"):
+            with st.container(border=True):
+                st.markdown("#### 📋 Plan Maestro de Producción Vigente en Plataforma")
+                st.caption(
+                    f"Plan oficial consolidado y guardado permanentemente en el sistema. "
+                    f"Última actualización: **{resumen_vigente['fecha_actualizacion']}** | "
+                    f"Horizonte: **{resumen_vigente['num_semanas']} semanas** ({resumen_vigente['semana_min']} a {resumen_vigente['semana_max']})."
+                )
+                
+                c_p1, c_p2, c_p3, c_p4, c_p5 = st.columns(5)
+                c_p1.metric("Semanas en Plan", f"{resumen_vigente['num_semanas']}", f"{resumen_vigente['semana_min']} a {resumen_vigente['semana_max']}")
+                c_p2.metric("Demanda Pedidos", f"{resumen_vigente['total_pedidos']:,.0f}", "Tallos solicitados")
+                c_p3.metric("Capacidad Aprobada", f"{resumen_vigente['total_capacidad']:,.0f}", "Tallos a producir")
+                var_color = "normal" if resumen_vigente['variacion'] >= 0 else "inverse"
+                c_p4.metric("Variación Global", f"{resumen_vigente['variacion']:+,.0f}", delta_color=var_color)
+                
+                # San Valentín
+                c_p5.metric(
+                    "San Valentín (S2703-S2705)", 
+                    f"{resumen_vigente['sv_pedidos']:,.0f}", 
+                    f"Capacidad: {resumen_vigente['sv_capacidad']:,.0f}"
+                )
+
+                with st.expander("🔍 Explorar Plan Aprobado Vigente por Semana y Variedad", expanded=False):
+                    df_vig_disp = resumen_vigente['df_plan']
+                    sems_disp = ["Todas las Semanas"] + resumen_vigente['semanas']
+                    col_f1, col_f2 = st.columns(2)
+                    with col_f1:
+                        sem_filter = st.selectbox("Filtrar por semana de cosecha:", sems_disp, index=0)
+                    with col_f2:
+                        flores_disp = ["Todas las Flores"] + sorted(df_vig_disp['Flor'].dropna().unique().tolist()) if 'Flor' in df_vig_disp.columns else []
+                        flor_filter = st.selectbox("Filtrar por tipo de flor:", flores_disp, index=0)
+                        
+                    df_filt = df_vig_disp.copy()
+                    if sem_filter != "Todas las Semanas":
+                        df_filt = df_filt[df_filt['Semana'] == sem_filter]
+                    if flor_filter != "Todas las Flores":
+                        df_filt = df_filt[df_filt['Flor'] == flor_filter]
+                        
+                    st.dataframe(df_filt, width='stretch', hide_index=True)
+                    
+                    col_dla, col_dlb = st.columns(2)
+                    with col_dla:
+                        with open("Plan_Aprobado.csv", "rb") as f_a:
+                            st.download_button(
+                                "📥 Descargar Plan_Aprobado.csv (Maestro)", 
+                                f_a.read(), 
+                                file_name="Plan_Aprobado.csv", 
+                                mime="text/csv", 
+                                width="stretch"
+                            )
+                    with col_dlb:
+                        if os.path.exists("Plan_Aprobado_Detallado.csv"):
+                            with open("Plan_Aprobado_Detallado.csv", "rb") as f_b:
+                                st.download_button(
+                                    "📥 Descargar Plan_Aprobado_Detallado.csv (Siembra / Enraizamiento)", 
+                                    f_b.read(), 
+                                    file_name="Plan_Aprobado_Detallado.csv", 
+                                    mime="text/csv", 
+                                    width="stretch"
+                                )
+
+            st.markdown("---")
+        else:
+            st.info("💡 Aún no hay un Plan Maestro de Producción consolidado. Sube el primer archivo de plan a continuación.")
+
+        # 2. Sección de Cargue y Actualización de Planes
+        st.markdown("#### 📤 Cargar o Consolidar Nuevo Archivo de Plan Semanal")
+        st.caption(
+            "Sube el archivo de plan semanal (Ej: `CH-ValentinesDay-Easter...xlsx`). "
+            "El sistema aplica la distribución MVA, la regla de 2,000 tallos mínimos, el cálculo de camas completas (4,800 plantas), "
+            "y ejecuta **Backward Scheduling** automático para calcular siembra y enraizamiento."
+        )
+        
+        plan_file = st.file_uploader("Subir Archivo de Plan Semanal (Excel)", type=["xlsx", "xls"], key="uploader_plan_produccion")
         if plan_file is not None:
             # Si cambiamos de archivo, limpiamos el estado
             if "plan_file_name" in st.session_state and st.session_state["plan_file_name"] != plan_file.name:
@@ -1036,19 +1148,22 @@ elif modulo == "Plan de Producción (MVA)":
                     del st.session_state["df_contra"]
                 if "df_prod" in st.session_state:
                     del st.session_state["df_prod"]
+                if "df_backwards" in st.session_state:
+                    del st.session_state["df_backwards"]
                 
             if "df_contra" not in st.session_state:
                 if st.button("Procesar Plan", type="primary"):
                     with st.spinner("Procesando archivo, aplicando MVA y Backward Scheduling..."):
                         try:
                             from app.services.produccion_service import process_plan_produccion
-                            df_produccion, df_contrapropuesta = process_plan_produccion(plan_file.getvalue(), db)
+                            df_produccion, df_contrapropuesta, df_backwards = process_plan_produccion(plan_file.getvalue(), db)
                         
                             if df_produccion.empty:
                                 st.warning("No se generaron registros. Verifica que el archivo tenga datos válidos.")
                             else:
                                 st.session_state["df_contra"] = df_contrapropuesta
                                 st.session_state["df_prod"] = df_produccion
+                                st.session_state["df_backwards"] = df_backwards
                                 st.session_state["plan_file_name"] = plan_file.name
                                 st.rerun()
                         except Exception as e:
@@ -1059,6 +1174,7 @@ elif modulo == "Plan de Producción (MVA)":
             if "df_contra" in st.session_state:
                 df_contrapropuesta = st.session_state["df_contra"]
                 df_produccion = st.session_state["df_prod"]
+                df_backwards = st.session_state.get("df_backwards")
             
                 st.success("¡Contrapropuesta generada exitosamente!")
                 st.subheader("Contrapropuesta (Ajuste a Capacidad y Aprovechamiento)")
@@ -1092,46 +1208,27 @@ elif modulo == "Plan de Producción (MVA)":
                 col_save, col_dl1, col_dl2 = st.columns([2, 1, 1])
             
                 with col_save:
-                    if st.button("💾 Guardar Contrapropuesta como Plan Aprobado", type="primary", use_container_width=True):
-                        plan_file_path = "Plan_Aprobado.csv"
-                        if os.path.exists(plan_file_path):
+                    if st.button("💾 Guardar Contrapropuesta como Plan Aprobado", type="primary", width="stretch"):
+                        with st.spinner("Consolidando y sincronizando plan maestro y detallado..."):
                             try:
-                                # Cargar el plan maestro existente
-                                df_master = pd.read_csv(plan_file_path)
-                            
-                                def clean_sem(val):
-                                    if pd.isna(val) or str(val).lower() == 'nan':
-                                        return ""
-                                    try:
-                                        return str(int(float(val)))
-                                    except:
-                                        return str(val).strip()
-                                    
-                                df_master['Semana'] = df_master['Semana'].apply(clean_sem)
-                            
-                                # Identificar semanas en el nuevo ciclo
-                                df_produccion['Semana'] = df_produccion['Semana'].apply(clean_sem)
-                                nuevas_semanas = df_produccion['Semana'].unique()
-                            
-                                # Eliminar del maestro las semanas que vienen en este nuevo ciclo
-                                df_master = df_master[~df_master['Semana'].isin(nuevas_semanas)]
-                            
-                                # Agregar el nuevo ciclo y ordenar
-                                df_consolidado = pd.concat([df_master, df_produccion], ignore_index=True)
-                            
-                                if 'Flor' in df_consolidado.columns and 'Color' in df_consolidado.columns and 'Variedad' in df_consolidado.columns:
-                                    df_consolidado = df_consolidado.sort_values(['Semana', 'Flor', 'Color', 'Variedad'])
-                                else:
-                                    df_consolidado = df_consolidado.sort_values(['Semana'])
+                                res_sync = sincronizar_plan_maestro_y_detallado(
+                                    df_produccion, 
+                                    df_backwards=df_backwards, 
+                                    db=db
+                                )
+                                num_nuevas = len(res_sync['nuevas_semanas'])
+                                s_min = min(res_sync['nuevas_semanas']) if num_nuevas > 0 else "-"
+                                s_max = max(res_sync['nuevas_semanas']) if num_nuevas > 0 else "-"
+                                st.success(f"✅ ¡Plan consolidado y guardado permanentemente! Se actualizaron {num_nuevas} semanas ({s_min} a {s_max}).")
+                                st.info("🔄 Sincronización completa: 'Plan_Aprobado.csv' y 'Plan_Aprobado_Detallado.csv' quedaron 100% alineados. Los módulos de ForeCast, Pedido y Enraizamiento se actualizaron automáticamente.")
                                 
-                                df_consolidado.to_csv(plan_file_path, index=False)
-                                st.success(f"¡Ciclo consolidado! Se actualizaron {len(nuevas_semanas)} semanas en el Plan Maestro (semanas {min(nuevas_semanas)} a {max(nuevas_semanas)}).")
+                                # Limpiar estado temporal y refrescar
+                                if "df_contra" in st.session_state: del st.session_state["df_contra"]
+                                if "df_prod" in st.session_state: del st.session_state["df_prod"]
+                                if "df_backwards" in st.session_state: del st.session_state["df_backwards"]
+                                st.rerun()
                             except Exception as e:
-                                st.error(f"Error al consolidar el plan maestro: {e}")
-                        else:
-                            # Si no existe, guardar como el primero
-                            df_produccion.to_csv(plan_file_path, index=False)
-                            st.success("¡Primer ciclo guardado como Plan Maestro Aprobado (Detallado por Variedad)!")
+                                st.error(f"Error al sincronizar el plan maestro: {e}")
             
                 import io
                 # Generar Excel para Contrapropuesta
@@ -1146,7 +1243,7 @@ elif modulo == "Plan de Producción (MVA)":
                         data=output_contra.getvalue(),
                         file_name=f"Contrapropuesta_{date.today()}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
+                        width="stretch"
                     )
                 
                 # Generar Excel para Descargar Plan Detallado
@@ -1161,7 +1258,7 @@ elif modulo == "Plan de Producción (MVA)":
                         data=output_plan.getvalue(),
                         file_name=f"Plan_Detallado_MVA_{date.today()}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
+                        width="stretch"
                     )
 
 elif modulo == "Ocupación de Área y Capacidad":

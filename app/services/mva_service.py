@@ -144,10 +144,10 @@ def proyectar_cosecha_desde_mva(df_mrp, db, var_dict=None):
             dia_inicio = 68
             curvas = [1.0] + [0.0] * 14
             
-        sem_siembra = str(row['Semana_Siembra'])
-        plantas = row['Esquejes_Para_Siembra (Final)']
+        sem_siembra = str(row['Semana_Siembra']).split('.')[0].strip()
+        plantas = float(row.get('Esquejes_Para_Siembra (Final)', 0) or row.get('Esquejes', 0) or row.get('Plantas_Siembra', 0) or 0)
         
-        if plantas <= 0:
+        if plantas <= 0 or len(sem_siembra) < 6:
             continue
             
         # Determinar la fecha de siembra óptima en esa semana

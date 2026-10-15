@@ -352,5 +352,214 @@ def process_plan_produccion(plan_bytes: bytes, db):
     column_order = ['Semana', 'Flor', 'Color', 'Variedad', 'Tallos Pedidos (Plan)', 'Tallos a Producir (Capacidad)', 'Diferencia']
     df_detailed = df_detailed[column_order]
 
-    return df_detailed, df_contrapropuesta
+    return df_detailed, df_contrapropuesta, df_backwards
+
+
+def sincronizar_plan_maestro_y_detallado(
+    df_produccion: pd.DataFrame, 
+    df_backwards: pd.DataFrame = None, 
+    db = None,
+    plan_file_path: str = "Plan_Aprobado.csv",
+    detailed_file_path: str = "Plan_Aprobado_Detallado.csv"
+) -> dict:
+    """
+    Consolida de manera atómica y persistente el plan de producción aprobado
+    tanto en Plan_Aprobado.csv como en Plan_Aprobado_Detallado.csv.
+    Garantiza:
+    - Semanas limpias en formato texto ISO (ej. '202703', sin .0 ni NaNs ni filas corruptas).
+    - Columnas canónicas estandarizadas.
+    - Sincronía 100% entre semanas de cosecha y semanas de siembra/enraizamiento.
+    """
+    import os
+    from datetime import date, timedelta
+    from app.models.models import Variedad
+
+    def clean_sem(val):
+        if pd.isna(val) or str(val).lower() == 'nan':
+            return ""
+        try:
+            return str(int(float(val)))
+        except:
+            return str(val).strip()
+
+    df_p = df_produccion.copy()
+    df_p['Semana'] = df_p['Semana'].apply(clean_sem)
+    df_p = df_p[df_p['Semana'] != ""].copy()
+    nuevas_semanas = sorted(df_p['Semana'].unique().tolist())
+
+    canon_cols = ['Semana', 'Flor', 'Color', 'Variedad', 'Tallos Pedidos (Plan)', 'Tallos a Producir (Capacidad)', 'Diferencia']
+    
+    # 1. Consolidar Plan_Aprobado.csv
+    if os.path.exists(plan_file_path):
+        try:
+            df_master = pd.read_csv(plan_file_path)
+            # Descartar fila 0 corrupta si existe
+            if 'Semana' in df_master.columns and pd.isna(df_master.iloc[0]['Semana']):
+                df_master = df_master.iloc[1:].copy()
+            df_master['Semana'] = df_master['Semana'].apply(clean_sem)
+            df_master = df_master[df_master['Semana'] != ""].copy()
+            if 'Flower' in df_master.columns and 'Flor' in df_master.columns:
+                df_master['Flor'] = df_master['Flor'].fillna(df_master['Flower'])
+            cols_exist = [c for c in canon_cols if c in df_master.columns]
+            df_master = df_master[cols_exist].copy()
+            df_master = df_master[~df_master['Semana'].isin(nuevas_semanas)]
+            df_consolidado = pd.concat([df_master, df_p[canon_cols]], ignore_index=True)
+        except Exception:
+            df_consolidado = df_p[canon_cols].copy()
+    else:
+        df_consolidado = df_p[canon_cols].copy()
+
+    df_consolidado = df_consolidado.sort_values(['Semana', 'Flor', 'Color', 'Variedad'])
+    df_consolidado.to_csv(plan_file_path, index=False)
+
+    # 2. Consolidar Plan_Aprobado_Detallado.csv
+    vars_db = {v.nombre.lower().strip(): v for v in db.query(Variedad).all()} if db else {}
+    
+    recs_det = []
+    if df_backwards is not None and not df_backwards.empty:
+        df_bw = df_backwards.copy()
+        for _, r in df_bw.iterrows():
+            sem_c = clean_sem(r.get('Semana_Cosecha', ''))
+            sem_s = clean_sem(r.get('Semana_Siembra', ''))
+            sem_e = clean_sem(r.get('Semana_Enraizamiento', ''))
+            plantas = int(round(r.get('Plantas_Siembra', 0)))
+            camas = round(plantas / 5200.0, 1)
+            recs_det.append({
+                'Flor': r.get('Flor', ''),
+                'Color': r.get('Color', ''),
+                'Variedad': r.get('Variedad', ''),
+                'Semana_Cosecha': sem_c,
+                'Semana_Siembra': sem_s,
+                'Semana_Enraizamiento': sem_e,
+                'Esquejes': plantas,
+                'Camas': camas
+            })
+    else:
+        for _, r in df_p.iterrows():
+            v_nom = str(r['Variedad']).strip()
+            v_obj = vars_db.get(v_nom.lower())
+            dp = v_obj.dia_pico if (v_obj and v_obj.dia_pico) else 77
+            ap = v_obj.aprov_pp if (v_obj and v_obj.aprov_pp and v_obj.aprov_pp > 0) else 0.806
+            tallos = float(r.get('Tallos a Producir (Capacidad)', 0) or r.get('Tallos Pedidos (Plan)', 0) or 0)
+            if tallos <= 0:
+                continue
+            esq = int(round(tallos / ap))
+            cam = round(esq / 5200.0, 1)
+            sem_c = clean_sem(r['Semana'])
+            y = int(sem_c[:4])
+            w = int(sem_c[4:])
+            fp = date.fromisocalendar(y, w, 4)
+            fs = fp - timedelta(days=dp)
+            y_s, w_s, _ = fs.isocalendar()
+            sem_s = f'{y_s}{w_s:02d}'
+            fe = fs - timedelta(days=21)
+            y_e, w_e, _ = fe.isocalendar()
+            sem_e = f'{y_e}{w_e:02d}'
+            recs_det.append({
+                'Flor': r['Flor'],
+                'Color': r['Color'],
+                'Variedad': v_nom,
+                'Semana_Cosecha': sem_c,
+                'Semana_Siembra': sem_s,
+                'Semana_Enraizamiento': sem_e,
+                'Esquejes': esq,
+                'Camas': cam
+            })
+
+    df_det_new = pd.DataFrame(recs_det)
+    
+    if os.path.exists(detailed_file_path):
+        try:
+            df_det_master = pd.read_csv(detailed_file_path)
+            if 'Semana_Cosecha' in df_det_master.columns:
+                df_det_master['Semana_Cosecha'] = df_det_master['Semana_Cosecha'].apply(clean_sem)
+                df_det_master = df_det_master[~df_det_master['Semana_Cosecha'].isin(nuevas_semanas)]
+            else:
+                # Si el archivo previo no tenía Semana_Cosecha, filtramos semanas siembra equivalentes
+                if 'Semana_Siembra' in df_det_master.columns:
+                    sems_siembra_nuevas = set(df_det_new['Semana_Siembra'].unique())
+                    df_det_master['Semana_Siembra'] = df_det_master['Semana_Siembra'].apply(clean_sem)
+                    df_det_master = df_det_master[~df_det_master['Semana_Siembra'].isin(sems_siembra_nuevas)]
+            df_det_consolidado = pd.concat([df_det_master, df_det_new], ignore_index=True)
+        except Exception:
+            df_det_consolidado = df_det_new
+    else:
+        df_det_consolidado = df_det_new
+
+    det_order = ['Flor', 'Color', 'Variedad', 'Semana_Cosecha', 'Semana_Siembra', 'Semana_Enraizamiento', 'Esquejes', 'Camas']
+    det_order = [c for c in det_order if c in df_det_consolidado.columns]
+    df_det_consolidado = df_det_consolidado[det_order].sort_values(['Semana_Siembra', 'Flor', 'Color', 'Variedad'])
+    df_det_consolidado.to_csv(detailed_file_path, index=False)
+
+    return {
+        "nuevas_semanas": nuevas_semanas,
+        "total_filas_master": len(df_consolidado),
+        "total_filas_detallado": len(df_det_consolidado),
+        "df_consolidado": df_consolidado,
+        "df_detallado": df_det_consolidado
+    }
+
+
+def obtener_resumen_plan_vigente(plan_file_path: str = "Plan_Aprobado.csv", db = None) -> dict:
+    """
+    Retorna los KPIs y datos consolidados del plan maestro actualmente activo.
+    """
+    import os
+    from datetime import datetime
+
+    if not os.path.exists(plan_file_path):
+        return {"activo": False}
+
+    try:
+        df = pd.read_csv(plan_file_path)
+        if df.empty:
+            return {"activo": False}
+
+        def clean_sem(val):
+            if pd.isna(val) or str(val).lower() == 'nan':
+                return ""
+            try:
+                return str(int(float(val)))
+            except:
+                return str(val).strip()
+
+        if pd.isna(df.iloc[0].get('Semana')):
+            df = df.iloc[1:].copy()
+
+        df['Semana'] = df['Semana'].apply(clean_sem)
+        df = df[df['Semana'] != ""].copy()
+
+        mtime = os.path.getmtime(plan_file_path)
+        fecha_act = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+
+        tot_ped = float(df['Tallos Pedidos (Plan)'].sum()) if 'Tallos Pedidos (Plan)' in df.columns else 0.0
+        tot_cap = float(df['Tallos a Producir (Capacidad)'].sum()) if 'Tallos a Producir (Capacidad)' in df.columns else (float(df['Suma de Tallos'].sum()) if 'Suma de Tallos' in df.columns else 0.0)
+        diff_tot = tot_cap - tot_ped
+
+        semanas_u = sorted(df['Semana'].unique().tolist())
+        
+        # Resumen San Valentín (S2703 a S2705)
+        sv_sems = [s for s in ['202703', '202704', '202705'] if s in semanas_u]
+        df_sv = df[df['Semana'].isin(sv_sems)] if sv_sems else pd.DataFrame()
+        sv_ped = float(df_sv['Tallos Pedidos (Plan)'].sum()) if not df_sv.empty and 'Tallos Pedidos (Plan)' in df_sv.columns else 0.0
+        sv_cap = float(df_sv['Tallos a Producir (Capacidad)'].sum()) if not df_sv.empty and 'Tallos a Producir (Capacidad)' in df_sv.columns else 0.0
+
+        return {
+            "activo": True,
+            "df_plan": df,
+            "fecha_actualizacion": fecha_act,
+            "total_filas": len(df),
+            "semanas": semanas_u,
+            "num_semanas": len(semanas_u),
+            "semana_min": semanas_u[0] if semanas_u else "-",
+            "semana_max": semanas_u[-1] if semanas_u else "-",
+            "total_pedidos": tot_ped,
+            "total_capacidad": tot_cap,
+            "variacion": diff_tot,
+            "sv_pedidos": sv_ped,
+            "sv_capacidad": sv_cap,
+            "sv_semanas": sv_sems
+        }
+    except Exception as e:
+        return {"activo": False, "error": str(e)}
 

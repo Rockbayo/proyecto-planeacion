@@ -342,7 +342,7 @@ def render_pedido_module(db):
 
                         # Fechas y semanas operativas
                         try:
-                            sem_clean = sem_cosecha_raw.replace(".0", "")
+                            sem_clean = str(sem_cosecha_raw).split('.')[0].strip()
                             year = int(sem_clean[:4])
                             week = int(sem_clean[4:])
                             fecha_pico = date.fromisocalendar(year, week, 4)
@@ -571,7 +571,7 @@ def render_pedido_module(db):
                         # 2. Plan Aprobado
                         df_plan_eval = df_plan.dropna(subset=[col_capacidad]).copy()
                         df_plan_eval = df_plan_eval[df_plan_eval[col_capacidad] > 0]
-                        df_plan_eval['Semana_Clean'] = df_plan_eval['Semana'].astype(str).str.replace(".0", "")
+                        df_plan_eval['Semana_Clean'] = df_plan_eval['Semana'].astype(str).str.split('.').str[0].str.strip()
                         df_plan_eval['Variedad_Norm'] = df_plan_eval['Variedad'].astype(str).str.strip().str.lower()
                         df_plan_eval['Flor_Canon'] = df_plan_eval['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[0])
                         df_plan_eval['Color_Canon'] = df_plan_eval['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[1])
@@ -832,7 +832,7 @@ def render_pedido_module(db):
 
                         df_plan_eval = df_plan.dropna(subset=[col_capacidad]).copy()
                         df_plan_eval = df_plan_eval[df_plan_eval[col_capacidad] > 0]
-                        df_plan_eval['Semana_Clean'] = df_plan_eval['Semana'].astype(str).str.replace(".0", "")
+                        df_plan_eval['Semana_Clean'] = df_plan_eval['Semana'].astype(str).str.split('.').str[0].str.strip()
                         df_plan_eval['Variedad_Norm'] = df_plan_eval['Variedad'].astype(str).str.strip().str.lower()
                         df_plan_eval['Flor_Canon'] = df_plan_eval['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[0])
                         df_plan_eval['Color_Canon'] = df_plan_eval['Variedad_Norm'].map(lambda vn: v_map.get(vn, (None, None))[1])
