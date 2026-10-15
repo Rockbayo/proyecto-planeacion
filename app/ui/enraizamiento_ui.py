@@ -31,76 +31,56 @@ def render_enraizamiento_module(db):
 
     # Selector de Escenario de Planificación
     with st.container(border=True):
-        st.markdown("#### 🎯 Escenario Operativo y Capacidad Agronómica")
+        st.markdown("#### 🎯 Escenario Operativo y Capacidad de Proceso")
         col_esc, col_opt = st.columns([1.6, 1.2])
         with col_esc:
             escenario_sel = st.radio(
-                "Seleccione el escenario operativo de enraizamiento:",
+                "Seleccione el modelo operativo de enraizamiento:",
                 options=[
-                    "⭐ Plan Aprobado S&OP (Distribución Base 39% en Pico | 148 Camas)",
-                    "🎯 Concentración Óptima San Valentín (50% en Pico S2643 | 190 Camas — Pedido Exacto)",
-                    "🚀 Expansión al Techo Agronómico (\"El Cielo es el Límite\" | Suelo a 3 Días)",
+                    "⭐ Plan Balanceado S&OP (3 Semanas al Techo Operativo: 381 Camas SV | 372 Camas Madres)",
+                    "⚡ Pico Concentrado (50% en Pico S2643: 190 Camas | 988k Esq)",
                     "📋 Base Histórica Plataforma (Valores Originales Sin Ajuste)"
                 ],
-                index=1,
-                help="Ajusta todas las cantidades del plano, cuadrilla, requerimientos de camas y reportes al escenario elegido."
+                index=0,
+                help="El Plan Balanceado distribuye el volumen en las 3 semanas de la temporada respetando la capacidad de clavado, siembra y poscosecha sin ahogar la finca."
             )
 
         modo_plan = "aprobado"
         factor_expansion = 1.0
         modo_concentracion = "base"
 
-        if "Concentración Óptima" in escenario_sel:
+        if "Plan Balanceado S&OP" in escenario_sel:
+            modo_plan = "aprobado"
+            modo_concentracion = "base"
+            factor_expansion = 1.0
+            with col_opt:
+                st.success(
+                    "🌿 **Plan Balanceado (Máximo Techo Operativo Sostenible):**\n\n"
+                    "• **S2642 (SV 1):** 106.0 camas (551,200 esq) ➔ Cuadrilla base 6 op.\n\n"
+                    "• **S2643 (Pico):** 148.0 camas (769,600 esq) ➔ 9 op. (Techo de clavado)\n\n"
+                    "• **S2644 (SV 3):** 127.0 camas (660,400 esq) ➔ 7.5 op.\n\n"
+                    "**Suma 3 Semanas San Valentín:** **381 camas** (1,981,200 esquejes).\n\n"
+                    "**Suma 3 Semanas Madres:** **372 camas** (1,934,400 esquejes: 138-143-91 cam).\n\n"
+                    "✅ **Protección:** Ocupación en S48 al 100% de 1,068 camas (0 déficit)."
+                )
+        elif "Pico Concentrado" in escenario_sel:
             modo_plan = "aprobado"
             modo_concentracion = "pico_50"
             factor_expansion = 1.0
             with col_opt:
-                st.success(
-                    "🎯 **Concentración Óptima del Pedido Aprobado (50% en Pico):**\n\n"
-                    "• **S2642:** 442,000 esq (85 camas)\n\n"
-                    "• **S2643 (Pico):** 988,000 esq (190 camas — pico concentrado)\n\n"
-                    "• **S2644:** 551,200 esq (106 camas)\n\n"
-                    "**Total Temporada:** 1,981,200 esquejes (381 camas exactas del pedido aprobado).\n\n"
-                    "✅ **Verificado:** 0 déficit en S48 y libera camas antes para Siembra de Madres (S2705: +97 camas libres)."
+                st.warning(
+                    "⚡ **Concentración Forzada al 50% en Pico S2643:**\n\n"
+                    "• **S2642:** 85.0 camas (442,000 esq)\n\n"
+                    "• **S2643 (Pico):** 190.0 camas (988,000 esq ➔ Requiere 11 op. clavado)\n\n"
+                    "• **S2644:** 106.0 camas (551,200 esq)\n\n"
+                    "⚠️ *Nota operativa:* Exige refuerzo extraordinario de clavado y satura mesas de poscosecha en semana 04."
                 )
-        elif "Expansión al Techo" in escenario_sel:
-            modo_plan = "max_capacidad"
-            modo_concentracion = "base"
-            with col_opt:
-                meta_tallos = st.slider(
-                    "🎯 Meta Tallos Cosecha San Valentín (S03-S05):",
-                    min_value=1410000,
-                    max_value=2400000,
-                    value=1800000,
-                    step=50000,
-                    format="%d tallos",
-                    help="Aprovecha las camas liberadas en campo mediante el descanso acelerado a 3 días."
-                )
-                factor_expansion = meta_tallos / 1410000.0
-                camas_tot_est = round(381.0 * factor_expansion, 1)
-                st.info(
-                    f"📈 **Factor:** +{(factor_expansion - 1.0)*100:.1f}% | "
-                    f"**Camas SV:** {camas_tot_est} camas\n\n"
-                    f"🚜 **Holgura vs Liberación 3d (559 cam):** +{559 - camas_tot_est:.1f} camas libres"
-                )
-        elif "Base Histórica" in escenario_sel:
+        else:
             modo_plan = "plataforma_base"
             factor_expansion = 1.0
             modo_concentracion = "base"
             with col_opt:
-                st.warning("⚠️ Mostrando las cantidades históricas sin actualizar al pedido aprobado.")
-        else:
-            modo_plan = "aprobado"
-            factor_expansion = 1.0
-            modo_concentracion = "base"
-            with col_opt:
-                st.info(
-                    "📋 **Plan Aprobado Distribución Base:**\n\n"
-                    "• **S2642:** 551,200 esq (106 camas)\n\n"
-                    "• **S2643 (Pico):** 769,600 esq (148 camas — 38.8%)\n\n"
-                    "• **S2644:** 660,400 esq (127 camas)\n\n"
-                    "**Total:** 1,981,200 esquejes (381 camas)."
-                )
+                st.info("📋 Mostrando las órdenes históricas sin actualizar al pedido aprobado.")
 
     # 1. Cargar semanas disponibles en el Pedido Aprobado según el modo seleccionado
     semanas_disp = obtener_semanas_enraizamiento_disponibles(
