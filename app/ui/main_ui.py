@@ -37,6 +37,7 @@ modulo = st.sidebar.radio("Ir a:", [
     "Plan de Producción (MVA)", 
     "Ocupación de Área y Capacidad",
     "Pedido Material Vegetal", 
+    "Plan de Enraizamiento",
     "Precisión y ML (Accuracy)"
 ])
 
@@ -1155,6 +1156,10 @@ elif modulo == "Ocupación de Área y Capacidad":
 elif modulo == "Pedido Material Vegetal":
     from app.ui.pedido_ui import render_pedido_module
     render_pedido_module(db)
+
+elif modulo == "Plan de Enraizamiento":
+    from app.ui.enraizamiento_ui import render_enraizamiento_module
+    render_enraizamiento_module(db)
 
 elif modulo == "Precisión y ML (Accuracy)":
     render_accuracy_module(db)
