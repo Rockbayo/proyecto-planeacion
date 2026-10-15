@@ -13,8 +13,10 @@ from app.core.database import SessionLocal, engine
 from app.models.models import Variedad
 from app.services.forecast_service import generar_forecast_13wk, generar_forecast_ml_live, isocalendar_to_string
 from app.services.alertas_service import render_panel_alertas_sop, obtener_alertas_sop
+from app.ui.styles import aplicar_tema_invernadero_industrial, estilizar_figura_plotly, PALETA_INVERNADERO
 
 st.set_page_config(page_title="Analitica Planeacion S&OP", layout="wide")
+aplicar_tema_invernadero_industrial()
 
 st.title("🌱 Analítica Planeación S&OP")
 st.markdown("Sistema maestro de planeación agrícola.")
@@ -379,8 +381,8 @@ elif modulo == "ForeCast y Exportación":
                 y=y_fc,
                 mode='lines+markers',
                 name="ForeCast (Siembras Actuales + Pedido)",
-                line=dict(color='#2E7D32', width=3),
-                marker=dict(size=6, symbol='circle'),
+                line=dict(color='#2E8B57', width=3.5),
+                marker=dict(size=7, symbol='circle'),
                 hovertemplate="<b>Semana %{x}</b><br>ForeCast Biológico: %{y:,.0f} tallos<extra></extra>"
             ))
             
@@ -390,8 +392,8 @@ elif modulo == "ForeCast y Exportación":
                 y=plan_series_cap,
                 mode='lines+markers',
                 name="Plan de Producción",
-                line=dict(color='#1565C0', width=2.5, dash='dash'),
-                marker=dict(size=5, symbol='square'),
+                line=dict(color='#FFD700', width=2.5, dash='dash'),
+                marker=dict(size=6, symbol='square'),
                 hovertemplate="<b>Semana %{x}</b><br>Plan Producción: %{y:,.0f} tallos<extra></extra>"
             ))
 
@@ -402,30 +404,29 @@ elif modulo == "ForeCast y Exportación":
                     y=plan_enr_series,
                     mode='lines+markers',
                     name="Proyección Cosecha Enraizamiento (Pedido MV)",
-                    line=dict(color='#E65100', width=3),
-                    marker=dict(size=6, symbol='diamond'),
+                    line=dict(color='#E03C8A', width=3),
+                    marker=dict(size=7, symbol='diamond'),
                     hovertemplate="<b>Semana %{x}</b><br>Cosecha Enraizamiento: %{y:,.0f} tallos<extra></extra>"
                 ))
                 
             fig_fc.update_layout(
-                title=dict(text=f"Proyección Semanal vs Plan Aprobado y Enraizamiento ({vista})", font=dict(size=16)),
+                title=dict(text=f"Proyección Semanal vs Plan Aprobado y Enraizamiento ({vista})", font=dict(size=16, color="#FFFFFF")),
                 xaxis=dict(
                     type='category',
                     title="Semana Operativa",
                     tickangle=-45,
-                    fixedrange=True,
-                    gridcolor='#f0f0f0'
+                    fixedrange=True
                 ),
                 yaxis=dict(
                     title="Tallos Proyectados",
                     tickformat=",.0f",
-                    fixedrange=True,
-                    gridcolor='#f0f0f0'
+                    fixedrange=True
                 ),
                 hovermode="x unified",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 margin=dict(l=40, r=40, t=60, b=40)
             )
+            estilizar_figura_plotly(fig_fc)
             
             st.plotly_chart(fig_fc, width='stretch', config={'scrollZoom': False, 'displayModeBar': False})
             
@@ -569,7 +570,7 @@ elif modulo == "ForeCast y Exportación":
                                 }});
                             }}
                             </script>
-                            <button onclick="downloadAll()" style="background-color: #FF4B4B; border: none; color: white; padding: 10px 20px; text-align: center; text-decoration: none; display: inline-block; font-size: 16px; margin: 4px 2px; cursor: pointer; border-radius: 5px; font-family: sans-serif; font-weight: bold;">
+                            <button onclick="downloadAll()" style="background-color: #2E8B57; border: 1px solid rgba(255, 255, 255, 0.25); color: white; padding: 10px 22px; text-align: center; text-decoration: none; display: inline-block; font-size: 15px; margin: 4px 2px; cursor: pointer; border-radius: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-weight: 600; box-shadow: 0 0 14px rgba(46, 139, 87, 0.5);">
                                 ⬇️ Descargar Todos los Archivos (1 Clic)
                             </button>
                             """
@@ -667,7 +668,7 @@ elif modulo == "ForeCast y Exportación":
                                 }});
                             }}
                             </script>
-                            <button onclick="downloadAll52()" style="background-color: #FF4B4B; border: none; color: white; padding: 10px 20px; text-align: center; text-decoration: none; display: inline-block; font-size: 16px; margin: 4px 2px; cursor: pointer; border-radius: 5px; font-family: sans-serif; font-weight: bold;">
+                            <button onclick="downloadAll52()" style="background-color: #2E8B57; border: 1px solid rgba(255, 255, 255, 0.25); color: white; padding: 10px 22px; text-align: center; text-decoration: none; display: inline-block; font-size: 15px; margin: 4px 2px; cursor: pointer; border-radius: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-weight: 600; box-shadow: 0 0 14px rgba(46, 139, 87, 0.5);">
                                 ⬇️ Descargar Todos los Archivos 52 Wk (1 Clic)
                             </button>
                             """
@@ -1029,7 +1030,7 @@ elif modulo == "Programación Diaria y Temporadas":
             with col_chart2:
                 if not df_res_seasons.empty and df_res_seasons["Tallos Proyectados"].sum() > 0:
                     import altair as alt
-                    chart = alt.Chart(df_res_seasons).mark_bar().encode(
+                    chart = alt.Chart(df_res_seasons).mark_bar(color='#2E8B57', cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
                         x=alt.X('Temporada:N', sort=list(df_res_seasons['Temporada']), title='Temporada', axis=alt.Axis(labelAngle=-45)),
                         y=alt.Y('Tallos Proyectados:Q', title='Tallos'),
                         tooltip=['Temporada', 'Tallos Proyectados']

@@ -3,6 +3,7 @@ import pandas as pd
 from app.models.models import Variedad
 import os
 import plotly.express as px
+from app.ui.styles import estilizar_figura_plotly
 
 def render_curvas_module(db):
     st.header("📈 Curvas e Índices (Datos de Campo)")
@@ -166,6 +167,7 @@ def render_curvas_module(db):
                                 yaxis=dict(title="% de Producción Semanal/Corte", ticksuffix="%"),
                                 hovermode="x unified"
                             )
+                            estilizar_figura_plotly(fig)
                             st.plotly_chart(fig, width='stretch')
                     else:
                         # Modo Por Variedad
@@ -288,6 +290,7 @@ def render_curvas_module(db):
                                     yaxis=dict(title="% de Producción Semanal/Corte", ticksuffix="%"),
                                     hovermode="x unified"
                                 )
+                                estilizar_figura_plotly(fig)
                                 st.plotly_chart(fig, width='stretch')
                         
     with tab2:

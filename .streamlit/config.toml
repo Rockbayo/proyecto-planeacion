@@ -1,0 +1,36 @@
+[theme]
+base = "dark"
+primaryColor = "#2E8B57"
+backgroundColor = "#181A1F"
+secondaryBackgroundColor = "#282B30"
+textColor = "#FFFFFF"
+borderColor = "rgba(255, 255, 255, 0.15)"
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "10px"
+buttonRadius = "8px"
+font = "sans-serif"
+headingFontSizes = ["30px", "24px", "20px", "16px", "14px", "12px"]
+headingFontWeights = [700, 600, 600, 500, 500, 500]
+
+chartCategoricalColors = [
+    "#E03C8A",
+    "#FFD700",
+    "#8A2BE2",
+    "#2E8B57",
+    "#00E5FF",
+    "#FF8C00",
+    "#36B37E"
+]
+
+[theme.sidebar]
+backgroundColor = "rgba(24, 26, 31, 0.95)"
+secondaryBackgroundColor = "rgba(40, 43, 48, 0.8)"
+textColor = "#FFFFFF"
+borderColor = "rgba(255, 255, 255, 0.15)"
+primaryColor = "#2E8B57"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false

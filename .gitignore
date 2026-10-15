@@ -7,4 +7,5 @@ env/
 .pytest_cache/
 .DS_Store
 temp_plan_mva.xlsx
+~$*
 
