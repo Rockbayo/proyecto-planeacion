@@ -256,12 +256,11 @@ def render_enraizamiento_module(db):
 
         # Preparar columnas amigables
         df_display['Nivelado'] = df_display['Es_Nivelado'].apply(lambda x: "⚡ Nivelado" if x else "🎯 Tentativo")
-        df_display['Pico Cosecha'] = df_display['Dia_Pico'].apply(lambda x: f"+{int(x)}d")
         
         columnas_orden = [
             "Dia_Programado", "Flor", "Color", "Variedad", "Esquejes", 
             "Bandejas_112", "Camas_Campo", "Bloque_Destino", 
-            "Semana_Siembra", "Semana_Cosecha", "Pico Cosecha", "Tallos_Esperados", "Nivelado"
+            "Semana_Siembra", "Semana_Cosecha", "Tallos_Esperados", "Nivelado"
         ]
         columnas_orden = [c for c in columnas_orden if c in df_display.columns]
 
@@ -278,7 +277,6 @@ def render_enraizamiento_module(db):
                 "Bloque_Destino": st.column_config.TextColumn("Bloque Destino"),
                 "Semana_Siembra": st.column_config.TextColumn("Sem. Siembra"),
                 "Semana_Cosecha": st.column_config.TextColumn("Sem. Cosecha"),
-                "Pico Cosecha": st.column_config.TextColumn("Pico Cosecha"),
                 "Tallos_Esperados": st.column_config.NumberColumn("Tallos Esperados", format="%d"),
                 "Nivelado": st.column_config.TextColumn("Estado Programación")
             },
@@ -295,30 +293,65 @@ def render_enraizamiento_module(db):
     # TAB 2: DISTRIBUCIÓN DIARIA Y CUADRILLA
     # -------------------------------------------------------------
     with tab_mano_obra:
-        st.markdown("##### ⏱️ Balance de Capacidad y Demanda de Mano de Obra por Día")
+        st.markdown("##### ⏱️ Balance de Capacidad y Mano de Obra Semanal")
         st.caption(
-            "Compara las horas de labor demandadas por el volumen de enraizamiento contra la capacidad "
-            "efectiva de la cuadrilla asignada, según las jornadas laborales de la empresa."
+            "Consolida las horas de labor demandadas por el volumen total de enraizamiento contra la capacidad "
+            "efectiva de la cuadrilla asignada para la semana completa (base legal 44.5h)."
         )
 
-        # Tabla Resumen Diario
+        # 1. Tabla de Operarios Requeridos Consolidada por Semana
+        bal = mano_obra.get("balance_semanal_operarios", 0)
+        estado_sem = "🟢 CUBIERTA" if bal >= 0 else ("🟡 AJUSTADA" if bal >= -1.0 else f"🔴 SOBRECARGA (+{abs(bal):.0f} ref.)")
+        df_resumen_semanal = pd.DataFrame([{
+            "Semana": res_plano['semana_enraizamiento_label'],
+            "Jornada Legal": "44.5 h",
+            "Total Esquejes": kpis['total_esquejes'],
+            "Bandejas (112)": kpis['total_bandejas'],
+            "Rendimiento Ponderado": f"{kpis['rendimiento_ponderado']:,.0f} esq/h",
+            "Horas Requeridas": kpis['horas_requeridas'],
+            "Operarios Requeridos": mano_obra['promedio_operarios_requeridos'],
+            "Operarios Asignados": tot_op_fijos,
+            "Balance Semanal": bal,
+            "Estado Capacidad": estado_sem
+        }])
+
         st.dataframe(
-            df_res_dia,
+            df_resumen_semanal,
             column_config={
-                "Día": st.column_config.TextColumn("Día"),
-                "Jornada (Horas)": st.column_config.NumberColumn("Jornada Legal", format="%.1f h"),
-                "Esquejes": st.column_config.NumberColumn("Esquejes", format="%d"),
+                "Semana": st.column_config.TextColumn("Semana"),
+                "Jornada Legal": st.column_config.TextColumn("Jornada Legal"),
+                "Total Esquejes": st.column_config.NumberColumn("Total Esquejes", format="%d"),
                 "Bandejas (112)": st.column_config.NumberColumn("Bandejas (112)", format="%d"),
-                "% Semana": st.column_config.NumberColumn("% Semana", format="%.1f %%"),
+                "Rendimiento Ponderado": st.column_config.TextColumn("Rend. Ponderado"),
                 "Horas Requeridas": st.column_config.NumberColumn("Horas Requeridas", format="%.1f h"),
-                "Operarios Requeridos": st.column_config.NumberColumn("Operarios Req.", format="%.1f"),
-                "Operarios Asignados": st.column_config.NumberColumn("Operarios Asignados", format="%d"),
-                "Balance Operarios": st.column_config.NumberColumn("Balance", format="%+.1f"),
-                "Estado": st.column_config.TextColumn("Estado de Capacidad")
+                "Operarios Requeridos": st.column_config.NumberColumn("Op. Requeridos", format="%.1f"),
+                "Operarios Asignados": st.column_config.NumberColumn("Op. Asignados", format="%d"),
+                "Balance Semanal": st.column_config.NumberColumn("Balance Semanal", format="%+.1f"),
+                "Estado Capacidad": st.column_config.TextColumn("Estado de Capacidad")
             },
             hide_index=True,
             width="stretch"
         )
+
+        # 2. Desglose y Gráficos por Día
+        with st.expander("🔍 Ver Distribución Diaria y Balance por Día (Detalle de Jornada)", expanded=True):
+            st.dataframe(
+                df_res_dia,
+                column_config={
+                    "Día": st.column_config.TextColumn("Día"),
+                    "Jornada (Horas)": st.column_config.NumberColumn("Jornada Legal", format="%.1f h"),
+                    "Esquejes": st.column_config.NumberColumn("Esquejes", format="%d"),
+                    "Bandejas (112)": st.column_config.NumberColumn("Bandejas (112)", format="%d"),
+                    "% Semana": st.column_config.NumberColumn("% Semana", format="%.1f %%"),
+                    "Horas Requeridas": st.column_config.NumberColumn("Horas Requeridas", format="%.1f h"),
+                    "Operarios Requeridos": st.column_config.NumberColumn("Operarios Req.", format="%.1f"),
+                    "Operarios Asignados": st.column_config.NumberColumn("Operarios Asignados", format="%d"),
+                    "Balance Operarios": st.column_config.NumberColumn("Balance", format="%+.1f"),
+                    "Estado": st.column_config.TextColumn("Estado de Capacidad")
+                },
+                hide_index=True,
+                width="stretch"
+            )
 
         # Gráficos Visuales de Distribución y Horas
         col_g1, col_g2 = st.columns(2)
@@ -397,3 +430,4 @@ def render_enraizamiento_module(db):
         ]
         st.table(pd.DataFrame(jornadas_data))
         st.caption(f"**Total Jornada Semanal Legal:** {TOTAL_HORAS_SEMANA_ESTANDAR:.1f} horas / operario.")
+

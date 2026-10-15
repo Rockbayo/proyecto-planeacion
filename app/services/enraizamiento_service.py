@@ -474,10 +474,14 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
     """
     Genera un documento PDF profesional en orientación Horizontal (Landscape)
     con el Plano Operativo de Enraizamiento para entrega directa al proceso.
+    Diseñado para consolidarse en UNA SOLA HOJA:
+    - Resumen de mano de obra consolidado por semana (no desglosado por día).
+    - Columnas depuradas (sin 'Pico Cosecha' ni 'Firma / Obs.').
+    - Casilla de verificación '[    ]' para control de ejecución real.
     """
     from reportlab.lib.pagesizes import letter, landscape
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, PageBreak
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
@@ -487,21 +491,21 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
     doc = SimpleDocTemplate(
         buffer,
         pagesize=landscape(letter),
-        leftMargin=25,
-        rightMargin=25,
-        topMargin=25,
-        bottomMargin=25
+        leftMargin=20,
+        rightMargin=20,
+        topMargin=15,
+        bottomMargin=15
     )
 
     styles = getSampleStyleSheet()
     
-    # Estilos Tipográficos Personalizados
+    # Estilos Tipográficos Optimizados para 1 Página
     title_style = ParagraphStyle(
         'DocTitle',
         parent=styles['Heading1'],
         fontName='Helvetica-Bold',
-        fontSize=15,
-        leading=18,
+        fontSize=10.5,
+        leading=12.5,
         textColor=colors.HexColor('#1b5e20')
     )
     
@@ -509,42 +513,62 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
         'DocSubTitle',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=9,
-        leading=12,
-        textColor=colors.HexColor('#333333')
+        fontSize=7.5,
+        leading=9.5,
+        textColor=colors.HexColor('#333333'),
+        alignment=2
     )
 
     meta_style = ParagraphStyle(
         'MetaStyle',
         parent=styles['Normal'],
         fontName='Helvetica',
-        fontSize=8.5,
-        leading=11,
+        fontSize=7.2,
+        leading=9.0,
         textColor=colors.HexColor('#222222')
     )
 
-    table_header_style = ParagraphStyle(
+    meta_style_right = ParagraphStyle(
+        'MetaStyleRight',
+        parent=meta_style,
+        alignment=2
+    )
+
+    th_style = ParagraphStyle(
         'THeader',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=7.5,
-        leading=9,
+        fontSize=6.8,
+        leading=8.2,
         textColor=colors.white,
         alignment=1
     )
 
-    table_cell_style = ParagraphStyle(
+    # Ajuste dinámico de escala según la cantidad de lotes para garantizar 1 página
+    n_rows = len(res_plano.get('df_plano_detallado', []))
+    fs = 6.0 if n_rows > 26 else 6.8
+    ld = 7.2 if n_rows > 26 else 8.2
+    pad = 0.8 if n_rows > 26 else 1.3
+
+    tc_style = ParagraphStyle(
         'TCell',
         parent=styles['Normal'],
         fontName='Helvetica',
-        fontSize=7.0,
-        leading=8.5,
+        fontSize=fs,
+        leading=ld,
         textColor=colors.HexColor('#222222')
     )
 
-    table_cell_center = ParagraphStyle(
+    tc_bold = ParagraphStyle(
+        'TCellBold',
+        parent=tc_style,
+        fontName='Helvetica-Bold',
+        textColor=colors.HexColor('#111111')
+    )
+
+    tc_center = ParagraphStyle(
         'TCellCenter',
-        parent=table_cell_style,
+        parent=tc_style,
         alignment=1
     )
 
@@ -552,126 +576,130 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
 
     sem_e = res_plano.get("semana_enraizamiento_label", "S2643")
     sem_s = res_plano.get("semana_siembra_label", "S2646")
-    temp = res_plano.get("temporada", "San Valentín 2027")
+    sem_c = res_plano.get("semana_cosecha_label", "S2704")
+    temp = res_plano.get("temporada", "San Valentín")
     kpis = res_plano.get("kpis", {})
+    mano = res_plano.get("resumen_mano_obra", {})
+    tot_esq = kpis.get("total_esquejes", 0)
+    tot_band = kpis.get("total_bandejas", 0)
+    today_str = date.today().strftime('%d/%m/%Y')
 
-    # 1. Encabezado Institucional
+    # 1. Encabezado Institucional Compacto
     header_data = [
         [
             Paragraph("<b>JARDINES DE CHÍA S.A.S. — PLANO OPERATIVO DE ENRAIZAMIENTO</b>", title_style),
-            Paragraph(f"<b>EMISIÓN S&OP</b><br/>Fecha: {date.today().strftime('%d/%m/%Y')}", subtitle_style)
+            Paragraph(f"<b>EMISIÓN S&OP</b> | Fecha: {today_str}", subtitle_style)
         ],
         [
             Paragraph(
                 f"<b>Semana Enraizamiento:</b> {sem_e} &nbsp;|&nbsp; "
-                f"<b>Semana Siembra Campo (+3 sem):</b> {sem_s} &nbsp;|&nbsp; "
-                f"<b>Cosecha Estimada (+11 sem):</b> {res_plano.get('semana_cosecha_label', 'S2704')} &nbsp;|&nbsp; "
-                f"<b>Temporada Objetivo:</b> {temp}",
+                f"<b>Siembra (+3 sem):</b> {sem_s} &nbsp;|&nbsp; "
+                f"<b>Cosecha (+11 sem):</b> {sem_c} &nbsp;|&nbsp; "
+                f"<b>Temporada:</b> {temp}",
                 meta_style
             ),
             Paragraph(
-                f"<b>Total Esquejes:</b> {kpis.get('total_esquejes', 0):,d} &nbsp;|&nbsp; "
-                f"<b>Bandejas (112):</b> {kpis.get('total_bandejas', 0):,d}",
-                meta_style
+                f"<b>Total Esquejes:</b> {tot_esq:,d} &nbsp;|&nbsp; "
+                f"<b>Bandejas (112):</b> {tot_band:,d}",
+                meta_style_right
             )
         ]
     ]
-    t_header = Table(header_data, colWidths=[480, 240])
+    t_header = Table(header_data, colWidths=[520, 232])
     t_header.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
-        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+        ('TOPPADDING', (0, 0), (-1, -1), 1),
     ]))
     elements.append(t_header)
-    elements.append(Spacer(1, 8))
+    elements.append(Spacer(1, 3))
 
-    # 2. Resumen Ejecutivo de Mano de Obra y Jornadas
-    df_res_dia = res_plano.get("df_resumen_diario", pd.DataFrame())
-    if not df_res_dia.empty:
-        summary_headers = ["Día", "Jornada", "Esquejes", "Bandejas (112)", "% Sem.", "Horas Req.", "Op. Req.", "Op. Asignados", "Estado Capacidad"]
-        summary_data = [[Paragraph(f"<b>{h}</b>", table_header_style) for h in summary_headers]]
-        
-        for _, r in df_res_dia.iterrows():
-            summary_data.append([
-                Paragraph(str(r['Día']), table_cell_style),
-                Paragraph(f"{r['Jornada (Horas)']:.1f}h", table_cell_center),
-                Paragraph(f"{r['Esquejes']:,d}", table_cell_center),
-                Paragraph(f"{r['Bandejas (112)']:,d}", table_cell_center),
-                Paragraph(f"{r['% Semana']:.1f}%", table_cell_center),
-                Paragraph(f"{r['Horas Requeridas']:.1f}h", table_cell_center),
-                Paragraph(f"{r['Operarios Requeridos']:.1f}", table_cell_center),
-                Paragraph(f"{r['Operarios Asignados']}", table_cell_center),
-                Paragraph(str(r['Estado']), table_cell_style),
-            ])
+    # 2. Resumen de Mano de Obra Consolidado por SEMANA (sin desglose diario)
+    bal = mano.get("balance_semanal_operarios", 0)
+    estado_sem = "🟢 CUBIERTA" if bal >= 0 else ("🟡 AJUSTADA" if bal >= -1.0 else f"🔴 SOBRECARGA (+{abs(bal):.0f} ref.)")
+    labor_headers = [
+        "Semana", "Jornada Legal", "Total Esquejes", "Bandejas 112", 
+        "Rend. Ponderado", "Horas Req.", "Op. Req.", "Op. Asignados", "Balance Semanal", "Estado Capacidad"
+    ]
+    labor_data = [
+        [Paragraph(f"<b>{h}</b>", th_style) for h in labor_headers],
+        [
+            Paragraph(sem_e, tc_center),
+            Paragraph("44.5 h", tc_center),
+            Paragraph(f"{tot_esq:,d}", tc_center),
+            Paragraph(f"{tot_band:,d}", tc_center),
+            Paragraph(f"{kpis.get('rendimiento_ponderado', 2016):,.0f} esq/h", tc_center),
+            Paragraph(f"{kpis.get('horas_requeridas', 0):.1f} h", tc_center),
+            Paragraph(f"{kpis.get('operarios_promedio', 0):.1f}", tc_center),
+            Paragraph(f"{mano.get('total_operarios_fijos', 6)}", tc_center),
+            Paragraph(f"{bal:+.1f} op.", tc_center),
+            Paragraph(estado_sem, tc_center),
+        ]
+    ]
+    t_labor = Table(labor_data, colWidths=[55, 60, 75, 70, 85, 65, 65, 70, 70, 137])
+    t_labor.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2e7d32')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#b0bec5')),
+        ('TOPPADDING', (0, 0), (-1, -1), 1.5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5),
+        ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#f1f8e9')),
+    ]))
+    elements.append(t_labor)
+    elements.append(Spacer(1, 3))
 
-        t_summary = Table(summary_data, colWidths=[65, 55, 75, 75, 50, 65, 65, 75, 195])
-        t_summary.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2e7d32')),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#b0bec5')),
-            ('TOPPADDING', (0, 0), (-1, -1), 2.5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f1f8e9')]),
-        ]))
-        elements.append(t_summary)
-        elements.append(Spacer(1, 10))
-
-    # 3. Plano Detallado de Enraizamiento (Hoja de Ruta Operativa)
+    # 3. Plano Detallado de Enraizamiento (Depurado: Sin Pico Cosecha ni Firma/Obs)
     df_det = res_plano.get("df_plano_detallado", pd.DataFrame())
     if not df_det.empty:
-        table_cols = [
+        det_cols = [
             "Día Prog.", "Flor", "Color", "Variedad", 
             "Esquejes", "Bandejas (112)", "Bloque Campo", 
-            "Sem. Siembra", "Pico Cosecha", "Ejecutado Real", "Firma / Obs."
+            "Sem. Siembra", "Ejecutado Real"
         ]
-        det_data = [[Paragraph(f"<b>{c}</b>", table_header_style) for c in table_cols]]
+        table_data = [[Paragraph(f"<b>{c}</b>", th_style) for c in det_cols]]
 
         for _, r in df_det.iterrows():
             dia_txt = str(r['Dia_Programado'])
             if r.get('Es_Nivelado', False):
                 dia_txt += " *"
 
-            d_pico = int(r.get('Dia_Pico', 14))
-            pico_txt = f"+{d_pico}d"
-
-            det_data.append([
-                Paragraph(dia_txt, table_cell_style),
-                Paragraph(str(r['Flor']), table_cell_style),
-                Paragraph(str(r['Color']), table_cell_style),
-                Paragraph(f"<b>{r['Variedad']}</b>", table_cell_style),
-                Paragraph(f"{r['Esquejes']:,d}", table_cell_center),
-                Paragraph(f"{r['Bandejas_112']:,d}", table_cell_center),
-                Paragraph(str(r.get('Bloque_Destino', 'Bloque 01')), table_cell_center),
-                Paragraph(f"S{str(r['Semana_Siembra'])[2:]}", table_cell_center),
-                Paragraph(pico_txt, table_cell_center),
-                Paragraph("[ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ]", table_cell_center),
-                Paragraph("___________________", table_cell_center),
+            table_data.append([
+                Paragraph(dia_txt, tc_style),
+                Paragraph(str(r['Flor']), tc_style),
+                Paragraph(str(r['Color']), tc_style),
+                Paragraph(f"<b>{r['Variedad']}</b>", tc_bold),
+                Paragraph(f"{r['Esquejes']:,d}", tc_center),
+                Paragraph(f"{r['Bandejas_112']:,d}", tc_center),
+                Paragraph(str(r.get('Bloque_Destino', 'Bloque 01')), tc_center),
+                Paragraph(f"S{str(r['Semana_Siembra'])[2:]}", tc_center),
+                Paragraph("[ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ]", tc_center),
             ])
 
-        t_det = Table(det_data, colWidths=[65, 55, 55, 110, 65, 65, 75, 60, 50, 60, 60], repeatRows=1)
+        t_det = Table(table_data, colWidths=[65, 60, 60, 195, 70, 75, 75, 72, 80], repeatRows=1)
         t_det.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1b5e20')),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cfd8dc')),
-            ('TOPPADDING', (0, 0), (-1, -1), 2),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+            ('TOPPADDING', (0, 0), (-1, -1), pad),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), pad),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f9fbe7')]),
         ]))
         elements.append(t_det)
-        elements.append(Spacer(1, 10))
+        elements.append(Spacer(1, 4))
 
-    # 4. Pie de Control y Firmas de Aprobación
-    signatures_data = [
+    # 4. Pie de Control y Firmas de Aprobación Compacto
+    sig_data = [
         [
-            Paragraph("<b>Elaboró (Planeación S&OP):</b><br/><br/>__________________________________<br/>Firma y Fecha", meta_style),
-            Paragraph("<b>Recibió (Líder Propagación):</b><br/><br/>__________________________________<br/>Firma y Fecha", meta_style),
-            Paragraph("<b>Validó (Jefatura de Producción):</b><br/><br/>__________________________________<br/>Firma y Fecha", meta_style)
+            Paragraph("<b>Elaboró (Planeación S&OP):</b> ______________________ Firma", meta_style),
+            Paragraph("<b>Recibió (Líder Propagación):</b> ______________________ Firma", meta_style),
+            Paragraph("<b>Validó (Jefatura Producción):</b> ______________________ Firma", meta_style),
         ]
     ]
-    t_sig = Table(signatures_data, colWidths=[240, 240, 240])
+    t_sig = Table(sig_data, colWidths=[250, 250, 252])
     t_sig.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 1),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
     ]))
-    elements.append(KeepTogether([t_sig]))
+    elements.append(t_sig)
 
     doc.build(elements)
     return buffer.getvalue()
