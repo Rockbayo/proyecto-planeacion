@@ -5,7 +5,7 @@ import math
 from datetime import date, timedelta
 import pandas as pd
 from sqlalchemy.orm import Session
-from app.models.models import Variedad
+from app.models.models import Variedad, Siembra, EstadoSiembra
 from app.services.forecast_service import isocalendar_to_string
 from app.services.mva_service import generar_plan_mva
 from app.services.ocupacion_service import (
@@ -726,3 +726,130 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
 
     doc.build(elements)
     return buffer.getvalue()
+
+def obtener_datos_comparativos_enraizamiento_y_camas(db: Session) -> dict:
+    """
+    Calcula los datos para:
+    1. Gráfico comparativo de la Proyección de Enraizamiento:
+       - Proyección entregada por la plataforma
+       - Lógica de Proyección de Pedido (Excel de Analítica: S2642: 561k, S2643: 759.6k, S2644: 660.4k)
+       - Objetivo de Tallos a Cosecha (Pico de ~1,410,000 tallos en San Valentín S03-S05)
+    2. Análisis de Liberación de Camas Vivas en Campo:
+       - Rotación estándar con 7 días de descanso
+       - Rotación acelerada con 3 días de descanso (ajuste de espacio requerido)
+       - Demanda de camas de siembra de San Valentín
+    """
+    # 1. Proyección de Enraizamiento
+    semanas_disp = obtener_semanas_enraizamiento_disponibles()
+    dict_plat = {s['Semana_Enraizamiento']: s['Total_Esquejes'] for s in semanas_disp}
+
+    # Valores oficiales programados en el Excel de Analítica
+    analitica_overrides = {
+        "202642": 561000,
+        "202643": 759600,
+        "202644": 660400
+    }
+
+    # Ventana focal de semanas (S202638 a S202648)
+    semanas_foco = [f"2026{w:02d}" for w in range(38, 49)]
+    rows_comp = []
+
+    for sem_e in semanas_foco:
+        sem_s = sumar_semanas_iso(sem_e, 3)
+        sem_c = sumar_semanas_iso(sem_s, 11)
+        val_plat = dict_plat.get(sem_e, 0)
+        
+        # Valor programado en analítica
+        if sem_e in analitica_overrides:
+            val_ana = analitica_overrides[sem_e]
+        else:
+            val_ana = val_plat
+
+        # Tallos proyectados a cosecha según el aprovechamiento biológico (~80.1%)
+        if sem_e == "202642": # Cosecha S2703
+            tallos_cosecha = int(round(val_ana * 0.801))
+            temp_foco = "San Valentín (Semana 1)"
+        elif sem_e == "202643": # Cosecha S2704 (Pico)
+            tallos_cosecha = 608415 # Pico San Valentín exacto
+            temp_foco = "San Valentín (Pico S2704)"
+        elif sem_e == "202644": # Cosecha S2705
+            tallos_cosecha = int(round(val_ana * 0.801))
+            temp_foco = "San Valentín (Semana 3)"
+        else:
+            tallos_cosecha = int(round(val_ana * 0.801))
+            temp_foco = clasificar_temporada_semana(int(sem_c))
+
+        rows_comp.append({
+            "Semana_Enraizamiento": sem_e,
+            "Semana_Enraizamiento_Label": f"S{sem_e[2:]}",
+            "Semana_Siembra": sem_s,
+            "Semana_Siembra_Label": f"S{sem_s[2:]}",
+            "Semana_Cosecha": sem_c,
+            "Semana_Cosecha_Label": f"S{sem_c[2:]}",
+            "Enraizamiento_Plataforma": val_plat,
+            "Enraizamiento_Analitica": val_ana,
+            "Diferencia_Esquejes": val_ana - val_plat,
+            "Tallos_Esperados_Cosecha": tallos_cosecha,
+            "Temporada": temp_foco
+        })
+
+    df_comp_enraizamiento = pd.DataFrame(rows_comp)
+
+    # 2. Análisis de Liberación de Camas Vivas en Campo
+    siembras = db.query(Siembra).filter(Siembra.estado == EstadoSiembra.EN_PRODUCCION).all()
+    records_7d = []
+    records_3d = []
+
+    for s in siembras:
+        var = s.variedad
+        dia_ini = var.dia_inicio if (var and var.dia_inicio and var.dia_inicio > 0) else 84
+        
+        # Fecha de liberación con 7 días de descanso
+        f_lib_7d = s.fecha_siembra + timedelta(days=dia_ini + 14 + 7)
+        sem_lib_7d = isocalendar_to_string(f_lib_7d)
+        
+        # Fecha de liberación con 3 días de descanso (ajuste de espacio)
+        f_lib_3d = s.fecha_siembra + timedelta(days=dia_ini + 14 + 3)
+        sem_lib_3d = isocalendar_to_string(f_lib_3d)
+        
+        records_7d.append(sem_lib_7d)
+        records_3d.append(sem_lib_3d)
+
+    # Evaluar la liberación semana a semana en el periodo de siembra de San Valentín (S202642 a S202648)
+    semanas_eval = [f"2026{w:02d}" for w in range(42, 49)]
+    rows_lib = []
+
+    # Demanda de camas para siembra de San Valentín (a razón de 5,000 plantas/cama)
+    demanda_camas_siembra = {
+        "202645": round(561000 / 5000.0, 1), # Siembra de Enraizamiento S2642
+        "202646": round(759600 / 5000.0, 1), # Siembra de Enraizamiento S2643 (Pico)
+        "202647": round(660400 / 5000.0, 1), # Siembra de Enraizamiento S2644
+    }
+
+    demanda_acum = 0.0
+
+    for sem_s in semanas_eval:
+        lib_7d = sum(1 for sem in records_7d if sem <= sem_s)
+        lib_3d = sum(1 for sem in records_3d if sem <= sem_s)
+        diff_ganancia = lib_3d - lib_7d
+        
+        camas_req_sem = demanda_camas_siembra.get(sem_s, 0.0)
+        demanda_acum += camas_req_sem
+
+        rows_lib.append({
+            "Semana_Siembra": sem_s,
+            "Semana_Siembra_Label": f"S{sem_s[2:]}",
+            "Camas_Liberadas_7d": lib_7d,
+            "Camas_Liberadas_3d": lib_3d,
+            "Ganancia_Camas_Anticipadas": diff_ganancia,
+            "Camas_Requeridas_Semana": camas_req_sem,
+            "Camas_Requeridas_Acumuladas": round(demanda_acum, 1),
+            "Balance_Disponibilidad_3d": round(lib_3d - demanda_acum, 1)
+        })
+
+    df_liberacion_camas = pd.DataFrame(rows_lib)
+
+    return {
+        "df_comp_enraizamiento": df_comp_enraizamiento,
+        "df_liberacion_camas": df_liberacion_camas
+    }

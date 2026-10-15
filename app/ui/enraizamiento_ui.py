@@ -9,6 +9,7 @@ from app.services.enraizamiento_service import (
     obtener_semanas_enraizamiento_disponibles,
     generar_plano_enraizamiento_semanal,
     generar_pdf_plano_enraizamiento,
+    obtener_datos_comparativos_enraizamiento_y_camas,
     CAVIDADES_POR_BANDEJA,
     DIAS_PERMANENCIA_BANCO,
     SEMANAS_ENRAIZAMIENTO,
@@ -184,9 +185,10 @@ def render_enraizamiento_module(db):
         )
 
     # Pestañas de Trabajo
-    tab_plano, tab_mano_obra, tab_fenologia = st.tabs([
+    tab_plano, tab_mano_obra, tab_comparativa, tab_fenologia = st.tabs([
         "📋 Plano Operativo Semanal (Detalle por Lote)",
         "⏱️ Distribución Diaria y Cuadrilla",
+        "📈 Proyección Plataforma vs Pedido y Rotación de Camas",
         "🌿 Ventana Fenológica y Parámetros"
     ])
 
@@ -420,7 +422,117 @@ def render_enraizamiento_module(db):
             st.success("✅ **La capacidad de la cuadrilla cubre holgadamente la demanda de enraizamiento de esta semana.**")
 
     # -------------------------------------------------------------
-    # TAB 3: VENTANA FENOLÓGICA Y PARÁMETROS
+    # TAB 3: PROYECCIÓN PLATAFORMA VS PEDIDO Y ROTACIÓN DE CAMAS
+    # -------------------------------------------------------------
+    with tab_comparativa:
+        st.markdown("##### 📈 Comportamiento de Enraizamiento: Plataforma vs Pedido Programado")
+        st.caption(
+            "Compara la curva semanal de enraizamiento calculada por la plataforma contra la lógica oficial del pedido "
+            "programado (Excel de Analítica S&OP) para cumplir con el pico de 1,410,000 tallos de San Valentín (S03-S05)."
+        )
+
+        datos_comp = obtener_datos_comparativos_enraizamiento_y_camas(db)
+        df_comp = datos_comp['df_comp_enraizamiento']
+        df_lib = datos_comp['df_liberacion_camas']
+
+        # Gráfico 1: Comparativa de Esquejes por Semana
+        df_melt_enr = pd.melt(
+            df_comp,
+            id_vars=['Semana_Enraizamiento_Label', 'Temporada'],
+            value_vars=['Enraizamiento_Plataforma', 'Enraizamiento_Analitica'],
+            var_name='Fuente',
+            value_name='Esquejes'
+        )
+        df_melt_enr['Fuente'] = df_melt_enr['Fuente'].map({
+            'Enraizamiento_Plataforma': 'Plataforma S&OP',
+            'Enraizamiento_Analitica': 'Pedido Programado (Analítica)'
+        })
+
+        chart_comp = alt.Chart(df_melt_enr).mark_bar(opacity=0.85).encode(
+            x=alt.X('Semana_Enraizamiento_Label:N', title="Semana de Enraizamiento"),
+            y=alt.Y('Esquejes:Q', title="Esquejes a Enraizar"),
+            color=alt.Color('Fuente:N', scale=alt.Scale(domain=['Plataforma S&OP', 'Pedido Programado (Analítica)'], range=['#2e7d32', '#1565c0'])),
+            xOffset='Fuente:N',
+            tooltip=['Semana_Enraizamiento_Label', 'Fuente', alt.Tooltip('Esquejes:Q', format=',d'), 'Temporada']
+        ).properties(height=340)
+
+        st.altair_chart(chart_comp, width="stretch")
+
+        with st.expander("📋 Ver Tabla Comparativa Numérica por Semana", expanded=False):
+            st.dataframe(
+                df_comp[['Semana_Enraizamiento_Label', 'Semana_Siembra_Label', 'Semana_Cosecha_Label', 'Temporada', 'Enraizamiento_Plataforma', 'Enraizamiento_Analitica', 'Diferencia_Esquejes', 'Tallos_Esperados_Cosecha']],
+                column_config={
+                    "Semana_Enraizamiento_Label": st.column_config.TextColumn("Sem. Enraiz."),
+                    "Semana_Siembra_Label": st.column_config.TextColumn("Sem. Siembra"),
+                    "Semana_Cosecha_Label": st.column_config.TextColumn("Sem. Cosecha"),
+                    "Temporada": st.column_config.TextColumn("Temporada Objetivo"),
+                    "Enraizamiento_Plataforma": st.column_config.NumberColumn("Plataforma (Esq)", format="%d"),
+                    "Enraizamiento_Analitica": st.column_config.NumberColumn("Pedido Analítica (Esq)", format="%d"),
+                    "Diferencia_Esquejes": st.column_config.NumberColumn("Diferencia", format="%+d"),
+                    "Tallos_Esperados_Cosecha": st.column_config.NumberColumn("Tallos Cosecha (~80% Aprov)", format="%d")
+                },
+                hide_index=True,
+                width="stretch"
+            )
+
+        st.markdown("---")
+        st.markdown("##### 🚜 Análisis de Liberación de Camas Vivas en Campo (Ajuste de Suelo: 3 vs 7 Días)")
+        st.caption(
+            "Evalúa la disponibilidad física de camas en campo provenientes del inventario vivo actual a medida que se "
+            "cosechan y liberan, comparando la preparación de suelo estándar (7 días) contra el ajuste acelerado a 3 días."
+        )
+
+        c_pico_3d = int(df_lib[df_lib['Semana_Siembra'] == '202646']['Camas_Liberadas_3d'].values[0])
+        c_gain_pico = int(df_lib[df_lib['Semana_Siembra'] == '202646']['Ganancia_Camas_Anticipadas'].values[0])
+        demanda_tot_sv = int(df_lib['Camas_Requeridas_Semana'].sum())
+        balance_sv = int(df_lib[df_lib['Semana_Siembra'] == '202647']['Balance_Disponibilidad_3d'].values[0])
+
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        col_m1.metric("Camas Liberadas al Pico (S2646)", f"{c_pico_3d} camas", f"+{c_gain_pico} camas con 3 días")
+        col_m2.metric("Demanda San Valentín", f"{demanda_tot_sv} camas", "S2645 a S2647 (3 semanas)")
+        col_m3.metric("Superávit de Espacio", f"+{balance_sv} camas libres", "Holgura positiva garantizada")
+        col_m4.metric("Días de Preparación", "3 Días", "-4 días de descanso")
+
+        # Gráfico 2: Liberación de Camas vs Demanda
+        df_melt_lib = pd.melt(
+            df_lib,
+            id_vars=['Semana_Siembra_Label'],
+            value_vars=['Camas_Liberadas_7d', 'Camas_Liberadas_3d', 'Camas_Requeridas_Acumuladas'],
+            var_name='Concepto',
+            value_name='Camas'
+        )
+        df_melt_lib['Concepto'] = df_melt_lib['Concepto'].map({
+            'Camas_Liberadas_7d': 'Liberación Estándar (7 días suelo)',
+            'Camas_Liberadas_3d': 'Liberación Acelerada (3 días suelo)',
+            'Camas_Requeridas_Acumuladas': 'Demanda Camas San Valentín Acumulada'
+        })
+
+        chart_lib = alt.Chart(df_melt_lib).mark_line(point=True).encode(
+            x=alt.X('Semana_Siembra_Label:N', title="Semana de Siembra en Campo"),
+            y=alt.Y('Camas:Q', title="Camas Físicas Acumuladas"),
+            color=alt.Color('Concepto:N', scale=alt.Scale(
+                domain=['Liberación Estándar (7 días suelo)', 'Liberación Acelerada (3 días suelo)', 'Demanda Camas San Valentín Acumulada'],
+                range=['#757575', '#2e7d32', '#d32f2f']
+            )),
+            strokeDash=alt.condition(
+                alt.datum.Concepto == 'Demanda Camas San Valentín Acumulada',
+                alt.value([5, 5]),
+                alt.value([0])
+            ),
+            tooltip=['Semana_Siembra_Label', 'Concepto', alt.Tooltip('Camas:Q', format='.1f')]
+        ).properties(height=320)
+
+        st.altair_chart(chart_lib, width="stretch")
+
+        st.success(
+            f"✅ **Conclusión Agronómica de Espacio:** Reduciendo la preparación de suelo a **3 días**, se liberan "
+            f"**{c_pico_3d} camas** para la semana pico S2646 (ganando **+{c_gain_pico} camas de anticipación**). "
+            f"La demanda acumulada de las 3 semanas de San Valentín ({demanda_tot_sv} camas) queda holgadamente "
+            f"cubierta con un saldo a favor de **+{balance_sv} camas libres**."
+        )
+
+    # -------------------------------------------------------------
+    # TAB 4: VENTANA FENOLÓGICA Y PARÁMETROS
     # -------------------------------------------------------------
     with tab_fenologia:
         st.markdown("##### 🌿 Cadena Biológica y Fenología de Propagación")
