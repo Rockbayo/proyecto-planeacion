@@ -93,22 +93,17 @@ def clasificar_temporada_semana(sem_int: int) -> str:
 
 def aplicar_corrimiento_fenologico_a_plan(df_det: pd.DataFrame, db: Session = None) -> pd.DataFrame:
     """
-    Aplica el corrimiento fenológico dinámico a cada lote del plan aprobado (backward scheduling):
-    - Extrae dia_pico, dia_inicio y aprovechamiento biológico de cada variedad.
-    - Para San Valentín (siembras programadas originalmente en 202645, 202646, 202647):
-        * S202645 ➔ Cosecha Objetivo: S202703 (Semana 1 SV)
-        * S202646 ➔ Cosecha Objetivo: S202704 (Pico Oficial SV)
-        * S202647 ➔ Cosecha Objetivo: S202705 (Semana 3 SV)
-    - Para otras semanas regulares o temporadas:
-        * Cosecha Objetivo: Semana_Siembra_Orig + round(dia_pico / 7.0)
-    - Calcula la fecha exacta de siembra retrocediendo desde el JUEVES de la semana de cosecha objetivo:
-        Fecha_Cosecha_Pico = Jueves de Semana Cosecha Objetivo
-        Fecha_Siembra_Optima = Fecha_Cosecha_Pico - dia_pico
-        Semana_Siembra_Optima = isocalendar(Fecha_Siembra_Optima)
-        Semana_Enraizamiento_Optima = restar_semanas_iso(Semana_Siembra_Optima, 3)
-        Semana_Pedido_MV_Optima = restar_semanas_iso(Semana_Siembra_Optima, 4)
-    - Alinea todas las variedades para que el corte máximo ocurra los jueves de las semanas de temporada,
-      distribuyendo suavemente la carga de clavado y eliminando desbordes operacionales.
+    Enriquece el plan aprobado con parámetros fenológicos y biológicos dinámicos:
+    - Respeta la inmutabilidad temporal: hacia atrás no se puede cambiar nada.
+      La semana S202642 se ejecuta según lo pedido y las variedades tardías ya fueron
+      sembradas en semanas previas conforme a sus órdenes originales.
+    - Semana_Enraizamiento = restar_semanas_iso(Semana_Siembra, 3).
+    - Semana_Pedido_MV = restar_semanas_iso(Semana_Siembra, 4).
+    - Asigna dia_pico, dia_inicio y aprovechamiento biológico individual por variedad.
+    - Semana_Cosecha biológica real = sumar_semanas_iso(Semana_Siembra, round(dia_pico / 7.0)).
+    - Asigna el día tentativo de clavado (Lunes a Sábado) para que el pico de corte coincida
+      con el JUEVES de la semana de cosecha objetivo (calcular_dia_tentativo_enraizamiento).
+    - Proyecta los tallos comerciales esperados según el aprovechamiento biológico de cada variedad.
     """
     if df_det.empty:
         return df_det
@@ -128,6 +123,9 @@ def aplicar_corrimiento_fenologico_a_plan(df_det: pd.DataFrame, db: Session = No
         v_norm = v_name.lower()
         esq = int(r['Esquejes'])
         sem_s_orig = int(r['Semana_Siembra'])
+        sem_s = str(sem_s_orig)
+        sem_e = restar_semanas_iso(sem_s, SEMANAS_ENRAIZAMIENTO)
+        sem_p = restar_semanas_iso(sem_s, 4)
 
         dp = 77
         aprov = 0.806
@@ -142,46 +140,13 @@ def aplicar_corrimiento_fenologico_a_plan(df_det: pd.DataFrame, db: Session = No
             aprov = float(vo.aprov_pp) if vo.aprov_pp else 0.806
             dia_ini = int(vo.dia_inicio) if vo.dia_inicio else 70
 
-        # Ventanas oficiales de cosecha por temporada
-        if sem_s_orig == 202645:
-            target_c = 202703
-        elif sem_s_orig == 202646:
-            target_c = 202704  # Pico de San Valentín
-        elif sem_s_orig == 202647:
-            target_c = 202705
-        elif sem_s_orig == 202705:
-            target_c = 202716
-        elif sem_s_orig == 202706:
-            target_c = 202717  # Pico de Madres
-        elif sem_s_orig == 202707:
-            target_c = 202718
-        else:
-            sem_c_str = sumar_semanas_iso(str(sem_s_orig), int(round(dp / 7.0)))
-            target_c = int(sem_c_str) if sem_c_str.isdigit() else (sem_s_orig + 11)
-
-        # Fecha objetivo de pico de corte: Jueves (día 4 ISO)
-        y_c = int(str(target_c)[:4])
-        w_c = int(str(target_c)[4:])
-        dt_c_thu = date.fromisocalendar(y_c, w_c, 4)
-
-        # Retroceder dia_pico para fecha de siembra
-        dt_s = dt_c_thu - timedelta(days=dp)
-        y_s, w_s, _ = dt_s.isocalendar()
-        sem_s_opt = f"{y_s}{w_s:02d}"
-
-        # Retroceder 21 días (3 semanas) para enraizamiento
-        dt_e = dt_s - timedelta(days=DIAS_PERMANENCIA_BANCO)
-        y_e, w_e, _ = dt_e.isocalendar()
-        sem_e_opt = f"{y_e}{w_e:02d}"
-
-        # Retroceder 28 días (4 semanas) para pedido de material vegetal
-        dt_p = dt_s - timedelta(days=28)
-        y_p, w_p, _ = dt_p.isocalendar()
-        sem_p_opt = f"{y_p}{w_p:02d}"
+        # Semana de cosecha biológica esperada
+        sem_c = sumar_semanas_iso(sem_s, int(round(dp / 7.0)))
 
         camas = round(esq / 5200.0, 1)
         bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
         tallos_esp = int(round(esq * aprov))
+        dia_tentativo = calcular_dia_tentativo_enraizamiento(dp)
 
         records.append({
             "Flor": r.get('Flor', 'Standard'),
@@ -192,14 +157,15 @@ def aplicar_corrimiento_fenologico_a_plan(df_det: pd.DataFrame, db: Session = No
             "Bandejas_112": bandejas,
             "Dia_Inicio": dia_ini,
             "Dia_Pico": dp,
+            "Dia_Tentativo": dia_tentativo,
             "Aprov_PP": aprov,
             "Tallos_Esperados": tallos_esp,
             "Semana_Siembra_Original": sem_s_orig,
-            "Semana_Siembra": sem_s_opt,
-            "Semana_Enraizamiento": sem_e_opt,
-            "Semana_Pedido_MV": sem_p_opt,
-            "Semana_Cosecha": str(target_c),
-            "Es_Corrimiento": (sem_s_opt != str(sem_s_orig))
+            "Semana_Siembra": sem_s,
+            "Semana_Enraizamiento": sem_e,
+            "Semana_Pedido_MV": sem_p,
+            "Semana_Cosecha": sem_c,
+            "Es_Corrimiento": False
         })
 
     return pd.DataFrame(records)
@@ -243,7 +209,14 @@ def obtener_semanas_enraizamiento_disponibles(
                     bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
                     camas = round(esq / 5200.0, 1)
 
-                    temp = clasificar_temporada_semana(int(sem_c) if sem_c.isdigit() else 202704)
+                    if sem_e == "202642":
+                        temp = "San Valentín (Semana 1 - En Ejecución)"
+                    elif sem_e == "202643":
+                        temp = "San Valentín (Pico Oficial S2704)"
+                    elif sem_e == "202644":
+                        temp = "San Valentín (Semana 3)"
+                    else:
+                        temp = clasificar_temporada_semana(int(sem_c) if sem_c.isdigit() else 202704)
 
                     res.append({
                         "Semana_Enraizamiento": sem_e,
@@ -278,7 +251,14 @@ def obtener_semanas_enraizamiento_disponibles(
 
                     sem_c = sumar_semanas_iso(sem_s, 11)
                     sem_c_int = int(sem_c) if sem_c.isdigit() else 202704
-                    temp = clasificar_temporada_semana(sem_c_int)
+                    if sem_e == "202642":
+                        temp = "San Valentín (Semana 1 - En Ejecución)"
+                    elif sem_e == "202643":
+                        temp = "San Valentín (Pico Oficial S2704)"
+                    elif sem_e == "202644":
+                        temp = "San Valentín (Semana 3)"
+                    else:
+                        temp = clasificar_temporada_semana(sem_c_int)
 
                     res.append({
                         "Semana_Enraizamiento": sem_e,
@@ -1021,13 +1001,11 @@ def obtener_datos_comparativos_enraizamiento_y_camas(
         camas_siembra = dict_camas_siembra.get(sem_e, round(val_ana / 5200.0, 1))
 
         if sem_e == "202642":
-            temp_foco = "San Valentín (Semana 1)"
+            temp_foco = "San Valentín (Semana 1 - En Ejecución)"
         elif sem_e == "202643":
-            temp_foco = "San Valentín (Pico S2704)"
+            temp_foco = "San Valentín (Pico S2704 - Próxima Semana)"
         elif sem_e == "202644":
-            temp_foco = "San Valentín (Semana 3)"
-        elif "202638" <= sem_e <= "202644" and correr_variedades:
-            temp_foco = "San Valentín (Alineación Dinámica)"
+            temp_foco = "San Valentín (Semana 3 - Cierre)"
         else:
             temp_foco = clasificar_temporada_semana(int(sem_c))
 

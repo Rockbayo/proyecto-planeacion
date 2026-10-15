@@ -37,44 +37,37 @@ def render_enraizamiento_module(db):
             escenario_sel = st.radio(
                 "Seleccione el modelo operativo de enraizamiento:",
                 options=[
-                    "⭐ Plan Dinámico S&OP (Alineación Fenológica por Curvas Reales y Capacidad)",
+                    "⭐ Plan Operativo Aprobado S&OP (Alineación a Cosecha Jueves y Nivelación 44.5h)",
                     "📋 Base Histórica Plataforma (Valores Originales Sin Ajuste)"
                 ],
                 index=0,
-                help="El Plan Dinámico S&OP alinea cada lote según las curvas reales de extracción biológica de cada variedad (dia_pico y aprovechamiento)."
+                help="El Plan Operativo Aprobado S&OP respeta las órdenes ejecutadas y en ejecución (S2642), y optimiza día a día de S2643 en adelante según dia_pico y jornada legal."
             )
 
         modo_plan = "aprobado"
         factor_expansion = 1.0
         correr_variedades = True
 
-        if "Plan Dinámico S&OP" in escenario_sel:
+        if "Plan Operativo Aprobado" in escenario_sel:
             modo_plan = "aprobado"
             factor_expansion = 1.0
+            correr_variedades = True
             with col_esc:
-                correr_variedades = st.checkbox(
-                    "🔄 Aplicar Corrimiento Fenológico Dinámico (Alineación a Pico Jueves)",
-                    value=True,
-                    help="Ajusta la semana de enraizamiento y siembra según el dia_pico de cada variedad para garantizar que el pico de corte ocurra en los Jueves de San Valentín (S03-S05) y maximizar el aprovechamiento comercial sin desbordar la cuadrilla."
+                st.info(
+                    "🔒 **Inmutabilidad Temporal:** La semana **S202642** está en ejecución conforme a pedido (**551,200 esq / 106 cam**). "
+                    "Las variedades tardías ya fueron sembradas en semanas previas. "
+                    "Los ajustes de nivelación diaria y optimización aplican de la **Semana S202643** en adelante."
                 )
 
             with col_opt:
-                if correr_variedades:
-                    st.success(
-                        "🌿 **Plan Dinámico con Corrimiento Fenológico Activo:**\n\n"
-                        "• **Curvas Reales:** Ajuste individual por `dia_pico` (75 a 111 días) y aprovechamiento biológico.\n\n"
-                        "• **Alineación a Cosecha:** Cosechas máximas concentradas los **Jueves** de San Valentín (S03-S05).\n\n"
-                        "• **Capacidad Operativa:** Máximo 94 camas/sem en enraizamiento (muy por debajo del techo de 148 camas de clavado).\n\n"
-                        "• **Volumen San Valentín:** **1,981,200 esquejes** (381 camas) ➔ **1.62M tallos proyectados** (97.4% en ventana comercial).\n\n"
-                        "✅ **Protección Agronómica:** 3 días de descanso de suelo garantizan espacio físico en campo."
-                    )
-                else:
-                    st.info(
-                        "📋 **Plan Aprobado Base (Sin Corrimiento):**\n\n"
-                        "• Siembras fijas en S2645 (106 cam), S2646 (148 cam), S2647 (127 cam).\n\n"
-                        "• Total 3 semanas: 381 camas (1,981,200 esquejes).\n\n"
-                        "⚠️ *Nota biológica:* Sin corrimiento, variedades de ciclo largo (>84 días) cosecharán en S06-S08 fuera de San Valentín."
-                    )
+                st.success(
+                    "🌿 **Plan Operativo Oficial S&OP:**\n\n"
+                    "• **S202642 (En Ejecución):** 551,200 esquejes (106 camas) | Siembra S2645\n\n"
+                    "• **S202643 (Pico Clavado):** **769,600 esquejes (148 camas)** | Siembra S2646 | Cuadrilla de 9 clavadores\n\n"
+                    "• **S202644 (Cierre SV):** 660,400 esquejes (127 camas) | Siembra S2647\n\n"
+                    "• **Volumen San Valentín:** **1,981,200 esquejes** (381 camas) ➔ **~1.41M a 1.60M tallos exportables**.\n\n"
+                    "✅ **Ajuste Espacial:** Preparación de suelo acelerada a 3 días garantiza disponibilidad de camas vivas en campo."
+                )
         else:
             modo_plan = "plataforma_base"
             factor_expansion = 1.0
@@ -151,10 +144,11 @@ def render_enraizamiento_module(db):
 
         with c_op2:
             st.markdown("**Operarios de Refuerzo / Temporada**")
+            default_ref = 3 if (semana_sel and semana_sel.get('Semana_Enraizamiento') == '202643') else (2 if (semana_sel and semana_sel.get('Semana_Enraizamiento') == '202644') else 0)
             num_refuerzo = st.number_input(
                 "Cantidad de refuerzos:",
-                min_value=0, max_value=50, value=0, step=1,
-                help="Personal de apoyo temporal contratado para temporada."
+                min_value=0, max_value=50, value=default_ref, step=1,
+                help="Personal de apoyo temporal contratado para temporada (sugerido 3 para S2643 pico 148 camas, 2 para S2644)."
             )
             rend_refuerzo = st.number_input(
                 "Rendimiento refuerzo (esquejes/hora):",
