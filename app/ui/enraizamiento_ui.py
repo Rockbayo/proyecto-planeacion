@@ -29,8 +29,66 @@ def render_enraizamiento_module(db):
     nivela la carga de trabajo diaria (Lunes a Sábado, 44.5h legales) y modela la **cuadrilla de mano de obra**.
     """)
 
-    # 1. Cargar semanas disponibles en el Pedido Aprobado
-    semanas_disp = obtener_semanas_enraizamiento_disponibles()
+    # Selector de Escenario de Planificación
+    with st.container(border=True):
+        st.markdown("#### 🎯 Escenario Operativo y Capacidad Agronómica")
+        col_esc, col_opt = st.columns([1.6, 1.2])
+        with col_esc:
+            escenario_sel = st.radio(
+                "Seleccione el escenario operativo de enraizamiento:",
+                options=[
+                    "⭐ Plan Aprobado S&OP (Meta Mínima 1.41M Tallos | 381 Camas)",
+                    "🚀 Máxima Capacidad Agronómica (\"El Cielo es el Límite\" | Suelo a 3 Días)",
+                    "📋 Base Histórica Plataforma (Valores Originales Sin Ajuste)"
+                ],
+                index=0,
+                help="Ajusta todas las cantidades del plano, cuadrilla, requerimientos de camas y reportes al escenario elegido."
+            )
+
+        modo_plan = "aprobado"
+        factor_expansion = 1.0
+
+        if "Máxima Capacidad" in escenario_sel:
+            modo_plan = "max_capacidad"
+            with col_opt:
+                meta_tallos = st.slider(
+                    "🎯 Meta Tallos Cosecha San Valentín (S03-S05):",
+                    min_value=1410000,
+                    max_value=2400000,
+                    value=1800000,
+                    step=50000,
+                    format="%d tallos",
+                    help="Aprovecha las camas liberadas en campo mediante el descanso acelerado a 3 días."
+                )
+                factor_expansion = meta_tallos / 1410000.0
+                camas_tot_est = round(381.0 * factor_expansion, 1)
+                st.info(
+                    f"📈 **Factor:** +{(factor_expansion - 1.0)*100:.1f}% | "
+                    f"**Camas SV:** {camas_tot_est} camas\n\n"
+                    f"🚜 **Holgura vs Liberación 3d (559 cam):** +{559 - camas_tot_est:.1f} camas libres"
+                )
+        elif "Base Histórica" in escenario_sel:
+            modo_plan = "plataforma_base"
+            factor_expansion = 1.0
+            with col_opt:
+                st.warning("⚠️ Mostrando las cantidades históricas sin actualizar al pedido aprobado.")
+        else:
+            modo_plan = "aprobado"
+            factor_expansion = 1.0
+            with col_opt:
+                st.success(
+                    "✅ **Plan Oficial S&OP Aprobado:**\n\n"
+                    "• **S2642:** 551,200 esq (106 camas)\n\n"
+                    "• **S2643 (Pico):** 769,600 esq (148 camas)\n\n"
+                    "• **S2644:** 660,400 esq (127 camas)\n\n"
+                    "**Meta:** 1,410,000 tallos exportables."
+                )
+
+    # 1. Cargar semanas disponibles en el Pedido Aprobado según el modo seleccionado
+    semanas_disp = obtener_semanas_enraizamiento_disponibles(
+        modo_plan=modo_plan,
+        factor_expansion=factor_expansion
+    )
     if not semanas_disp:
         st.warning("⚠️ No se encontraron órdenes de siembra en el archivo de pedidos consolidado maestro.")
         return
@@ -47,10 +105,11 @@ def render_enraizamiento_module(db):
         st.markdown("#### 📅 Selección de Semana y Objetivos de Temporada")
         
         def format_semana(opt):
+            cam_txt = f" | {opt.get('Total_Camas', 0):.0f} cam." if opt.get('Total_Camas') else ""
             return (
                 f"{opt['Semana_Enraizamiento_Label']} "
                 f"(Siembra {opt['Semana_Siembra_Label']} ➔ Cosecha {opt.get('Semana_Cosecha_Label', '')} | {opt['Temporada']}) — "
-                f"{opt['Total_Esquejes']:,d} esq. ({opt['Total_Bandejas_112']:,d} bandejas 112)"
+                f"{opt['Total_Esquejes']:,d} esq. ({opt['Total_Bandejas_112']:,d} bandejas 112{cam_txt})"
             )
 
         col_sem, col_info = st.columns([2, 1])
@@ -127,7 +186,13 @@ def render_enraizamiento_module(db):
 
     # Generar Plano Operativo Semanal
     cod_sem = semana_sel['Semana_Enraizamiento']
-    res_plano = generar_plano_enraizamiento_semanal(db, cod_sem, config_cuadrilla=config_cuadrilla)
+    res_plano = generar_plano_enraizamiento_semanal(
+        db, 
+        cod_sem, 
+        config_cuadrilla=config_cuadrilla,
+        modo_plan=modo_plan,
+        factor_expansion=factor_expansion
+    )
 
     if "error" in res_plano:
         st.error(f"❌ {res_plano['error']}")
@@ -431,7 +496,11 @@ def render_enraizamiento_module(db):
             "programado (Excel de Analítica S&OP) para cumplir con el pico de 1,410,000 tallos de San Valentín (S03-S05)."
         )
 
-        datos_comp = obtener_datos_comparativos_enraizamiento_y_camas(db)
+        datos_comp = obtener_datos_comparativos_enraizamiento_y_camas(
+            db,
+            modo_plan=modo_plan,
+            factor_expansion=factor_expansion
+        )
         df_comp = datos_comp['df_comp_enraizamiento']
         df_lib = datos_comp['df_liberacion_camas']
 
