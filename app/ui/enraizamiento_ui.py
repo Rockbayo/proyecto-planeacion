@@ -37,19 +37,35 @@ def render_enraizamiento_module(db):
             escenario_sel = st.radio(
                 "Seleccione el escenario operativo de enraizamiento:",
                 options=[
-                    "⭐ Plan Aprobado S&OP (Meta Mínima 1.41M Tallos | 381 Camas)",
-                    "🚀 Máxima Capacidad Agronómica (\"El Cielo es el Límite\" | Suelo a 3 Días)",
+                    "⭐ Plan Aprobado S&OP (Distribución Base 39% en Pico | 148 Camas)",
+                    "🎯 Concentración Óptima San Valentín (50% en Pico S2643 | 190 Camas — Pedido Exacto)",
+                    "🚀 Expansión al Techo Agronómico (\"El Cielo es el Límite\" | Suelo a 3 Días)",
                     "📋 Base Histórica Plataforma (Valores Originales Sin Ajuste)"
                 ],
-                index=0,
+                index=1,
                 help="Ajusta todas las cantidades del plano, cuadrilla, requerimientos de camas y reportes al escenario elegido."
             )
 
         modo_plan = "aprobado"
         factor_expansion = 1.0
+        modo_concentracion = "base"
 
-        if "Máxima Capacidad" in escenario_sel:
+        if "Concentración Óptima" in escenario_sel:
+            modo_plan = "aprobado"
+            modo_concentracion = "pico_50"
+            factor_expansion = 1.0
+            with col_opt:
+                st.success(
+                    "🎯 **Concentración Óptima del Pedido Aprobado (50% en Pico):**\n\n"
+                    "• **S2642:** 442,000 esq (85 camas)\n\n"
+                    "• **S2643 (Pico):** 988,000 esq (190 camas — pico concentrado)\n\n"
+                    "• **S2644:** 551,200 esq (106 camas)\n\n"
+                    "**Total Temporada:** 1,981,200 esquejes (381 camas exactas del pedido aprobado).\n\n"
+                    "✅ **Verificado:** 0 déficit en S48 y libera camas antes para Siembra de Madres (S2705: +97 camas libres)."
+                )
+        elif "Expansión al Techo" in escenario_sel:
             modo_plan = "max_capacidad"
+            modo_concentracion = "base"
             with col_opt:
                 meta_tallos = st.slider(
                     "🎯 Meta Tallos Cosecha San Valentín (S03-S05):",
@@ -70,24 +86,27 @@ def render_enraizamiento_module(db):
         elif "Base Histórica" in escenario_sel:
             modo_plan = "plataforma_base"
             factor_expansion = 1.0
+            modo_concentracion = "base"
             with col_opt:
                 st.warning("⚠️ Mostrando las cantidades históricas sin actualizar al pedido aprobado.")
         else:
             modo_plan = "aprobado"
             factor_expansion = 1.0
+            modo_concentracion = "base"
             with col_opt:
-                st.success(
-                    "✅ **Plan Oficial S&OP Aprobado:**\n\n"
+                st.info(
+                    "📋 **Plan Aprobado Distribución Base:**\n\n"
                     "• **S2642:** 551,200 esq (106 camas)\n\n"
-                    "• **S2643 (Pico):** 769,600 esq (148 camas)\n\n"
+                    "• **S2643 (Pico):** 769,600 esq (148 camas — 38.8%)\n\n"
                     "• **S2644:** 660,400 esq (127 camas)\n\n"
-                    "**Meta:** 1,410,000 tallos exportables."
+                    "**Total:** 1,981,200 esquejes (381 camas)."
                 )
 
     # 1. Cargar semanas disponibles en el Pedido Aprobado según el modo seleccionado
     semanas_disp = obtener_semanas_enraizamiento_disponibles(
         modo_plan=modo_plan,
-        factor_expansion=factor_expansion
+        factor_expansion=factor_expansion,
+        modo_concentracion=modo_concentracion
     )
     if not semanas_disp:
         st.warning("⚠️ No se encontraron órdenes de siembra en el archivo de pedidos consolidado maestro.")
@@ -191,7 +210,8 @@ def render_enraizamiento_module(db):
         cod_sem, 
         config_cuadrilla=config_cuadrilla,
         modo_plan=modo_plan,
-        factor_expansion=factor_expansion
+        factor_expansion=factor_expansion,
+        modo_concentracion=modo_concentracion
     )
 
     if "error" in res_plano:
@@ -499,7 +519,8 @@ def render_enraizamiento_module(db):
         datos_comp = obtener_datos_comparativos_enraizamiento_y_camas(
             db,
             modo_plan=modo_plan,
-            factor_expansion=factor_expansion
+            factor_expansion=factor_expansion,
+            modo_concentracion=modo_concentracion
         )
         df_comp = datos_comp['df_comp_enraizamiento']
         df_lib = datos_comp['df_liberacion_camas']

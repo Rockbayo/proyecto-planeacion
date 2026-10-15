@@ -94,7 +94,8 @@ def clasificar_temporada_semana(sem_int: int) -> str:
 def obtener_semanas_enraizamiento_disponibles(
     archivo_pedido: str = "PedidoConsolidado_master.xlsx",
     modo_plan: str = "aprobado",
-    factor_expansion: float = 1.0
+    factor_expansion: float = 1.0,
+    modo_concentracion: str = "base"
 ) -> list[dict]:
     """
     Retorna la lista de todas las semanas de enraizamiento disponibles en el Pedido Aprobado,
@@ -103,6 +104,9 @@ def obtener_semanas_enraizamiento_disponibles(
     - 'aprobado': Lee desde Plan_Aprobado_Detallado.csv (pedido oficial del planeador).
     - 'max_capacidad': Aplica factor de expansión sobre el plan aprobado.
     - 'plataforma_base': Lee desde PedidoConsolidado_master.xlsx (plan base histórico).
+    modo_concentracion:
+    - 'base': Distribución original del pedido aprobado (106 - 148 - 127 camas).
+    - 'pico_50': Concentra el 50% de la temporada en el pico S2643 sin alterar el volumen total (85 - 190 - 106 camas).
     """
     if modo_plan in ["aprobado", "max_capacidad"] and os.path.exists("Plan_Aprobado_Detallado.csv"):
         try:
@@ -117,7 +121,17 @@ def obtener_semanas_enraizamiento_disponibles(
                 sem_s = str(int(row['Semana_Siembra']))
                 sem_e = restar_semanas_iso(sem_s, SEMANAS_ENRAIZAMIENTO)
                 base_esq = int(row['total_esquejes'])
-                esq = int(round(base_esq * factor_expansion))
+
+                mult_conc = 1.0
+                if modo_concentracion == "pico_50":
+                    if sem_s == "202645":
+                        mult_conc = 85.0 / 106.0
+                    elif sem_s == "202646":
+                        mult_conc = 190.0 / 148.0
+                    elif sem_s == "202647":
+                        mult_conc = 106.0 / 127.0
+
+                esq = int(round(base_esq * factor_expansion * mult_conc))
                 bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
                 camas = round(esq / 5200.0, 1)
 
@@ -352,7 +366,8 @@ def generar_plano_enraizamiento_semanal(
     archivo_pedido: str = "PedidoConsolidado_master.xlsx",
     config_cuadrilla: dict = None,
     modo_plan: str = "aprobado",
-    factor_expansion: float = 1.0
+    factor_expansion: float = 1.0,
+    modo_concentracion: str = "base"
 ) -> dict:
     """
     Genera el Plano Operativo de Enraizamiento para la semana especificada:
@@ -365,6 +380,9 @@ def generar_plano_enraizamiento_semanal(
     - 'aprobado': Lee desde Plan_Aprobado_Detallado.csv.
     - 'max_capacidad': Aplica factor de expansión sobre el plan aprobado.
     - 'plataforma_base': Lee desde PedidoConsolidado_master.xlsx.
+    modo_concentracion:
+    - 'base': Distribución estándar del pedido aprobado (106 - 148 - 127 camas).
+    - 'pico_50': Concentra el 50% de la temporada en el pico S2643 (85 - 190 - 106 camas).
     """
     sem_siembra = sumar_semanas_iso(semana_enraizamiento, SEMANAS_ENRAIZAMIENTO)
     df_sem = pd.DataFrame()
@@ -375,7 +393,15 @@ def generar_plano_enraizamiento_semanal(
             sem_s_int = int(sem_siembra) if str(sem_siembra).isdigit() else 202640
             df_sem = df_all[df_all['Semana_Siembra'] == sem_s_int].copy()
             if not df_sem.empty:
-                df_sem['Esquejes_Para_Siembra (Final)'] = (df_sem['Esquejes'] * factor_expansion).round().astype(int)
+                mult_conc = 1.0
+                if modo_concentracion == "pico_50":
+                    if str(sem_s_int) == "202645":
+                        mult_conc = 85.0 / 106.0
+                    elif str(sem_s_int) == "202646":
+                        mult_conc = 190.0 / 148.0
+                    elif str(sem_s_int) == "202647":
+                        mult_conc = 106.0 / 127.0
+                df_sem['Esquejes_Para_Siembra (Final)'] = (df_sem['Esquejes'] * factor_expansion * mult_conc).round().astype(int)
         except Exception:
             pass
 
@@ -797,7 +823,8 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
 def obtener_datos_comparativos_enraizamiento_y_camas(
     db: Session,
     modo_plan: str = "aprobado",
-    factor_expansion: float = 1.0
+    factor_expansion: float = 1.0,
+    modo_concentracion: str = "base"
 ) -> dict:
     """
     Calcula los datos para:
@@ -814,11 +841,15 @@ def obtener_datos_comparativos_enraizamiento_y_camas(
     semanas_base = obtener_semanas_enraizamiento_disponibles(modo_plan="plataforma_base")
     dict_plat = {s['Semana_Enraizamiento']: s['Total_Esquejes'] for s in semanas_base}
 
+    mult_45 = (85.0 / 106.0) if modo_concentracion == "pico_50" else 1.0
+    mult_46 = (190.0 / 148.0) if modo_concentracion == "pico_50" else 1.0
+    mult_47 = (106.0 / 127.0) if modo_concentracion == "pico_50" else 1.0
+
     # Valores oficiales programados en el Excel de Analítica
     analitica_overrides = {
-        "202642": int(round(551200 * factor_expansion)),
-        "202643": int(round(769600 * factor_expansion)),
-        "202644": int(round(660400 * factor_expansion))
+        "202642": int(round(551200 * factor_expansion * mult_45)),
+        "202643": int(round(769600 * factor_expansion * mult_46)),
+        "202644": int(round(660400 * factor_expansion * mult_47))
     }
 
     # Ventana focal de semanas (S202638 a S202648)
@@ -890,9 +921,9 @@ def obtener_datos_comparativos_enraizamiento_y_camas(
 
     # Demanda de camas para siembra de San Valentín (a razón de 5,200 plantas/cama real)
     demanda_camas_siembra = {
-        "202645": round(551200 * factor_expansion / 5200.0, 1), # Siembra de Enraizamiento S2642
-        "202646": round(769600 * factor_expansion / 5200.0, 1), # Siembra de Enraizamiento S2643 (Pico)
-        "202647": round(660400 * factor_expansion / 5200.0, 1), # Siembra de Enraizamiento S2644
+        "202645": round(551200 * factor_expansion * mult_45 / 5200.0, 1), # Siembra de Enraizamiento S2642
+        "202646": round(769600 * factor_expansion * mult_46 / 5200.0, 1), # Siembra de Enraizamiento S2643 (Pico)
+        "202647": round(660400 * factor_expansion * mult_47 / 5200.0, 1), # Siembra de Enraizamiento S2644
     }
 
     demanda_acum = 0.0
