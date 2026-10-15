@@ -21,6 +21,16 @@ CAMAS_COMERCIALES_TOTALES = 1168.0       # Camas en bloques 01 a 06
 CAMAS_INV_TOTALES = 48.0                 # Bloque INV (Investigación / I+D)
 CAMAS_TOTALES_INSTALADAS = 1216.0        # 1,168 comerciales + 48 INV
 
+CAPACIDAD_BLOQUES = {
+    '01': 240.0,
+    '02': 160.0,
+    '03': 184.0,
+    '04': 232.0,
+    '05': 160.0,
+    '06': 192.0,
+    'INV': 48.0
+}
+
 ANCHO_CAMA_M = 1.20
 LARGO_CAMA_M = 30.00
 AREA_NETA_CAMA_M2 = ANCHO_CAMA_M * LARGO_CAMA_M  # 36.0 m2 (área neta cultivable aproximada)
@@ -255,12 +265,26 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
             'camas_pedido_original': 0.0,
             'camas_pedido_ajustado': 0.0,
             'siembra_camas': 0.0,
-            'por_bloque': {b: 0 for b in ['01', '02', '03', '04', '05', '06', 'INV']}
+            'por_bloque_vivas': {b: 0.0 for b in ['01', '02', '03', '04', '05', '06', 'INV']}
         } for s in semanas_lista
     }
 
     # Tracking de camas físicas únicas por semana para el inventario vivo
     camas_vivas_por_sem = {s: set() for s in semanas_lista}
+    camas_vivas_por_sem_por_bloque = {s: {b: set() for b in ['01', '02', '03', '04', '05', '06', 'INV']} for s in semanas_lista}
+
+    def normalizar_bloque(b_val):
+        if b_val is None:
+            return '01'
+        s = str(b_val).strip()
+        if s.endswith('.0'):
+            s = s[:-2]
+        if len(s) == 1 and s.isdigit():
+            return f"0{s}"
+        s_upper = s.upper()
+        if s_upper in ['INV', '01', '02', '03', '04', '05', '06']:
+            return s_upper
+        return '01'
 
     for siembra in siembras_vivas:
         if isocalendar_to_string(siembra.fecha_siembra) > sem_corte_bd:
@@ -274,11 +298,7 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
         f_siem = siembra.fecha_siembra
         f_fin_rotacion = f_siem + timedelta(days=dias_permanencia)
 
-        b_raw = str(ubi.bloque if ubi else '').replace('.0', '').strip()
-        b_norm = f"0{b_raw}" if (len(b_raw) == 1 and b_raw.isdigit()) else b_raw.upper()
-        if not b_norm or b_norm not in ocupacion_matrix[semanas_lista[0]]['por_bloque']:
-            b_norm = '01'
-
+        b_norm = normalizar_bloque(ubi.bloque if ubi else None)
         bed_id = (b_norm, ubi.nave if ubi else 0, ubi.lado if ubi else '', ubi.cama if ubi else 0)
 
         # Marcar semanas ocupadas
@@ -287,11 +307,14 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
             sem_str = isocalendar_to_string(f_check)
             if sem_str in ocupacion_matrix:
                 camas_vivas_por_sem[sem_str].add(bed_id)
-                ocupacion_matrix[sem_str]['por_bloque'][b_norm] += 1
+                camas_vivas_por_sem_por_bloque[sem_str][b_norm].add(bed_id)
             f_check += timedelta(days=7)
 
     for s in semanas_lista:
         ocupacion_matrix[s]['camas_vivas'] = min(int(CAMAS_COMERCIALES_TOTALES), len(camas_vivas_por_sem[s]))
+        for b in ['01', '02', '03', '04', '05', '06', 'INV']:
+            cap_b = CAPACIDAD_BLOQUES.get(b, 240.0)
+            ocupacion_matrix[s]['por_bloque_vivas'][b] = min(cap_b, float(len(camas_vivas_por_sem_por_bloque[s][b])))
 
     # 3. Cruzar con el Pedido de Material Vegetal (PedidoConsolidado)
     from app.services.mva_service import generar_plan_mva
@@ -397,7 +420,7 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
 
         # Diagnóstico de estado
         if pct_orig > 100.0:
-            estado = "🔴 SOBRECUPO EN PLAN ANTERIOR (>100%)"
+            estado = "🔴 PICO DE CAPACIDAD (>100%)"
         elif pct_adj >= 95.0:
             estado = "🟠 ALTA DEMANDA (95%-100%)"
         elif pct_adj >= 85.0:
@@ -430,12 +453,57 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
             "Estado_Capacidad": estado
         })
 
-        # Detalle por bloques
-        for b_code, b_camas in info['por_bloque'].items():
+        # Detalle por bloques para cada semana
+        for b_code in ['01', '02', '03', '04', '05', '06', 'INV']:
+            cap_b = CAPACIDAD_BLOQUES.get(b_code, 240.0)
+            ratio_b = (cap_b / CAMAS_COMERCIALES_TOTALES) if b_code != 'INV' else 0.0
+
+            c_vivas_b = info['por_bloque_vivas'].get(b_code, 0.0)
+            c_ped_orig_b = c_ped_orig * ratio_b
+            c_ped_adj_b = c_ped_adj * ratio_b
+            s_camas_b = round(s_camas * ratio_b, 1)
+            esquejes_b = int(round(s_camas_b * 5200))
+
+            camas_tot_orig_b = round(c_vivas_b + c_ped_orig_b, 1)
+            camas_tot_adj_b = min(cap_b, round(c_vivas_b + c_ped_adj_b, 1))
+            camas_niv_b = min(cap_b, camas_tot_orig_b)
+
+            pct_orig_b = round((camas_tot_orig_b / cap_b * 100.0), 1) if cap_b > 0 else 0.0
+            pct_adj_b = round((camas_tot_adj_b / cap_b * 100.0), 1) if cap_b > 0 else 0.0
+            pct_niv_b = round((camas_niv_b / cap_b * 100.0), 1) if cap_b > 0 else 0.0
+            libres_b = round(max(0.0, cap_b - camas_niv_b), 1)
+            dif_camas_b = round(max(0.0, camas_tot_orig_b - camas_niv_b), 1)
+            ahorro_esq_b = int(round(dif_camas_b * 5200))
+
+            if pct_orig_b > 100.0:
+                estado_b = "🔴 PICO DE CAPACIDAD (>100%)"
+            elif pct_niv_b >= 95.0:
+                estado_b = "🟠 ALTA DEMANDA (95%-100%)"
+            elif pct_niv_b >= 85.0:
+                estado_b = "🟢 ÓPTIMO SOSTENIDO (85%-95%)"
+            else:
+                estado_b = "🟡 VALLE / SUBOCUPADO"
+
             bloques_detalle.append({
                 "Semana": sem,
+                "Semana_Num": f"S{sem[-2:]}",
+                "Semana_Label": f"S{sem[2:]}",
                 "Bloque": b_code,
-                "Camas_Ocupadas": b_camas
+                "Capacidad_Camas": cap_b,
+                "Camas_Capacidad": cap_b,
+                "Camas_Siembra": s_camas_b,
+                "Esquejes_Siembra": esquejes_b,
+                "Camas_Ocupadas": round(camas_tot_adj_b, 1),
+                "Camas_Niveladas_OpB": round(camas_niv_b, 1),
+                "Camas_Plan_Original": round(camas_tot_orig_b, 1),
+                "Camas_Libres": round(libres_b, 1),
+                "Ocupacion_%": pct_adj_b,
+                "Ocupacion_Nivelada_%": pct_niv_b,
+                "Ocupacion_Original_%": pct_orig_b,
+                "Diferencia_Camas": dif_camas_b,
+                "Ahorro_Esquejes": ahorro_esq_b,
+                "Temporada": temp,
+                "Estado_Capacidad": estado_b
             })
 
     return pd.DataFrame(res_semanal), pd.DataFrame(bloques_detalle)
@@ -670,7 +738,7 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
         temp = clasificar_temporada(sem_int)
 
         if c_orig > max_camas:
-            est = "🟢 NIVELADO A CAPACIDAD (Antes Sobrecupo)"
+            est = "🟢 CAPACIDAD COMPLETA (100%)"
         elif pct_niv >= 95.0:
             est = "🟠 ALTA DEMANDA (95%-100%)"
         elif pct_niv >= 85.0:

@@ -19,6 +19,7 @@ from app.services.ocupacion_service import (
     CAMAS_COMERCIALES_TOTALES,
     CAMAS_INV_TOTALES,
     CAMAS_TOTALES_INSTALADAS,
+    CAPACIDAD_BLOQUES,
     META_TALLOS_M2_ANUAL,
     CICLOS_ANUALES_PROMEDIO,
     ANCHO_CAMA_M,
@@ -31,8 +32,8 @@ def render_ocupacion_module(db):
     st.markdown("""
     Este módulo modela la **capacidad física instalada y la ocupación temporal de la finca** a lo largo de las 52 semanas del año,
     cruzando el plano de naves y camas (`Planos sección.csv`) contra el inventario vivo actual y el **Pedido Consolidado de Material Vegetal**.
-    Permite auditar la capacidad real por bloque, nivelar picos estacionales (**San Valentín** y **Madres**) y resolver el desfase 
-    por la reducción del área comercial de **64,878 m²** a **61,878 m²**.
+    Permite auditar la capacidad real por bloque, proyectar la utilización de camas en temporadas clave (**San Valentín** y **Madres**) y 
+    monitorear el cronograma de transición de área a **61,878 m²**.
     """)
 
     # 1. Cargar o Inicializar Datos de Capacidad
@@ -147,44 +148,77 @@ def render_ocupacion_module(db):
             modo_vista = st.radio(
                 "Seleccionar Escenario de Proyección:",
                 [
-                    "Plan Nivelado Quirúrgico (Opción B) [Adoptado - Techo 1,168 Camas Respetado]",
-                    "Plan Original Diseñado con 64,878 m² [Muestra Sobrecupo en Picos]",
-                    "Comparativa Superpuesta (Plan Original vs. Opción B)"
+                    "Plan Operativo Vigente",
+                    "Plan Base (Referencia)",
+                    "Comparativa de Planes"
                 ],
                 horizontal=True
             )
 
         with col_c2:
-            bloques_opciones = ["Todos los Bloques Comerciales (01-06)"] + sorted(list(df_bloques_52w['Bloque'].unique()))
+            bloques_disponibles = sorted([b for b in df_bloques_52w['Bloque'].unique() if b != 'INV'])
+            bloques_opciones = ["Todos los Bloques Comerciales (01-06)"] + bloques_disponibles + ["INV"]
             sel_bloque = st.selectbox("Filtrar por Bloque:", bloques_opciones)
 
         # Preparación de datos para visualización
-        techo_camas = CAMAS_COMERCIALES_TOTALES
+        es_todos = sel_bloque.startswith("Todos")
         
-        # Merge de df_52w con nivelación si está disponible
-        if not df_niv.empty:
-            df_plot = pd.merge(df_52w, df_niv[['Semana', 'Camas_Niveladas_OpB', 'Ocupacion_Nivelada_%']], on='Semana', how='left')
-            df_plot['Camas_Niveladas_OpB'] = df_plot['Camas_Niveladas_OpB'].fillna(df_plot['Camas_Ocupadas'])
-            df_plot['Camas_Niveladas_OpB'] = df_plot[['Camas_Ocupadas', 'Camas_Niveladas_OpB']].max(axis=1)
-            df_plot['Ocupacion_Nivelada_%'] = ((df_plot['Camas_Niveladas_OpB'] / CAMAS_COMERCIALES_TOTALES) * 100.0).round(1)
+        if es_todos:
+            # Vista Global de Finca
+            techo_camas = CAMAS_COMERCIALES_TOTALES
+            techo_reducido = CAMAS_COMERCIALES_TOTALES - 100.0  # ~1,068 camas
+            bloque_subtitulo = "Toda la Finca (1,168 Camas Comerciales)"
+
+            # Merge de df_52w con nivelación si está disponible
+            if not df_niv.empty:
+                df_plot = pd.merge(df_52w, df_niv[['Semana', 'Camas_Niveladas_OpB', 'Ocupacion_Nivelada_%']], on='Semana', how='left')
+                df_plot['Camas_Niveladas_OpB'] = df_plot['Camas_Niveladas_OpB'].fillna(df_plot['Camas_Ocupadas'])
+                df_plot['Camas_Niveladas_OpB'] = df_plot[['Camas_Ocupadas', 'Camas_Niveladas_OpB']].max(axis=1)
+                df_plot['Ocupacion_Nivelada_%'] = ((df_plot['Camas_Niveladas_OpB'] / CAMAS_COMERCIALES_TOTALES) * 100.0).round(1)
+            else:
+                df_plot = df_52w.copy()
+                df_plot['Camas_Niveladas_OpB'] = df_plot['Camas_Ocupadas']
+                df_plot['Ocupacion_Nivelada_%'] = df_plot['Ocupacion_%']
         else:
-            df_plot = df_52w.copy()
-            df_plot['Camas_Niveladas_OpB'] = df_plot['Camas_Ocupadas']
-            df_plot['Ocupacion_Nivelada_%'] = df_plot['Ocupacion_%']
+            # Vista Filtrada por Bloque Específico
+            cap_b = CAPACIDAD_BLOQUES.get(sel_bloque, 240.0)
+            techo_camas = cap_b
+            if sel_bloque == 'INV':
+                techo_reducido = cap_b
+            else:
+                techo_reducido = round(cap_b * ((CAMAS_COMERCIALES_TOTALES - 100.0) / CAMAS_COMERCIALES_TOTALES), 1)
+            bloque_subtitulo = f"Bloque {sel_bloque} (Capacidad: {int(techo_camas)} Camas)"
+
+            df_plot = df_bloques_52w[df_bloques_52w['Bloque'] == sel_bloque].copy()
 
         if 'Semana_Label' not in df_plot.columns:
             df_plot['Semana_Label'] = df_plot['Semana'].apply(lambda s: f"S{str(s)[2:]}")
 
-        orden_cronologico = list(df_plot['Semana_Label'])
+        orden_cronologico = list(df_plot['Semana_Label'].unique())
 
-        # Techo Físico (Línea Roja)
-        df_rule = pd.DataFrame([{'Techo': techo_camas}])
-        rule_techo = alt.Chart(df_rule).mark_rule(color='#d62728', strokeDash=[6, 4], strokeWidth=2).encode(
-            y='Techo:Q',
-            tooltip=[alt.Tooltip('Techo:Q', title='Capacidad Máxima Comercial (1,168 Camas)')]
+        # 1. Techo Físico Instalado (Línea Roja Discontinua)
+        df_rule_inst = pd.DataFrame([{'Techo_Instalado': techo_camas}])
+        rule_techo_inst = alt.Chart(df_rule_inst).mark_rule(
+            color='#d62728', 
+            strokeDash=[6, 4], 
+            strokeWidth=2
+        ).encode(
+            y='Techo_Instalado:Q',
+            tooltip=[alt.Tooltip('Techo_Instalado:Q', title=f'Capacidad Instalada ({int(techo_camas)} Camas)')]
         )
 
-        # Franja Óptima (85% a 95%)
+        # 2. Techo Post-Reducción de Área (Línea Naranja Discontinua: ~100 camas descontadas)
+        df_rule_red = pd.DataFrame([{'Techo_Reducido': techo_reducido}])
+        rule_techo_red = alt.Chart(df_rule_red).mark_rule(
+            color='#ff7f0e', 
+            strokeDash=[4, 4], 
+            strokeWidth=2
+        ).encode(
+            y='Techo_Reducido:Q',
+            tooltip=[alt.Tooltip('Techo_Reducido:Q', title=f'Capacidad Post-Reducción ({techo_reducido:.1f} Camas, -100 Camas Finca)')]
+        )
+
+        # 3. Franja Óptima (85% a 95%)
         df_band = pd.DataFrame([{
             'min_opt': techo_camas * 0.85,
             'max_opt': techo_camas * 0.95
@@ -198,51 +232,51 @@ def render_ocupacion_module(db):
             x=alt.X('Semana_Label:N', sort=orden_cronologico, title='Semana Operativa (Cronológica)', axis=alt.Axis(labelAngle=-45))
         )
 
-        if modo_vista == "Plan Nivelado Quirúrgico (Opción B) [Adoptado - Techo 1,168 Camas Respetado]":
+        if modo_vista == "Plan Operativo Vigente":
             line_chart = base_chart.mark_line(point=True, color='#1f77b4', strokeWidth=2.5).encode(
-                y=alt.Y('Camas_Niveladas_OpB:Q', title='Camas Ocupadas Niveladas', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
+                y=alt.Y('Camas_Niveladas_OpB:Q', title='Camas Ocupadas', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
                 tooltip=[
                     'Semana_Label:N', 'Semana:N', 'Temporada:N',
-                    alt.Tooltip('Camas_Siembra:Q', title='Siembras Semanales (Camas)'),
+                    alt.Tooltip('Camas_Siembra:Q', title='Siembras Semanales (Camas)', format='.1f'),
                     alt.Tooltip('Esquejes_Siembra:Q', title='Siembras Semanales (Esquejes)', format=',d'),
-                    alt.Tooltip('Camas_Niveladas_OpB:Q', title='Camas Totales en Suelo'),
-                    alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación (%)')
+                    alt.Tooltip('Camas_Niveladas_OpB:Q', title='Camas Ocupadas en Suelo', format='.1f'),
+                    alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación (%)', format='.1f')
                 ]
             )
-            titulo_grafico = "Curva de Ocupación Nivelada (Opción B): Capacidad Máxima de 1,168 Camas 100% Respetada"
-            chart_final = band_opt + line_chart + rule_techo
+            titulo_grafico = f"Curva de Ocupación - Plan Operativo Vigente [{bloque_subtitulo}]"
+            chart_final = band_opt + line_chart + rule_techo_inst + rule_techo_red
 
-        elif modo_vista == "Plan Original Diseñado con 64,878 m² [Muestra Sobrecupo en Picos]":
-            line_chart = base_chart.mark_line(point=True, color='#d62728', strokeWidth=2.5).encode(
-                y=alt.Y('Camas_Plan_Original:Q', title='Camas Requeridas (Plan Original)', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
+        elif modo_vista == "Plan Base (Referencia)":
+            line_chart = base_chart.mark_line(point=True, color='#7f7f7f', strokeWidth=2.5).encode(
+                y=alt.Y('Camas_Plan_Original:Q', title='Camas Requeridas (Plan Base)', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
                 tooltip=[
                     'Semana_Label:N', 'Semana:N', 'Temporada:N',
-                    alt.Tooltip('Camas_Siembra:Q', title='Siembras Semanales (Camas)'),
+                    alt.Tooltip('Camas_Siembra:Q', title='Siembras Semanales (Camas)', format='.1f'),
                     alt.Tooltip('Esquejes_Siembra:Q', title='Siembras Semanales (Esquejes)', format=',d'),
-                    alt.Tooltip('Camas_Plan_Original:Q', title='Camas Totales en Suelo (Original)'),
-                    alt.Tooltip('Ocupacion_Original_%:Q', title='Ocupación Original (%)'),
+                    alt.Tooltip('Camas_Plan_Original:Q', title='Camas Requeridas (Base)', format='.1f'),
+                    alt.Tooltip('Ocupacion_Original_%:Q', title='Ocupación Base (%)', format='.1f'),
                     'Estado_Capacidad:N'
                 ]
             )
-            titulo_grafico = "Curva de Ocupación con Plan Original (Base 64,878 m² - Evidencia Sobrecupo en Picos)"
-            chart_final = band_opt + line_chart + rule_techo
+            titulo_grafico = f"Curva de Ocupación - Plan Base (Referencia) [{bloque_subtitulo}]"
+            chart_final = band_opt + line_chart + rule_techo_inst + rule_techo_red
 
-        else: # Comparativa Ambos Planes
-            line_orig = base_chart.mark_line(point=False, color='#d62728', strokeDash=[4, 3], strokeWidth=2.0).encode(
+        else: # Comparativa de Planes
+            line_orig = base_chart.mark_line(point=False, color='#7f7f7f', strokeDash=[4, 3], strokeWidth=2.0).encode(
                 y=alt.Y('Camas_Plan_Original:Q', title='Camas Requeridas', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
-                tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Siembra:Q', title='Siembra Semanal (Camas)'), alt.Tooltip('Camas_Plan_Original:Q', title='Plan Original (64k m²)'), 'Ocupacion_Original_%:Q']
+                tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Siembra:Q', title='Siembra (Camas)', format='.1f'), alt.Tooltip('Camas_Plan_Original:Q', title='Plan Base (Camas)', format='.1f'), alt.Tooltip('Ocupacion_Original_%:Q', title='Ocupación Base (%)', format='.1f')]
             )
             line_adj = base_chart.mark_line(point=True, color='#1f77b4', strokeWidth=2.5).encode(
                 y='Camas_Niveladas_OpB:Q',
-                tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Siembra:Q', title='Siembra Semanal (Camas)'), alt.Tooltip('Camas_Niveladas_OpB:Q', title='Plan Nivelado OpB (61k m²)'), 'Ocupacion_Nivelada_%:Q']
+                tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Siembra:Q', title='Siembra (Camas)', format='.1f'), alt.Tooltip('Camas_Niveladas_OpB:Q', title='Plan Vigente (Camas)', format='.1f'), alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación Vigente (%)', format='.1f')]
             )
-            titulo_grafico = "Comparativa: Plan Original (Rojo Discontinuo, 64k m²) vs. Opción B Nivelada (Azul Sólido, 61k m²)"
-            chart_final = band_opt + line_orig + line_adj + rule_techo
+            titulo_grafico = f"Comparativa: Plan Base (Gris Discontinuo) vs. Plan Vigente (Azul Sólido) [{bloque_subtitulo}]"
+            chart_final = band_opt + line_orig + line_adj + rule_techo_inst + rule_techo_red
 
         chart_render = chart_final.properties(height=380, title=titulo_grafico)
         st.altair_chart(chart_render, width="stretch")
 
-        st.caption("🔴 **Línea Roja Discontinua:** Techo físico infranqueable (1,168 camas). | 🟢 **Franja Verde Sombreada:** Rango óptimo de ocupación sostenida (85% a 95%).")
+        st.caption(f"🔴 **Línea Roja Discontinua:** Capacidad física instalada ({int(techo_camas)} camas). | 🟠 **Línea Naranja Discontinua:** Capacidad post-reducción de área (~{int(techo_reducido)} camas / ~100 camas descontadas a partir de S{SEMANA_CORTE_REDUCCION_AREA}). | 🟢 **Franja Verde Sombreada:** Rango operativo óptimo (85% a 95%).")
 
         st.info("""
         💡 **Distinción Clave entre Siembra y Cosecha (San Valentín 2027):**
@@ -250,15 +284,8 @@ def render_ocupacion_module(db):
         * 🌹 **Ventana de Cosecha:** Ocurre 14 semanas después, entre **S2701 y S2706** (Pico en **S2706 con 1,168 camas** niveladas al 100.0% de capacidad comercial).
         """)
 
-        st.success(f"""
-        ✅ **Solución de Nivelación Aplicada (Opción B):**
-        El Plan Original sobrepasaba las 1,168 camas comerciales en los picos de San Valentín y Navidad (alcanzando hasta **{kpis_niv.get('max_camas_original', 1200):.0f} camas**).
-        Con la **Nivelación Quirúrgica (Opción B)**, el pico desciende exactamente a **{kpis_niv.get('max_camas_nivelado', 1168):.0f} camas (100.0%)**, 
-        preservando el **100% de la producción en las {kpis_niv.get('semanas_intactas_100pct', 42)} semanas regulares y de Summer**.
-        """)
-
         # Tabla Semanal Detallada
-        with st.expander("📋 Ver Detalle Semana a Semana (52 Semanas) con Nivelación Opción B", expanded=False):
+        with st.expander(f"📋 Ver Detalle Semana a Semana (52 Semanas) - {bloque_subtitulo}", expanded=False):
             df_plot_tbl = df_plot.copy()
             df_plot_tbl['Diferencia_Camas'] = (df_plot_tbl['Camas_Plan_Original'] - df_plot_tbl['Camas_Niveladas_OpB']).clip(lower=0).round(1)
             df_plot_tbl['Ahorro_Esquejes'] = (df_plot_tbl['Diferencia_Camas'] * 5200).round().astype(int)
@@ -275,12 +302,12 @@ def render_ocupacion_module(db):
                     "Temporada": st.column_config.TextColumn("Temporada / Etapa"),
                     "Camas_Siembra": st.column_config.NumberColumn("Siembra (Camas)", format="%.1f"),
                     "Esquejes_Siembra": st.column_config.NumberColumn("Siembra (Esquejes)", format="%,d"),
-                    "Ocupacion_Nivelada_%": st.column_config.NumberColumn("Ocup. Nivelada (%)", format="%.1f%%"),
-                    "Ocupacion_Original_%": st.column_config.NumberColumn("Ocup. Original (%)", format="%.1f%%"),
-                    "Camas_Niveladas_OpB": st.column_config.NumberColumn("Camas Niveladas (OpB)", format="%.1f"),
-                    "Camas_Plan_Original": st.column_config.NumberColumn("Camas Originales", format="%.1f"),
-                    "Diferencia_Camas": st.column_config.NumberColumn("Ajuste Camas", format="%.1f"),
-                    "Ahorro_Esquejes": st.column_config.NumberColumn("Ajuste Esquejes", format="%,d"),
+                    "Ocupacion_Nivelada_%": st.column_config.NumberColumn("Ocup. Vigente (%)", format="%.1f%%"),
+                    "Ocupacion_Original_%": st.column_config.NumberColumn("Ocup. Base (%)", format="%.1f%%"),
+                    "Camas_Niveladas_OpB": st.column_config.NumberColumn("Camas Plan Vigente", format="%.1f"),
+                    "Camas_Plan_Original": st.column_config.NumberColumn("Camas Plan Base", format="%.1f"),
+                    "Diferencia_Camas": st.column_config.NumberColumn("Diferencia Camas", format="%.1f"),
+                    "Ahorro_Esquejes": st.column_config.NumberColumn("Diferencia Esquejes", format="%,d"),
                 },
                 width="stretch",
                 hide_index=True
@@ -290,77 +317,39 @@ def render_ocupacion_module(db):
     # TAB 3: BALANCEO ESTACIONAL & PLAN DE AJUSTE DE ÁREA
     # =========================================================================
     with tab3:
-        st.subheader("Balanceo Estacional y Plan de Ajuste de Área (64,878 m² → 61,878 m²)")
+        st.subheader("Balance Operativo Estacional y Transición de Capacidad")
         st.markdown("""
-        Análisis de la utilización de la finca por temporada y hoja de ruta para **ajustar la producción que podemos entregar**, 
-        alineando el Plan de Producción y el Pedido de Esquejes con el área real disponible.
+        Parámetros operativos de balance estacional, cronograma de reducción de área física 
+        (**64,878 m² → 61,878 m²**) y programación de paradas y descansos de bloques.
         """)
 
         bal_info = calcular_balanceo_estacional(df_52w)
         kpis = bal_info['kpis_maestros']
 
-        # Banner de Adopción de la Opción B
-        st.success("🎯 **Estrategia Adoptada por Dirección: Opción B (Nivelación Quirúrgica en Picos)**")
-
         with st.container(border=True):
-            st.markdown("#### 📊 Balance Cuantitativo de la Nivelación Quirúrgica (Opción B)")
+            st.markdown("#### 📊 Parámetros de Ocupación y Capacidad de Finca")
             cb1, cb2, cb3, cb4 = st.columns(4)
-            cb1.metric("Pico Máximo Original", f"{kpis_niv.get('max_camas_original', 1200):.0f} camas", "102.7% Sobrecupo en S202706")
-            cb2.metric("Pico Máximo Nivelado", f"{kpis_niv.get('max_camas_nivelado', 1168):.0f} camas", "100.0% Techo Comercial Respetado")
-            cb3.metric("Semanas 100% Intactas", f"{kpis_niv.get('semanas_intactas_100pct', 42)} semanas", "Incluye las 17 semanas de Summer")
-            cb4.metric("Ajuste Quirúrgico Anual", f"-{kpis_niv.get('camas_ajustadas_total_anio', 180):.0f} camas", f"~{kpis_niv.get('esquejes_ajustados_total_anio', 936000):,} esquejes año")
+            cb1.metric("Capacidad Máxima Vigente", f"{CAMAS_COMERCIALES_TOTALES:.0f} camas", "1,168 camas comerciales")
+            cb2.metric("Pico Máximo Proyectado", f"{kpis_niv.get('max_camas_nivelado', 1168):.0f} camas", "100.0% de utilización")
+            cb3.metric("Semanas con Ocupación Plena", f"{kpis_niv.get('semanas_intactas_100pct', 42)} semanas", "Plan regular y Summer")
+            cb4.metric("Capacidad Post-Reducción", "1,068 camas", f"-100 camas desde S{SEMANA_CORTE_REDUCCION_AREA}")
 
         st.divider()
 
-        # Gobernanza S&OP: Separación de Responsabilidades y Ventana Congelada (24 Semanas)
+        # Gobernanza S&OP: Cronograma y Ventana Congelada (24 Semanas)
         with st.container(border=True):
-            st.markdown("#### 🏛️ Gobernanza S&OP: Separación de Responsabilidades y Ventana Congelada (24 Semanas)")
+            st.markdown("#### 🏛️ Gobernanza S&OP: Cronograma de Transición y Ventana Congelada (24 Semanas)")
             st.markdown(f"""
             * **Cronograma de Transición de Área Física:**
               - **Vigente Hoy (hasta S2647):** Área comercial de **64,878 m²**.
-              - **A partir de Semana 2648:** Reducción física a **61,878 m²** ($-3,000 \\text{{ m}}^2$, $-4.62\\%$).
-            * **Alcance del Módulo de Ocupación:** Este módulo establece los techos físicos de capacidad (**1,168 camas comerciales**), 
-              detecta sobrecupos en picos estacionales (San Valentín y Navidad) y programa descansos y paradas de bloques en Summer.
-            * **Ajuste de Pedidos en Material Vegetal:** Los pedidos de la ventana de 24 semanas para siembras a partir de la Semana 2648 
-              fueron dimensionados con el área anterior de 64,878 m². Su excedente (~404,549 esquejes) se gestiona y cancela formalmente en el módulo 
-              **[🌱 Pedido de Material Vegetal / Cancelaciones y Extemporáneos](?nav=pedido)** para evitar recibir material que no tiene cama disponible.
+              - **A partir de Semana 2648:** Reducción física a **61,878 m²** ($-3,000 \\text{{ m}}^2$, $-4.62\\%$ / $\\approx 100$ camas descontadas).
+            * **Alcance del Módulo de Ocupación:** Este módulo establece los techos físicos de capacidad (**1,168 camas comerciales** hoy, **1,068 camas** régimen post-reducción), 
+              monitorea la ocupación en picos estacionales (San Valentín y Navidad) y programa descansos y paradas de bloques en Summer.
+            * **Programación en Material Vegetal:** Los pedidos de la ventana ejecutable se calibran al régimen de área y destino por bloque en el módulo 
+              **[🌱 Pedido de Material Vegetal](?nav=pedido)** para asegurar sincronía entre material vegetal recibido y camas físicas disponibles.
             * **Regla Inmutable de Ventana Congelada (24 Semanas):** Los pedidos regulares en firme aplican a partir de **+24 semanas** 
-              totalmente calibrados bajo el régimen de 61,878 m² y dimensionados por bloque de destino.
+              totalmente calibrados bajo el régimen de capacidad física y dimensionados por bloque de destino.
             """)
-
-        st.divider()
-        st.markdown("### 📋 Cuadro Comparativo de Estrategias S&OP Evaluadas")
-
-        op1, op2, op3 = st.columns(3)
-        with op1:
-            with st.container(border=True):
-                st.markdown("#### 🔹 Opción A: Ajuste Proporcional Global (-4.62%)")
-                st.markdown("""
-                * **Mecanismo:** Aplicar factor lineal $0.95376$ parejo a todas las 52 semanas.
-                * **Efecto:** Reduce 730k tallos y ~830k esquejes.
-                * **Desventaja:** Castiga semanas de Summer donde la finca tiene 378 camas libres.
-                * **Estado:** Descartada frente a Opción B.
-                """)
-
-        with op2:
-            with st.container(border=True):
-                st.markdown("#### 🔹 Opción B: Nivelación Quirúrgica (ADOPTADA)")
-                st.markdown("""
-                * **Mecanismo:** Intervenir exclusivamente las semanas con sobrecupo puntual (San Valentín y Navidad).
-                * **Efecto:** Mantiene intacto el 100% de la producción en Summer y semanas regulares.
-                * **Ventaja:** Máxima rentabilidad y cero capacidad desperdiciada en valles.
-                * **Estado:** ✅ **Activa y aplicada en el sistema.**
-                """)
-
-        with op3:
-            with st.container(border=True):
-                st.markdown("#### 🔹 Opción C: Compensación por Densidad")
-                st.markdown("""
-                * **Mecanismo:** Elevar densidad a 91 pl/m² en semanas pico (+200 pl/cama).
-                * **Efecto:** Cero recorte de tallos.
-                * **Ventaja:** Máximo volumen exportable.
-                * **Estado:** Alternativa agronómica de respaldo.
-                """)
 
         st.divider()
         st.markdown("#### 💡 Simulación de Parada Programada de Bloques en Summer (Ahorro Operativo)")
@@ -403,13 +392,13 @@ def render_ocupacion_module(db):
         df_heat['Ocupacion_%'] = (df_heat['Camas_Ocupadas'] / df_heat['Capacidad'] * 100.0).round(1)
 
         heat_chart = alt.Chart(df_heat).mark_rect().encode(
-            x=alt.X('Semana:N', title='Semana Operativa', axis=alt.Axis(labelAngle=-45)),
+            x=alt.X('Semana_Label:N', title='Semana Operativa', axis=alt.Axis(labelAngle=-45)),
             y=alt.Y('Bloque:N', title='Bloque de la Finca', sort=['INV', '01', '02', '03', '04', '05', '06']),
             color=alt.Color('Ocupacion_%:Q', title='Ocupación (%)', scale=alt.Scale(
                 scheme='greens',
                 domain=[0, 100]
             )),
-            tooltip=['Bloque:N', 'Semana:N', 'Camas_Ocupadas:Q', 'Ocupacion_%:Q']
+            tooltip=['Bloque:N', 'Semana_Label:N', 'Semana:N', 'Camas_Ocupadas:Q', 'Ocupacion_%:Q']
         ).properties(
             height=320,
             title="Matriz de Ocupación Espacial: Bloques vs. Semanas"
