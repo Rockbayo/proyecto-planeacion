@@ -6,7 +6,7 @@ from datetime import date, timedelta
 import pandas as pd
 from sqlalchemy.orm import Session
 from app.models.models import Variedad, Siembra, EstadoSiembra
-from app.services.forecast_service import isocalendar_to_string
+from app.services.forecast_service import isocalendar_to_string, calcular_curvas_dinamicas
 from app.services.mva_service import generar_plan_mva
 from app.services.ocupacion_service import (
     resolver_bloque_tentativo, 
@@ -91,70 +91,211 @@ def clasificar_temporada_semana(sem_int: int) -> str:
 
     return "Every Day / Regular"
 
+def aplicar_corrimiento_fenologico_a_plan(df_det: pd.DataFrame, db: Session = None) -> pd.DataFrame:
+    """
+    Aplica el corrimiento fenológico dinámico a cada lote del plan aprobado (backward scheduling):
+    - Extrae dia_pico, dia_inicio y aprovechamiento biológico de cada variedad.
+    - Para San Valentín (siembras programadas originalmente en 202645, 202646, 202647):
+        * S202645 ➔ Cosecha Objetivo: S202703 (Semana 1 SV)
+        * S202646 ➔ Cosecha Objetivo: S202704 (Pico Oficial SV)
+        * S202647 ➔ Cosecha Objetivo: S202705 (Semana 3 SV)
+    - Para otras semanas regulares o temporadas:
+        * Cosecha Objetivo: Semana_Siembra_Orig + round(dia_pico / 7.0)
+    - Calcula la fecha exacta de siembra retrocediendo desde el JUEVES de la semana de cosecha objetivo:
+        Fecha_Cosecha_Pico = Jueves de Semana Cosecha Objetivo
+        Fecha_Siembra_Optima = Fecha_Cosecha_Pico - dia_pico
+        Semana_Siembra_Optima = isocalendar(Fecha_Siembra_Optima)
+        Semana_Enraizamiento_Optima = restar_semanas_iso(Semana_Siembra_Optima, 3)
+        Semana_Pedido_MV_Optima = restar_semanas_iso(Semana_Siembra_Optima, 4)
+    - Alinea todas las variedades para que el corte máximo ocurra los jueves de las semanas de temporada,
+      distribuyendo suavemente la carga de clavado y eliminando desbordes operacionales.
+    """
+    if df_det.empty:
+        return df_det
+
+    vars_db = {}
+    curvas_dyn = {}
+    if db is not None:
+        try:
+            vars_db = {v.nombre.strip().lower(): v for v in db.query(Variedad).all()}
+            curvas_dyn = calcular_curvas_dinamicas(alpha=1.0, num_ciclos=9, db=db)
+        except Exception:
+            pass
+
+    records = []
+    for _, r in df_det.iterrows():
+        v_name = str(r['Variedad']).strip()
+        v_norm = v_name.lower()
+        esq = int(r['Esquejes'])
+        sem_s_orig = int(r['Semana_Siembra'])
+
+        dp = 77
+        aprov = 0.806
+        dia_ini = 70
+        if v_name in curvas_dyn:
+            dp = int(curvas_dyn[v_name].get('dia_pico', 77))
+            aprov = float(curvas_dyn[v_name].get('aprov', 0.806))
+            dia_ini = int(curvas_dyn[v_name].get('dia_inicio', 70))
+        elif v_norm in vars_db:
+            vo = vars_db[v_norm]
+            dp = int(vo.dia_pico) if vo.dia_pico else 77
+            aprov = float(vo.aprov_pp) if vo.aprov_pp else 0.806
+            dia_ini = int(vo.dia_inicio) if vo.dia_inicio else 70
+
+        # Ventanas oficiales de cosecha por temporada
+        if sem_s_orig == 202645:
+            target_c = 202703
+        elif sem_s_orig == 202646:
+            target_c = 202704  # Pico de San Valentín
+        elif sem_s_orig == 202647:
+            target_c = 202705
+        elif sem_s_orig == 202705:
+            target_c = 202716
+        elif sem_s_orig == 202706:
+            target_c = 202717  # Pico de Madres
+        elif sem_s_orig == 202707:
+            target_c = 202718
+        else:
+            sem_c_str = sumar_semanas_iso(str(sem_s_orig), int(round(dp / 7.0)))
+            target_c = int(sem_c_str) if sem_c_str.isdigit() else (sem_s_orig + 11)
+
+        # Fecha objetivo de pico de corte: Jueves (día 4 ISO)
+        y_c = int(str(target_c)[:4])
+        w_c = int(str(target_c)[4:])
+        dt_c_thu = date.fromisocalendar(y_c, w_c, 4)
+
+        # Retroceder dia_pico para fecha de siembra
+        dt_s = dt_c_thu - timedelta(days=dp)
+        y_s, w_s, _ = dt_s.isocalendar()
+        sem_s_opt = f"{y_s}{w_s:02d}"
+
+        # Retroceder 21 días (3 semanas) para enraizamiento
+        dt_e = dt_s - timedelta(days=DIAS_PERMANENCIA_BANCO)
+        y_e, w_e, _ = dt_e.isocalendar()
+        sem_e_opt = f"{y_e}{w_e:02d}"
+
+        # Retroceder 28 días (4 semanas) para pedido de material vegetal
+        dt_p = dt_s - timedelta(days=28)
+        y_p, w_p, _ = dt_p.isocalendar()
+        sem_p_opt = f"{y_p}{w_p:02d}"
+
+        camas = round(esq / 5200.0, 1)
+        bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
+        tallos_esp = int(round(esq * aprov))
+
+        records.append({
+            "Flor": r.get('Flor', 'Standard'),
+            "Color": r.get('Color', 'Mix'),
+            "Variedad": v_name,
+            "Esquejes": esq,
+            "Camas": camas,
+            "Bandejas_112": bandejas,
+            "Dia_Inicio": dia_ini,
+            "Dia_Pico": dp,
+            "Aprov_PP": aprov,
+            "Tallos_Esperados": tallos_esp,
+            "Semana_Siembra_Original": sem_s_orig,
+            "Semana_Siembra": sem_s_opt,
+            "Semana_Enraizamiento": sem_e_opt,
+            "Semana_Pedido_MV": sem_p_opt,
+            "Semana_Cosecha": str(target_c),
+            "Es_Corrimiento": (sem_s_opt != str(sem_s_orig))
+        })
+
+    return pd.DataFrame(records)
+
 def obtener_semanas_enraizamiento_disponibles(
     archivo_pedido: str = "PedidoConsolidado_master.xlsx",
     modo_plan: str = "aprobado",
     factor_expansion: float = 1.0,
-    modo_concentracion: str = "base"
+    correr_variedades: bool = True,
+    db: Session = None
 ) -> list[dict]:
     """
     Retorna la lista de todas las semanas de enraizamiento disponibles en el Pedido Aprobado,
     con su volumen total, bandejas de 112, número de variedades y temporada objetivo.
     Soporta los modos:
-    - 'aprobado': Lee desde Plan_Aprobado_Detallado.csv (pedido oficial del planeador).
-    - 'max_capacidad': Aplica factor de expansión sobre el plan aprobado.
-    - 'plataforma_base': Lee desde PedidoConsolidado_master.xlsx (plan base histórico).
-    modo_concentracion:
-    - 'base': Distribución original del pedido aprobado (106 - 148 - 127 camas).
-    - 'pico_50': Concentra el 50% de la temporada en el pico S2643 sin alterar el volumen total (85 - 190 - 106 camas).
+    - 'aprobado': Lee desde Plan_Aprobado_Detallado.csv.
+      Si correr_variedades=True, aplica corrimiento biológico dinámico según dia_pico de cada variedad.
+    - 'plataforma_base': Lee desde PedidoConsolidado_master.xlsx (plan base histórico sin curvas dinámicas).
     """
     if modo_plan in ["aprobado", "max_capacidad"] and os.path.exists("Plan_Aprobado_Detallado.csv"):
         try:
             df_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
-            grouped = df_det.groupby('Semana_Siembra').agg(
-                total_esquejes=('Esquejes', 'sum'),
-                num_variedades=('Variedad', 'nunique')
-            ).reset_index()
+            
+            if correr_variedades:
+                df_det = aplicar_corrimiento_fenologico_a_plan(df_det, db=db)
+                grouped = df_det.groupby('Semana_Enraizamiento').agg(
+                    total_esquejes=('Esquejes', 'sum'),
+                    total_camas=('Camas', 'sum'),
+                    num_variedades=('Variedad', 'nunique'),
+                    sem_siembra=('Semana_Siembra', 'first'),
+                    sem_cosecha=('Semana_Cosecha', 'first')
+                ).reset_index()
 
-            res = []
-            for _, row in grouped.iterrows():
-                sem_s = str(int(row['Semana_Siembra']))
-                sem_e = restar_semanas_iso(sem_s, SEMANAS_ENRAIZAMIENTO)
-                base_esq = int(row['total_esquejes'])
+                res = []
+                for _, row in grouped.iterrows():
+                    sem_e = str(row['Semana_Enraizamiento'])
+                    sem_s = str(row['sem_siembra'])
+                    sem_c = str(row['sem_cosecha'])
+                    base_esq = int(row['total_esquejes'])
+                    esq = int(round(base_esq * factor_expansion))
+                    bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
+                    camas = round(esq / 5200.0, 1)
 
-                mult_conc = 1.0
-                if modo_concentracion == "pico_50":
-                    if sem_s == "202645":
-                        mult_conc = 85.0 / 106.0
-                    elif sem_s == "202646":
-                        mult_conc = 190.0 / 148.0
-                    elif sem_s == "202647":
-                        mult_conc = 106.0 / 127.0
+                    temp = clasificar_temporada_semana(int(sem_c) if sem_c.isdigit() else 202704)
 
-                esq = int(round(base_esq * factor_expansion * mult_conc))
-                bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
-                camas = round(esq / 5200.0, 1)
+                    res.append({
+                        "Semana_Enraizamiento": sem_e,
+                        "Semana_Enraizamiento_Label": f"S{sem_e[2:]}",
+                        "Semana_Siembra": sem_s,
+                        "Semana_Siembra_Label": f"S{sem_s[2:]}",
+                        "Semana_Cosecha": sem_c,
+                        "Semana_Cosecha_Label": f"S{sem_c[2:]}",
+                        "Temporada": temp,
+                        "Total_Esquejes": esq,
+                        "Total_Bandejas_112": bandejas,
+                        "Total_Camas": camas,
+                        "Num_Variedades": int(row['num_variedades'])
+                    })
 
-                sem_c = sumar_semanas_iso(sem_s, 11)
-                sem_c_int = int(sem_c) if sem_c.isdigit() else 202704
-                temp = clasificar_temporada_semana(sem_c_int)
+                res = sorted(res, key=lambda x: x['Semana_Enraizamiento'])
+                return res
+            else:
+                grouped = df_det.groupby('Semana_Siembra').agg(
+                    total_esquejes=('Esquejes', 'sum'),
+                    num_variedades=('Variedad', 'nunique')
+                ).reset_index()
 
-                res.append({
-                    "Semana_Enraizamiento": sem_e,
-                    "Semana_Enraizamiento_Label": f"S{sem_e[2:]}",
-                    "Semana_Siembra": sem_s,
-                    "Semana_Siembra_Label": f"S{sem_s[2:]}",
-                    "Semana_Cosecha": sem_c,
-                    "Semana_Cosecha_Label": f"S{sem_c[2:]}",
-                    "Temporada": temp,
-                    "Total_Esquejes": esq,
-                    "Total_Bandejas_112": bandejas,
-                    "Total_Camas": camas,
-                    "Num_Variedades": int(row['num_variedades'])
-                })
+                res = []
+                for _, row in grouped.iterrows():
+                    sem_s = str(int(row['Semana_Siembra']))
+                    sem_e = restar_semanas_iso(sem_s, SEMANAS_ENRAIZAMIENTO)
+                    base_esq = int(row['total_esquejes'])
+                    esq = int(round(base_esq * factor_expansion))
+                    bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
+                    camas = round(esq / 5200.0, 1)
 
-            res = sorted(res, key=lambda x: x['Semana_Enraizamiento'])
-            return res
+                    sem_c = sumar_semanas_iso(sem_s, 11)
+                    sem_c_int = int(sem_c) if sem_c.isdigit() else 202704
+                    temp = clasificar_temporada_semana(sem_c_int)
+
+                    res.append({
+                        "Semana_Enraizamiento": sem_e,
+                        "Semana_Enraizamiento_Label": f"S{sem_e[2:]}",
+                        "Semana_Siembra": sem_s,
+                        "Semana_Siembra_Label": f"S{sem_s[2:]}",
+                        "Semana_Cosecha": sem_c,
+                        "Semana_Cosecha_Label": f"S{sem_c[2:]}",
+                        "Temporada": temp,
+                        "Total_Esquejes": esq,
+                        "Total_Bandejas_112": bandejas,
+                        "Total_Camas": camas,
+                        "Num_Variedades": int(row['num_variedades'])
+                    })
+
+                res = sorted(res, key=lambda x: x['Semana_Enraizamiento'])
+                return res
         except Exception:
             pass
 
@@ -367,22 +508,18 @@ def generar_plano_enraizamiento_semanal(
     config_cuadrilla: dict = None,
     modo_plan: str = "aprobado",
     factor_expansion: float = 1.0,
-    modo_concentracion: str = "base"
+    correr_variedades: bool = True
 ) -> dict:
     """
     Genera el Plano Operativo de Enraizamiento para la semana especificada:
-    - Cruza el Pedido Aprobado (+3 semanas para siembra en campo).
+    - Cruza el Pedido Aprobado (desfasado fenológicamente a siembra y cosecha jueves).
     - Desagrega por Variedad, Color, Flor y Bandejas de 112 cavidades.
     - Asigna día tentativo (pico jueves) y nivela la jornada semanal (Lunes a Sábado).
     - Asigna bloque de campo estimado de destino (01 a 06).
     - Modela el cálculo de mano de obra y horas-hombre requeridas.
     Soporta los modos:
-    - 'aprobado': Lee desde Plan_Aprobado_Detallado.csv.
-    - 'max_capacidad': Aplica factor de expansión sobre el plan aprobado.
+    - 'aprobado': Lee desde Plan_Aprobado_Detallado.csv con o sin corrimiento biológico dinámico.
     - 'plataforma_base': Lee desde PedidoConsolidado_master.xlsx.
-    modo_concentracion:
-    - 'base': Distribución estándar del pedido aprobado (106 - 148 - 127 camas).
-    - 'pico_50': Concentra el 50% de la temporada en el pico S2643 (85 - 190 - 106 camas).
     """
     sem_siembra = sumar_semanas_iso(semana_enraizamiento, SEMANAS_ENRAIZAMIENTO)
     df_sem = pd.DataFrame()
@@ -390,18 +527,16 @@ def generar_plano_enraizamiento_semanal(
     if modo_plan in ["aprobado", "max_capacidad"] and os.path.exists("Plan_Aprobado_Detallado.csv"):
         try:
             df_all = pd.read_csv("Plan_Aprobado_Detallado.csv")
-            sem_s_int = int(sem_siembra) if str(sem_siembra).isdigit() else 202640
-            df_sem = df_all[df_all['Semana_Siembra'] == sem_s_int].copy()
-            if not df_sem.empty:
-                mult_conc = 1.0
-                if modo_concentracion == "pico_50":
-                    if str(sem_s_int) == "202645":
-                        mult_conc = 85.0 / 106.0
-                    elif str(sem_s_int) == "202646":
-                        mult_conc = 190.0 / 148.0
-                    elif str(sem_s_int) == "202647":
-                        mult_conc = 106.0 / 127.0
-                df_sem['Esquejes_Para_Siembra (Final)'] = (df_sem['Esquejes'] * factor_expansion * mult_conc).round().astype(int)
+            if correr_variedades:
+                df_all_sh = aplicar_corrimiento_fenologico_a_plan(df_all, db=db)
+                df_sem = df_all_sh[df_all_sh['Semana_Enraizamiento'] == str(semana_enraizamiento)].copy()
+                if not df_sem.empty:
+                    df_sem['Esquejes_Para_Siembra (Final)'] = (df_sem['Esquejes'] * factor_expansion).round().astype(int)
+            else:
+                sem_s_int = int(sem_siembra) if str(sem_siembra).isdigit() else 202640
+                df_sem = df_all[df_all['Semana_Siembra'] == sem_s_int].copy()
+                if not df_sem.empty:
+                    df_sem['Esquejes_Para_Siembra (Final)'] = (df_sem['Esquejes'] * factor_expansion).round().astype(int)
         except Exception:
             pass
 
@@ -436,8 +571,7 @@ def generar_plano_enraizamiento_semanal(
         df_bloques_52w = pd.DataFrame()
 
     lotes_raw = []
-    sem_s_int = int(sem_siembra) if sem_siembra.isdigit() else 202640
-    # Cosecha comercial estimada (~11 semanas post-siembra)
+    # Cosecha comercial estimada (~11 semanas post-siembra como default)
     sem_c_global = sumar_semanas_iso(sem_siembra, 11)
     temporada_cosecha = clasificar_temporada_semana(int(sem_c_global) if sem_c_global.isdigit() else 202704)
 
@@ -449,9 +583,9 @@ def generar_plano_enraizamiento_semanal(
         color = row.get('Color') or (v_obj.color if v_obj else 'N/A')
         esq = int(round(row['Esquejes_Para_Siembra (Final)']))
         
-        dia_inicio = v_obj.dia_inicio if (v_obj and v_obj.dia_inicio) else 84
-        dia_pico = v_obj.dia_pico if (v_obj and v_obj.dia_pico) else 14
-        aprov_pp = v_obj.aprov_pp if (v_obj and v_obj.aprov_pp and v_obj.aprov_pp > 0) else 0.95
+        dia_inicio = int(row.get('Dia_Inicio') or (v_obj.dia_inicio if (v_obj and v_obj.dia_inicio) else 84))
+        dia_pico = int(row.get('Dia_Pico') or (v_obj.dia_pico if (v_obj and v_obj.dia_pico) else 77))
+        aprov_pp = float(row.get('Aprov_PP') or (v_obj.aprov_pp if (v_obj and v_obj.aprov_pp and v_obj.aprov_pp > 0) else 0.806))
 
         # Día tentativo fenológico (Pico Jueves)
         dia_tentativo = calcular_dia_tentativo_enraizamiento(dia_pico)
@@ -465,18 +599,18 @@ def generar_plano_enraizamiento_semanal(
         # Proyección de tallos esperados a cosecha
         tallos_esperados = int(round(esq * aprov_pp))
 
+        # Semanas de siembra y cosecha específicas del lote
+        sem_siembra_row = str(row.get('Semana_Siembra') or sem_siembra)
+        sem_cosecha_var = str(row.get('Semana_Cosecha') or sumar_semanas_iso(sem_siembra_row, int(round(dia_pico / 7.0))))
+        temp_cosecha_var = clasificar_temporada_semana(int(sem_cosecha_var) if sem_cosecha_var.isdigit() else 202704)
+
         # Bloque de destino tentativo en campo
-        bloque_dest_res = resolver_bloque_tentativo(sem_siembra, df_bloques_52w=df_bloques_52w)
+        bloque_dest_res = resolver_bloque_tentativo(sem_siembra_row, df_bloques_52w=df_bloques_52w)
         if isinstance(bloque_dest_res, tuple):
             b_code = str(bloque_dest_res[0])
         else:
             b_code = str(bloque_dest_res)
         bloque_dest = f"Bloque {b_code}" if not b_code.startswith("Bloque") else b_code
-
-        # Cálculo de semana estimada de cosecha por fenología de la variedad
-        dias_a_cosecha = dia_pico if dia_pico > 30 else 77
-        sem_cosecha_var = sumar_semanas_iso(sem_siembra, int(round(dias_a_cosecha / 7.0)))
-        temp_cosecha_var = clasificar_temporada_semana(int(sem_cosecha_var) if sem_cosecha_var.isdigit() else 202704)
 
         lotes_raw.append({
             "Flor": flor,
@@ -491,7 +625,7 @@ def generar_plano_enraizamiento_semanal(
             "Dia_Pico": dia_pico,
             "Aprov_PP": aprov_pp,
             "Tallos_Esperados": tallos_esperados,
-            "Semana_Siembra": sem_siembra,
+            "Semana_Siembra": sem_siembra_row,
             "Semana_Enraizamiento": semana_enraizamiento,
             "Semana_Cosecha": sem_cosecha_var,
             "Temporada": temp_cosecha_var
@@ -824,57 +958,76 @@ def obtener_datos_comparativos_enraizamiento_y_camas(
     db: Session,
     modo_plan: str = "aprobado",
     factor_expansion: float = 1.0,
-    modo_concentracion: str = "base"
+    correr_variedades: bool = True
 ) -> dict:
     """
     Calcula los datos para:
     1. Gráfico comparativo de la Proyección de Enraizamiento:
        - Proyección entregada por la plataforma base
-       - Lógica de Proyección de Pedido Aprobado o Maximizado al Techo Agronómico
-       - Objetivo de Tallos a Cosecha (Pico de ~1,410,000 tallos o maximizado)
+       - Lógica de Proyección de Pedido Aprobado con o sin corrimiento fenológico dinámico
+       - Objetivo de Tallos a Cosecha calculado con aprovechamientos biológicos reales de cada variedad
     2. Análisis de Liberación de Camas Vivas en Campo:
        - Rotación estándar con 7 días de descanso
        - Rotación acelerada con 3 días de descanso (ajuste de espacio requerido)
        - Demanda de camas de siembra de San Valentín
     """
-    # 1. Proyección de Enraizamiento
+    # 1. Proyección de Enraizamiento Plataforma Base
     semanas_base = obtener_semanas_enraizamiento_disponibles(modo_plan="plataforma_base")
     dict_plat = {s['Semana_Enraizamiento']: s['Total_Esquejes'] for s in semanas_base}
 
-    mult_45 = (85.0 / 106.0) if modo_concentracion == "pico_50" else 1.0
-    mult_46 = (190.0 / 148.0) if modo_concentracion == "pico_50" else 1.0
-    mult_47 = (106.0 / 127.0) if modo_concentracion == "pico_50" else 1.0
+    # Proyección Plan Aprobado / Dinámico
+    dict_ana = {}
+    dict_camas_siembra = {}
+    dict_tallos_cosecha = {}
 
-    # Valores oficiales programados en el Excel de Analítica
-    analitica_overrides = {
-        "202642": int(round(551200 * factor_expansion * mult_45)),
-        "202643": int(round(769600 * factor_expansion * mult_46)),
-        "202644": int(round(660400 * factor_expansion * mult_47))
-    }
+    if os.path.exists("Plan_Aprobado_Detallado.csv"):
+        try:
+            df_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
+            if correr_variedades:
+                df_det_calc = aplicar_corrimiento_fenologico_a_plan(df_det, db=db)
+                grp_enr = df_det_calc.groupby('Semana_Enraizamiento').agg(
+                    total_esq=('Esquejes', 'sum'),
+                    total_tallos=('Tallos_Esperados', 'sum'),
+                    total_camas=('Camas', 'sum')
+                )
+                for sem_k, r in grp_enr.iterrows():
+                    dict_ana[str(sem_k)] = int(round(r['total_esq'] * factor_expansion))
+                    dict_tallos_cosecha[str(sem_k)] = int(round(r['total_tallos'] * factor_expansion))
+                    dict_camas_siembra[str(sem_k)] = round(r['total_camas'] * factor_expansion, 1)
+            else:
+                grp_siem = df_det.groupby('Semana_Siembra').agg(
+                    total_esq=('Esquejes', 'sum'),
+                    total_camas=('Camas', 'sum')
+                )
+                for sem_s_k, r in grp_siem.iterrows():
+                    sem_e_k = restar_semanas_iso(str(int(sem_s_k)), SEMANAS_ENRAIZAMIENTO)
+                    esq_k = int(round(r['total_esq'] * factor_expansion))
+                    dict_ana[sem_e_k] = esq_k
+                    dict_tallos_cosecha[sem_e_k] = int(round(esq_k * 0.806))
+                    dict_camas_siembra[sem_e_k] = round(r['total_camas'] * factor_expansion, 1)
+        except Exception:
+            pass
 
-    # Ventana focal de semanas (S202638 a S202648)
-    semanas_foco = [f"2026{w:02d}" for w in range(38, 49)]
+    # Ventana focal de semanas (S202637 a S202648)
+    semanas_foco = [f"2026{w:02d}" for w in range(37, 49)]
     rows_comp = []
 
     for sem_e in semanas_foco:
         sem_s = sumar_semanas_iso(sem_e, 3)
         sem_c = sumar_semanas_iso(sem_s, 11)
         val_plat = dict_plat.get(sem_e, 0)
-        
-        # Valor programado en analítica
-        if sem_e in analitica_overrides:
-            val_ana = analitica_overrides[sem_e]
-        else:
-            val_ana = val_plat
+        val_ana = dict_ana.get(sem_e, val_plat)
+        tallos_cosecha = dict_tallos_cosecha.get(sem_e, int(round(val_ana * 0.806)))
+        camas_siembra = dict_camas_siembra.get(sem_e, round(val_ana / 5200.0, 1))
 
-        # Tallos proyectados a cosecha según el aprovechamiento biológico (~80.1%)
-        tallos_cosecha = int(round(val_ana * 0.801))
         if sem_e == "202642":
             temp_foco = "San Valentín (Semana 1)"
         elif sem_e == "202643":
             temp_foco = "San Valentín (Pico S2704)"
         elif sem_e == "202644":
             temp_foco = "San Valentín (Semana 3)"
+        elif "202638" <= sem_e <= "202644" and correr_variedades:
+            temp_foco = "San Valentín (Alineación Dinámica)"
         else:
             temp_foco = clasificar_temporada_semana(int(sem_c))
 
@@ -888,7 +1041,7 @@ def obtener_datos_comparativos_enraizamiento_y_camas(
             "Enraizamiento_Plataforma": val_plat,
             "Enraizamiento_Analitica": val_ana,
             "Diferencia_Esquejes": val_ana - val_plat,
-            "Camas_Siembra": round(val_ana / 5200.0, 1),
+            "Camas_Siembra": camas_siembra,
             "Tallos_Esperados_Cosecha": tallos_cosecha,
             "Temporada": temp_foco
         })
@@ -896,7 +1049,7 @@ def obtener_datos_comparativos_enraizamiento_y_camas(
     df_comp_enraizamiento = pd.DataFrame(rows_comp)
 
     # 2. Análisis de Liberación de Camas Vivas en Campo
-    siembras = db.query(Siembra).filter(Siembra.estado == EstadoSiembra.EN_PRODUCCION).all()
+    siembras = db.query(Siembra).filter(Siembra.estado == EstadoSiembra.EN_PRODUCCION).all() if db else []
     records_7d = []
     records_3d = []
 
@@ -915,16 +1068,9 @@ def obtener_datos_comparativos_enraizamiento_y_camas(
         records_7d.append(sem_lib_7d)
         records_3d.append(sem_lib_3d)
 
-    # Evaluar la liberación semana a semana en el periodo de siembra de San Valentín (S202642 a S202648)
-    semanas_eval = [f"2026{w:02d}" for w in range(42, 49)]
+    # Evaluar la liberación semana a semana en el periodo de siembra de San Valentín (S202640 a S202648)
+    semanas_eval = [f"2026{w:02d}" for w in range(40, 49)]
     rows_lib = []
-
-    # Demanda de camas para siembra de San Valentín (a razón de 5,200 plantas/cama real)
-    demanda_camas_siembra = {
-        "202645": round(551200 * factor_expansion * mult_45 / 5200.0, 1), # Siembra de Enraizamiento S2642
-        "202646": round(769600 * factor_expansion * mult_46 / 5200.0, 1), # Siembra de Enraizamiento S2643 (Pico)
-        "202647": round(660400 * factor_expansion * mult_47 / 5200.0, 1), # Siembra de Enraizamiento S2644
-    }
 
     demanda_acum = 0.0
 
@@ -933,7 +1079,9 @@ def obtener_datos_comparativos_enraizamiento_y_camas(
         lib_3d = sum(1 for sem in records_3d if sem <= sem_s)
         diff_ganancia = lib_3d - lib_7d
         
-        camas_req_sem = demanda_camas_siembra.get(sem_s, 0.0)
+        # Encontrar demanda de camas correspondiente a esta semana de siembra
+        sem_e_equiv = restar_semanas_iso(sem_s, 3)
+        camas_req_sem = dict_camas_siembra.get(sem_e_equiv, round(dict_ana.get(sem_e_equiv, 0) / 5200.0, 1))
         demanda_acum += camas_req_sem
 
         rows_lib.append({

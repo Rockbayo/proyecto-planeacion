@@ -37,56 +37,57 @@ def render_enraizamiento_module(db):
             escenario_sel = st.radio(
                 "Seleccione el modelo operativo de enraizamiento:",
                 options=[
-                    "⭐ Plan Balanceado S&OP (3 Semanas al Techo Operativo: 381 Camas SV | 372 Camas Madres)",
-                    "⚡ Pico Concentrado (50% en Pico S2643: 190 Camas | 988k Esq)",
+                    "⭐ Plan Dinámico S&OP (Alineación Fenológica por Curvas Reales y Capacidad)",
                     "📋 Base Histórica Plataforma (Valores Originales Sin Ajuste)"
                 ],
                 index=0,
-                help="El Plan Balanceado distribuye el volumen en las 3 semanas de la temporada respetando la capacidad de clavado, siembra y poscosecha sin ahogar la finca."
+                help="El Plan Dinámico S&OP alinea cada lote según las curvas reales de extracción biológica de cada variedad (dia_pico y aprovechamiento)."
             )
 
         modo_plan = "aprobado"
         factor_expansion = 1.0
-        modo_concentracion = "base"
+        correr_variedades = True
 
-        if "Plan Balanceado S&OP" in escenario_sel:
+        if "Plan Dinámico S&OP" in escenario_sel:
             modo_plan = "aprobado"
-            modo_concentracion = "base"
             factor_expansion = 1.0
-            with col_opt:
-                st.success(
-                    "🌿 **Plan Balanceado (Máximo Techo Operativo Sostenible):**\n\n"
-                    "• **S2642 (SV 1):** 106.0 camas (551,200 esq) ➔ Cuadrilla base 6 op.\n\n"
-                    "• **S2643 (Pico):** 148.0 camas (769,600 esq) ➔ 9 op. (Techo de clavado)\n\n"
-                    "• **S2644 (SV 3):** 127.0 camas (660,400 esq) ➔ 7.5 op.\n\n"
-                    "**Suma 3 Semanas San Valentín:** **381 camas** (1,981,200 esquejes).\n\n"
-                    "**Suma 3 Semanas Madres:** **372 camas** (1,934,400 esquejes: 138-143-91 cam).\n\n"
-                    "✅ **Protección:** Ocupación en S48 al 100% de 1,068 camas (0 déficit)."
+            with col_esc:
+                correr_variedades = st.checkbox(
+                    "🔄 Aplicar Corrimiento Fenológico Dinámico (Alineación a Pico Jueves)",
+                    value=True,
+                    help="Ajusta la semana de enraizamiento y siembra según el dia_pico de cada variedad para garantizar que el pico de corte ocurra en los Jueves de San Valentín (S03-S05) y maximizar el aprovechamiento comercial sin desbordar la cuadrilla."
                 )
-        elif "Pico Concentrado" in escenario_sel:
-            modo_plan = "aprobado"
-            modo_concentracion = "pico_50"
-            factor_expansion = 1.0
+
             with col_opt:
-                st.warning(
-                    "⚡ **Concentración Forzada al 50% en Pico S2643:**\n\n"
-                    "• **S2642:** 85.0 camas (442,000 esq)\n\n"
-                    "• **S2643 (Pico):** 190.0 camas (988,000 esq ➔ Requiere 11 op. clavado)\n\n"
-                    "• **S2644:** 106.0 camas (551,200 esq)\n\n"
-                    "⚠️ *Nota operativa:* Exige refuerzo extraordinario de clavado y satura mesas de poscosecha en semana 04."
-                )
+                if correr_variedades:
+                    st.success(
+                        "🌿 **Plan Dinámico con Corrimiento Fenológico Activo:**\n\n"
+                        "• **Curvas Reales:** Ajuste individual por `dia_pico` (75 a 111 días) y aprovechamiento biológico.\n\n"
+                        "• **Alineación a Cosecha:** Cosechas máximas concentradas los **Jueves** de San Valentín (S03-S05).\n\n"
+                        "• **Capacidad Operativa:** Máximo 94 camas/sem en enraizamiento (muy por debajo del techo de 148 camas de clavado).\n\n"
+                        "• **Volumen San Valentín:** **1,981,200 esquejes** (381 camas) ➔ **1.62M tallos proyectados** (97.4% en ventana comercial).\n\n"
+                        "✅ **Protección Agronómica:** 3 días de descanso de suelo garantizan espacio físico en campo."
+                    )
+                else:
+                    st.info(
+                        "📋 **Plan Aprobado Base (Sin Corrimiento):**\n\n"
+                        "• Siembras fijas en S2645 (106 cam), S2646 (148 cam), S2647 (127 cam).\n\n"
+                        "• Total 3 semanas: 381 camas (1,981,200 esquejes).\n\n"
+                        "⚠️ *Nota biológica:* Sin corrimiento, variedades de ciclo largo (>84 días) cosecharán en S06-S08 fuera de San Valentín."
+                    )
         else:
             modo_plan = "plataforma_base"
             factor_expansion = 1.0
-            modo_concentracion = "base"
+            correr_variedades = False
             with col_opt:
-                st.info("📋 Mostrando las órdenes históricas sin actualizar al pedido aprobado.")
+                st.info("📋 Mostrando las órdenes históricas sin actualizar al pedido aprobado ni curvas biológicas.")
 
     # 1. Cargar semanas disponibles en el Pedido Aprobado según el modo seleccionado
     semanas_disp = obtener_semanas_enraizamiento_disponibles(
         modo_plan=modo_plan,
         factor_expansion=factor_expansion,
-        modo_concentracion=modo_concentracion
+        correr_variedades=correr_variedades,
+        db=db
     )
     if not semanas_disp:
         st.warning("⚠️ No se encontraron órdenes de siembra en el archivo de pedidos consolidado maestro.")
@@ -191,7 +192,7 @@ def render_enraizamiento_module(db):
         config_cuadrilla=config_cuadrilla,
         modo_plan=modo_plan,
         factor_expansion=factor_expansion,
-        modo_concentracion=modo_concentracion
+        correr_variedades=correr_variedades
     )
 
     if "error" in res_plano:
@@ -500,7 +501,7 @@ def render_enraizamiento_module(db):
             db,
             modo_plan=modo_plan,
             factor_expansion=factor_expansion,
-            modo_concentracion=modo_concentracion
+            correr_variedades=correr_variedades
         )
         df_comp = datos_comp['df_comp_enraizamiento']
         df_lib = datos_comp['df_liberacion_camas']
@@ -552,10 +553,12 @@ def render_enraizamiento_module(db):
             "cosechan y liberan, comparando la preparación de suelo estándar (7 días) contra el ajuste acelerado a 3 días."
         )
 
-        c_pico_3d = int(df_lib[df_lib['Semana_Siembra'] == '202646']['Camas_Liberadas_3d'].values[0])
-        c_gain_pico = int(df_lib[df_lib['Semana_Siembra'] == '202646']['Ganancia_Camas_Anticipadas'].values[0])
-        demanda_tot_sv = int(df_lib['Camas_Requeridas_Semana'].sum())
-        balance_sv = int(df_lib[df_lib['Semana_Siembra'] == '202647']['Balance_Disponibilidad_3d'].values[0])
+        row_pico = df_lib[df_lib['Semana_Siembra'] == '202646']
+        c_pico_3d = int(row_pico['Camas_Liberadas_3d'].values[0]) if not row_pico.empty else (int(df_lib['Camas_Liberadas_3d'].max()) if not df_lib.empty else 0)
+        c_gain_pico = int(row_pico['Ganancia_Camas_Anticipadas'].values[0]) if not row_pico.empty else 0
+        demanda_tot_sv = int(df_lib['Camas_Requeridas_Semana'].sum()) if not df_lib.empty else 0
+        row_bal = df_lib[df_lib['Semana_Siembra'] == '202647']
+        balance_sv = int(row_bal['Balance_Disponibilidad_3d'].values[0]) if not row_bal.empty else (int(df_lib['Balance_Disponibilidad_3d'].iloc[-1]) if not df_lib.empty else 0)
 
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         col_m1.metric("Camas Liberadas al Pico (S2646)", f"{c_pico_3d} camas", f"+{c_gain_pico} camas con 3 días")
