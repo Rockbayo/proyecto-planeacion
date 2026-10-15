@@ -471,16 +471,15 @@ def sincronizar_plan_maestro_y_detallado(
     if os.path.exists(detailed_file_path):
         try:
             df_det_master = pd.read_csv(detailed_file_path)
-            if 'Semana_Cosecha' in df_det_master.columns:
-                df_det_master['Semana_Cosecha'] = df_det_master['Semana_Cosecha'].apply(clean_sem)
-                df_det_master = df_det_master[~df_det_master['Semana_Cosecha'].isin(nuevas_semanas)]
+            # Si el archivo detallado ya es el Pedido de Material Vegetal oficial consolidado (con sus semanas de siembra exactas y 20M+ esquejes),
+            # preservamos estrictamente su integridad sin sobreescribir con corrimientos sintéticos.
+            if len(df_det_master) > 0 and 'Semana_Siembra' in df_det_master.columns and df_det_master['Esquejes'].sum() > 20000000:
+                df_det_consolidado = df_det_master
             else:
-                # Si el archivo previo no tenía Semana_Cosecha, filtramos semanas siembra equivalentes
-                if 'Semana_Siembra' in df_det_master.columns:
-                    sems_siembra_nuevas = set(df_det_new['Semana_Siembra'].unique())
-                    df_det_master['Semana_Siembra'] = df_det_master['Semana_Siembra'].apply(clean_sem)
-                    df_det_master = df_det_master[~df_det_master['Semana_Siembra'].isin(sems_siembra_nuevas)]
-            df_det_consolidado = pd.concat([df_det_master, df_det_new], ignore_index=True)
+                if 'Semana_Cosecha' in df_det_master.columns:
+                    df_det_master['Semana_Cosecha'] = df_det_master['Semana_Cosecha'].apply(clean_sem)
+                    df_det_master = df_det_master[~df_det_master['Semana_Cosecha'].isin(nuevas_semanas)]
+                df_det_consolidado = pd.concat([df_det_master, df_det_new], ignore_index=True)
         except Exception:
             df_det_consolidado = df_det_new
     else:

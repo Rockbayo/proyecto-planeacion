@@ -253,36 +253,35 @@ elif modulo == "ForeCast y Exportación":
         
         df_mrp = pd.DataFrame()
         has_mva = False
-        if os.path.exists("Plan_Aprobado_Detallado.csv"):
+        if os.path.exists(file_path):
+            try:
+                df_mrp = generar_plan_mva(file_path, week_is="Pedido")
+                df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
+                df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
+                has_mva = not df_proyeccion_mva.empty
+            except Exception as e:
+                st.warning(f"Error procesando el archivo Maestro MVA: {e}")
+                df_forecast = df_forecast_vivo
+        elif os.path.exists("Plan_Aprobado_Detallado.csv"):
             try:
                 df_app_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
                 df_app_det['Esquejes_Para_Siembra (Final)'] = df_app_det['Esquejes']
                 df_proyeccion_mva = proyectar_cosecha_desde_mva(df_app_det, db)
                 df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
                 has_mva = not df_proyeccion_mva.empty
-                if vista == "13 Semanas Móviles":
-                    st.info("💡 **Diferenciación visual:** La línea **Verde** corresponde al **Plano de Siembras** (inventario vivo en campo). La línea **Naranja** corresponde al **Plan de Enraizamiento y Siembra Aprobado**.")
-                else:
-                    st.info("💡 **Diferenciación visual:** Las primeras 10 semanas (**Verde**) provienen del **Plano de Siembras** (inventario vivo). A partir de la semana 11 (**Naranja**), la proyección proviene del **Plan de Enraizamiento y Siembra Aprobado**.")
             except Exception as e:
-                st.warning(f"Error procesando Plan Aprobado: {e}")
-                df_forecast = df_forecast_vivo
-        elif os.path.exists(file_path):
-            try:
-                df_mrp = generar_plan_mva(file_path, week_is="Pedido")
-                df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
-                df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
-                has_mva = not df_proyeccion_mva.empty
-                if vista == "13 Semanas Móviles":
-                    st.info("💡 **Diferenciación visual:** La línea **Verde** corresponde a las semanas calculadas del **Plano de Siembras** (inventario vivo en campo). La línea **Naranja** corresponde a la proyección del **Pedido de Material Vegetal (MVA)**.")
-                else:
-                    st.info("💡 **Diferenciación visual:** Las primeras 10 semanas (**Verde**) provienen del **Plano de Siembras** (inventario vivo). A partir de la semana 11 (**Naranja**), la proyección proviene del **Pedido de Material Vegetal (MVA)**.")
-            except Exception as e:
-                st.warning(f"Error procesando el archivo Maestro MVA: {e}")
+                st.warning(f"Error procesando Plan Detallado: {e}")
                 df_forecast = df_forecast_vivo
         else:
             st.warning("No se encontró el Pedido Consolidado Maestro ni el Plan Aprobado. Mostrando únicamente el inventario vivo.")
             df_forecast = df_forecast_vivo
+
+        st.info(
+            "💡 **Curvas en Gráfica:** "
+            "🟢 **ForeCast Biológico (Verde):** Proyección continua que une las siembras vivas actuales en campo con la proyección del pedido. | "
+            "🔵 **Plan de Producción (Azul):** Meta semanal aprobada por S&OP en el Plan Maestro de Producción. | "
+            "🟠 **Proyección Cosecha Enraizamiento (Naranja):** Cosecha biológica resultante del Plan de Enraizamiento / Pedido de Material Vegetal."
+        )
         
     if df_forecast.empty:
         st.warning("No hay datos suficientes para generar el forecast.")
@@ -313,31 +312,19 @@ elif modulo == "ForeCast y Exportación":
             # Clasificar semanas entre Plano de Siembras (Inventario Vivo) y Pedido de Material Vegetal
             cols_fc_vivo = sorted([c for c in df_forecast_vivo.columns if str(c).startswith('202')])
             semanas_viv_raw = set([s for s in cols_fc_vivo if s >= semana_actual][:10])
+            # Serie 1: ForeCast Continuo (Siembras Actuales unida a la Proyección del Pedido)
+            y_fc = [fc_agrupado.get(s, 0) for s in semanas_futuras]
             
-            semanas_plano = [s for s in semanas_futuras if (s.split(" ")[0] in semanas_viv_raw or not has_mva)]
-            semanas_mva_fut = [s for s in semanas_futuras if s not in semanas_plano]
+            st.subheader("Proyección Semanal vs Plan Aprobado y Enraizamiento")
             
-            ultima_sem_plano = semanas_plano[-1] if semanas_plano else None
-            
-            # Serie Plano de Siembras
-            y_plano = [fc_agrupado[s] if s in semanas_plano else None for s in semanas_futuras]
-            # Serie Material Vegetal (enlaza en la última semana de plano para continuidad visual)
-            y_mva = [fc_agrupado[s] if (s in semanas_mva_fut or s == ultima_sem_plano) else None for s in semanas_futuras]
-            hover_mva = ['skip' if s in semanas_plano else 'all' for s in semanas_futuras]
-            
-            st.subheader("Proyección Semanal vs Plan Aprobado")
-            
-            # Intentar cargar el plan aprobado
+            # Serie 2: Cargar el Plan de Producción Aprobado
             plan_aprobado_path = "Plan_Aprobado.csv"
             plan_series_cap = pd.Series(0.0, index=semanas_futuras)
-            plan_series_ped = pd.Series(0.0, index=semanas_futuras)
-            has_pedidos_col = False
             
             if os.path.exists(plan_aprobado_path):
                 try:
                     df_plan_app = pd.read_csv(plan_aprobado_path)
                     col_capacidad = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_plan_app.columns else 'Suma de Tallos'
-                    col_pedidos = 'Tallos Pedidos (Plan)' if 'Tallos Pedidos (Plan)' in df_plan_app.columns else 'Tallos Solicitados (Plan)'
                     
                     if 'Semana' in df_plan_app.columns:
                         def clean_semana(val):
@@ -357,15 +344,7 @@ elif modulo == "ForeCast y Exportación":
                                 if sem_clean in df_plan_grp_cap.index:
                                     plan_series_cap[sem_fut] = df_plan_grp_cap[sem_clean]
                                     
-                        if col_pedidos in df_plan_app.columns:
-                            df_plan_grp_ped = df_plan_app.groupby('Semana')[col_pedidos].sum()
-                            for sem_fut in semanas_futuras:
-                                sem_clean = sem_fut.split(" ")[0]
-                                if sem_clean in df_plan_grp_ped.index:
-                                    plan_series_ped[sem_fut] = df_plan_grp_ped[sem_clean]
-                            has_pedidos_col = (plan_series_ped.sum() > 0)
-                                    
-                    st.success("✅ Comparando contra el Plan Aprobado (Capacidad de Siembra y Demanda Comercial).")
+                    st.success("✅ Comparando contra el Plan de Producción Aprobado y la Proyección de Enraizamiento.")
                 except Exception as e:
                     st.warning(f"No se pudo leer el Plan Aprobado: {e}")
             else:
@@ -373,58 +352,63 @@ elif modulo == "ForeCast y Exportación":
                 col_plan1, col_plan2 = st.columns([1, 3])
                 plan_fallback = col_plan1.number_input("Meta del Plan (Fallback)", value=400000, step=10000)
                 plan_series_cap = pd.Series(plan_fallback, index=semanas_futuras)
+
+            # Serie 3: Proyección Cosecha de Enraizamiento (Pedido Material Vegetal Oficial)
+            plan_enr_series = pd.Series(0.0, index=semanas_futuras)
+            has_enr_proj = False
+            if os.path.exists("Plan_Aprobado_Detallado.csv"):
+                try:
+                    df_det_enr = pd.read_csv("Plan_Aprobado_Detallado.csv")
+                    df_det_enr['Esquejes_Para_Siembra (Final)'] = df_det_enr['Esquejes']
+                    df_proj_enr = proyectar_cosecha_desde_mva(df_det_enr, db)
+                    cols_enr_c = [c for c in df_proj_enr.columns if str(c).startswith('202')]
+                    enr_sums = df_proj_enr[cols_enr_c].sum()
+                    for sem_fut in semanas_futuras:
+                        sem_clean = sem_fut.split(" ")[0]
+                        if sem_clean in enr_sums.index:
+                            plan_enr_series[sem_fut] = enr_sums[sem_clean]
+                    has_enr_proj = (plan_enr_series.sum() > 0)
+                except Exception:
+                    pass
                 
             fig_fc = go.Figure()
             
-            # 1. Trazo ForeCast: Plano de Siembras (Inventario Vivo)
+            # 1. Trazo: ForeCast Biológico (Siembras Actuales unida a la Proyección del Pedido)
             fig_fc.add_trace(go.Scatter(
                 x=semanas_futuras,
-                y=y_plano,
+                y=y_fc,
                 mode='lines+markers',
-                name="ForeCast (Plano Siembras)",
+                name="ForeCast (Siembras Actuales + Pedido)",
                 line=dict(color='#2E7D32', width=3),
                 marker=dict(size=6, symbol='circle'),
-                hovertemplate="<b>Semana %{x}</b><br>Plano Siembras: %{y:,.0f} tallos<extra></extra>"
+                hovertemplate="<b>Semana %{x}</b><br>ForeCast Biológico: %{y:,.0f} tallos<extra></extra>"
             ))
             
-            # 2. Trazo ForeCast: Material Vegetal (MVA)
-            if semanas_mva_fut:
-                fig_fc.add_trace(go.Scatter(
-                    x=semanas_futuras,
-                    y=y_mva,
-                    mode='lines+markers',
-                    name="ForeCast (Material Vegetal)",
-                    line=dict(color='#E65100', width=3),
-                    marker=dict(size=6, symbol='diamond'),
-                    hoverinfo=hover_mva,
-                    hovertemplate="<b>Semana %{x}</b><br>Material Vegetal: %{y:,.0f} tallos<extra></extra>"
-                ))
-                
-            # 3. Línea de Plan Aprobado (Capacidad de Siembra)
+            # 2. Trazo: Plan de Producción (Aprobado)
             fig_fc.add_trace(go.Scatter(
                 x=semanas_futuras,
                 y=plan_series_cap,
                 mode='lines+markers',
-                name="Plan Aprobado (Capacidad)",
-                line=dict(color='#1976D2', width=2.5, dash='dot'),
+                name="Plan de Producción",
+                line=dict(color='#1565C0', width=2.5, dash='dash'),
                 marker=dict(size=5, symbol='square'),
-                hovertemplate="<b>Semana %{x}</b><br>Plan Aprobado (Capacidad): %{y:,.0f} tallos<extra></extra>"
+                hovertemplate="<b>Semana %{x}</b><br>Plan Producción: %{y:,.0f} tallos<extra></extra>"
             ))
-            
-            # 4. Línea de Demanda Comercial (Plan Pedidos 1,410k)
-            if has_pedidos_col:
+
+            # 3. Trazo: Proyección Cosecha Enraizamiento (Pedido Material Vegetal)
+            if has_enr_proj:
                 fig_fc.add_trace(go.Scatter(
                     x=semanas_futuras,
-                    y=plan_series_ped,
+                    y=plan_enr_series,
                     mode='lines+markers',
-                    name="Demanda Comercial (Plan Pedidos)",
-                    line=dict(color='#7B1FA2', width=2, dash='dash'),
-                    marker=dict(size=4, symbol='triangle-up'),
-                    hovertemplate="<b>Semana %{x}</b><br>Demanda Comercial: %{y:,.0f} tallos<extra></extra>"
+                    name="Proyección Cosecha Enraizamiento (Pedido MV)",
+                    line=dict(color='#E65100', width=3),
+                    marker=dict(size=6, symbol='diamond'),
+                    hovertemplate="<b>Semana %{x}</b><br>Cosecha Enraizamiento: %{y:,.0f} tallos<extra></extra>"
                 ))
                 
             fig_fc.update_layout(
-                title=dict(text=f"Proyección Semanal vs Plan Aprobado ({vista})", font=dict(size=16)),
+                title=dict(text=f"Proyección Semanal vs Plan Aprobado y Enraizamiento ({vista})", font=dict(size=16)),
                 xaxis=dict(
                     type='category',
                     title="Semana Operativa",
@@ -445,23 +429,23 @@ elif modulo == "ForeCast y Exportación":
             
             st.plotly_chart(fig_fc, width='stretch', config={'scrollZoom': False, 'displayModeBar': False})
             
-            st.markdown("**Comparativo ForeCast vs Plan Aprobado:**")
+            st.markdown("**Comparativo ForeCast vs Plan de Producción vs Cosecha Enraizamiento:**")
             df_comp = pd.DataFrame(index=semanas_futuras)
-            df_comp['Proyección (ForeCast)'] = fc_agrupado
-            df_comp['Plan Aprobado (Capacidad)'] = plan_series_cap
-            if has_pedidos_col:
-                df_comp['Demanda Solicitada (Pedidos)'] = plan_series_ped
-            df_comp['Variación vs Capacidad %'] = df_comp.apply(
-                lambda row: ((row['Proyección (ForeCast)'] / row['Plan Aprobado (Capacidad)']) - 1) * 100 if row['Plan Aprobado (Capacidad)'] > 0 else 0,
-                axis=1
-            )
+            df_comp['ForeCast (Siembras + Pedido)'] = fc_agrupado
+            df_comp['Plan de Producción'] = plan_series_cap
+            if has_enr_proj:
+                df_comp['Cosecha Enraizamiento (Pedido MV)'] = plan_enr_series
+                df_comp['Alineación Enraizamiento vs Plan %'] = df_comp.apply(
+                    lambda row: ((row['Cosecha Enraizamiento (Pedido MV)'] / row['Plan de Producción']) * 100) if row['Plan de Producción'] > 0 else 0,
+                    axis=1
+                )
             
             df_comp_display = df_comp.copy()
-            df_comp_display['Proyección (ForeCast)'] = df_comp_display['Proyección (ForeCast)'].apply(lambda x: f"{int(x):,}")
-            df_comp_display['Plan Aprobado (Capacidad)'] = df_comp_display['Plan Aprobado (Capacidad)'].apply(lambda x: f"{int(x):,}")
-            if has_pedidos_col:
-                df_comp_display['Demanda Solicitada (Pedidos)'] = df_comp_display['Demanda Solicitada (Pedidos)'].apply(lambda x: f"{int(x):,}")
-            df_comp_display['Variación vs Capacidad %'] = df_comp_display['Variación vs Capacidad %'].apply(lambda x: f"{x:+.1f}%")
+            df_comp_display['ForeCast (Siembras + Pedido)'] = df_comp_display['ForeCast (Siembras + Pedido)'].apply(lambda x: f"{int(x):,}")
+            df_comp_display['Plan de Producción'] = df_comp_display['Plan de Producción'].apply(lambda x: f"{int(x):,}")
+            if has_enr_proj:
+                df_comp_display['Cosecha Enraizamiento (Pedido MV)'] = df_comp_display['Cosecha Enraizamiento (Pedido MV)'].apply(lambda x: f"{int(x):,}")
+                df_comp_display['Alineación Enraizamiento vs Plan %'] = df_comp_display['Alineación Enraizamiento vs Plan %'].apply(lambda x: f"{x:.1f}%")
             
             st.dataframe(df_comp_display.T, width='stretch')
             
