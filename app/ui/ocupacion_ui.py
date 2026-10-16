@@ -320,7 +320,7 @@ def render_ocupacion_module(db):
         st.info("""
         💡 **Distinción Clave entre Inventario Vivo, Siembras de Enraizamiento y Cosecha San Valentín:**
         * 🟢 **Línea Verde (Inventario Vivo en Suelo):** Muestra el decaimiento natural del cultivo actual a medida que se cosechan los lotes en campo (baja de ~918 camas en S2642 hasta 0 camas en S2703).
-        * 🔵 **Línea Azul (Siembras Proyectadas de Enraizamiento):** Demuestra cómo el material vegetal ingresado a partir de S2643 va ocupando las camas liberadas, alcanzando **1,144 camas (~98-100% de ocupación)** en la ventana pico de San Valentín (S2704-S2706).
+        * 🔵 **Línea Azul (Siembras Proyectadas de Enraizamiento):** Demuestra cómo el material vegetal ingresado a partir de S2643 va ocupando las camas liberadas. Frente a la capacidad post-reducción (**1,068 camas comerciales** desde S2648), la ocupación alcanza **1,053 camas (98.6%)** en el pico de San Valentín (S2704).
         * 🤝 **Coexistencia y Relevo:** Durante las semanas de siembra de San Valentín (S2643-S2647), las nuevas siembras coexisten con el cultivo saliente garantizando que la finca no quede desocupada ni sobrepase el límite físico.
         """)
 

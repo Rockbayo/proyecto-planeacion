@@ -35,6 +35,7 @@ st.sidebar.caption("Planeación Integrada de Suministros")
 modulo = st.sidebar.radio("Módulos del Sistema:", [
     "Dashboard General", 
     "Curvas e Índices (Campo)", 
+    "Calibración de Curvas",
     "ForeCast y Exportación", 
     "Programación Diaria y Temporadas", 
     "Plan de Producción (MVA)", 
@@ -186,6 +187,9 @@ if modulo == "Dashboard General":
 
 elif modulo == "Curvas e Índices (Campo)":
     render_curvas_module(db)
+
+elif modulo == "Calibración de Curvas":
+    render_accuracy_module(db)
 
 elif modulo == "ForeCast y Exportación":
     st.header("📈 ForeCast y Exportación (S&OP)")
@@ -1445,8 +1449,5 @@ elif modulo == "Pedido Material Vegetal":
 elif modulo == "Plan de Enraizamiento":
     from app.ui.enraizamiento_ui import render_enraizamiento_module
     render_enraizamiento_module(db)
-
-elif modulo == "Precisión y ML (Accuracy)":
-    render_accuracy_module(db)
 
 
