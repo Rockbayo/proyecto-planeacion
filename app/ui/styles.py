@@ -249,51 +249,117 @@ div[data-baseweb="tab-highlight"] {
     display: none !important;
 }
 
-/* 4. Botones y Controles de Acción Estandarizados (Formato S&OP Consolidado) */
-button,
-button[kind="primary"],
-button[kind="secondary"],
-.stButton > button,
-button[data-testid^="baseButton-"],
-div[data-testid="stDownloadButton"] > button {
-    background-color: #1D4ED8 !important;
+/* 4. Botones y Controles de Acción (Diseño Moderno SAP Fiori Horizon) */
+
+/* Botón Primario (Acción Principal / Énfasis SAP) */
+button[kind="primary"], 
+.stButton > button[kind="primary"],
+button[data-testid="baseButton-primary"] {
+    background-color: #0070F2 !important;
     color: #FFFFFF !important;
-    border: 1px solid #1E40AF !important;
+    border: 1px solid #0056B3 !important;
     border-radius: 6px !important;
     font-weight: 600 !important;
-    font-size: 0.90rem !important;
-    padding: 8px 18px !important;
-    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
-    transition: background-color 0.15s ease, box-shadow 0.15s ease !important;
+    font-size: 0.88rem !important;
+    padding: 7px 18px !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 112, 242, 0.2) !important;
+    transition: all 0.15s ease !important;
 }
 
-button:hover,
-button[kind="primary"]:hover,
-button[kind="secondary"]:hover,
-.stButton > button:hover,
-button[data-testid^="baseButton-"]:hover,
-div[data-testid="stDownloadButton"] > button:hover {
-    background-color: #1E40AF !important;
-    box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.12) !important;
-    border-color: #172554 !important;
+button[kind="primary"]:hover, 
+.stButton > button[kind="primary"]:hover,
+button[data-testid="baseButton-primary"]:hover {
+    background-color: #0056B3 !important;
+    border-color: #004085 !important;
+    box-shadow: 0 2px 5px 0 rgba(0, 86, 179, 0.3) !important;
 }
 
-/* Forzar Texto Blanco Nítido en TODOS los Hijos y Elementos Internos de Botón */
-button *,
-button p,
-button span,
-button div,
-.stButton > button *,
-.stButton > button p,
-.stButton > button span,
-button[data-testid^="baseButton-"] *,
-button[data-testid^="baseButton-"] p,
-button[data-testid^="baseButton-"] span,
-div[data-testid="stDownloadButton"] > button *,
-div[data-testid="stDownloadButton"] > button p,
-div[data-testid="stDownloadButton"] > button span {
+button[kind="primary"] *,
+button[kind="primary"] p,
+button[kind="primary"] span,
+button[kind="primary"] div,
+.stButton > button[kind="primary"] *,
+.stButton > button[kind="primary"] p,
+.stButton > button[kind="primary"] span,
+button[data-testid="baseButton-primary"] *,
+button[data-testid="baseButton-primary"] p,
+button[data-testid="baseButton-primary"] span {
     color: #FFFFFF !important;
     font-weight: 600 !important;
+}
+
+/* Botón Secundario / Estándar Neutro (SAP Fiori Standard) */
+button[kind="secondary"], 
+.stButton > button:not([kind="primary"]),
+button[data-testid="baseButton-secondary"],
+button:not([kind="primary"]):not([data-testid="baseButton-primary"]) {
+    background-color: #FFFFFF !important;
+    color: #1C2D42 !important;
+    border: 1px solid #C4C9D0 !important;
+    border-radius: 6px !important;
+    font-weight: 500 !important;
+    font-size: 0.88rem !important;
+    padding: 7px 16px !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
+    transition: all 0.15s ease !important;
+}
+
+button[kind="secondary"]:hover, 
+.stButton > button:not([kind="primary"]):hover,
+button[data-testid="baseButton-secondary"]:hover,
+button:not([kind="primary"]):not([data-testid="baseButton-primary"]):hover {
+    background-color: #F5F6F7 !important;
+    border-color: #0070F2 !important;
+    color: #0070F2 !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08) !important;
+}
+
+button[kind="secondary"] *,
+button[kind="secondary"] p,
+button[kind="secondary"] span,
+.stButton > button:not([kind="primary"]) *,
+.stButton > button:not([kind="primary"]) p,
+.stButton > button:not([kind="primary"]) span,
+button[data-testid="baseButton-secondary"] *,
+button[data-testid="baseButton-secondary"] p,
+button[data-testid="baseButton-secondary"] span {
+    color: #1C2D42 !important;
+    font-weight: 500 !important;
+}
+
+button[kind="secondary"]:hover *,
+.stButton > button:not([kind="primary"]):hover *,
+button[data-testid="baseButton-secondary"]:hover * {
+    color: #0070F2 !important;
+}
+
+/* Botones de Descarga (SAP Toolbar Action) */
+div[data-testid="stDownloadButton"] > button {
+    background-color: #FFFFFF !important;
+    color: #0070F2 !important;
+    border: 1px solid #0070F2 !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    padding: 7px 18px !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
+    transition: all 0.15s ease !important;
+}
+
+div[data-testid="stDownloadButton"] > button:hover {
+    background-color: #EBF3FB !important;
+    border-color: #0056B3 !important;
+    color: #0056B3 !important;
+    box-shadow: 0 2px 5px 0 rgba(0, 112, 242, 0.15) !important;
+}
+
+div[data-testid="stDownloadButton"] > button * {
+    color: #0070F2 !important;
+    font-weight: 600 !important;
+}
+
+div[data-testid="stDownloadButton"] > button:hover * {
+    color: #0056B3 !important;
 }
 
 /* 5. Alertas S&OP de Alta Dirección (Cintas Corporativas sin Neón) */

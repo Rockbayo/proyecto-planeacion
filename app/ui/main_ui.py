@@ -271,7 +271,7 @@ elif modulo == "ForeCast y Exportación":
         df_forecast_vivo = generar_forecast_13wk(db, alpha=alpha_fc, num_ciclos=ciclos_fc, params_por_flor=params_flor_fc)
 
         
-        # 2. Cargar Plan Maestro Factible (Prioridad 1: Plan_Aprobado_Detallado.csv; Fallback: PedidoConsolidado_master.xlsx)
+        # 2. Cargar Plan Maestro Factible (Prioridad 1: Plan_Aprobado.csv; Fallback: PedidoConsolidado_master.xlsx)
         import os
         from app.services.mva_service import generar_plan_mva, proyectar_cosecha_desde_mva, combinar_proyecciones_52_semanas, llenar_plantilla_52_semanas
         file_path = "PedidoConsolidado_master.xlsx"
@@ -280,7 +280,30 @@ elif modulo == "ForeCast y Exportación":
         has_mva = False
         fuente_plan_mva = ""
         
-        if os.path.exists("Plan_Aprobado_Detallado.csv"):
+        if os.path.exists("Plan_Aprobado.csv"):
+            try:
+                df_app = pd.read_csv("Plan_Aprobado.csv")
+                col_tallos = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_app.columns else 'Suma de Tallos'
+                def clean_sem(val):
+                    if pd.isna(val): return ""
+                    try: return str(int(float(val)))
+                    except: return str(val).strip()
+                df_app['Semana'] = df_app['Semana'].apply(clean_sem)
+                df_plan_factible = df_app.pivot_table(
+                    index=['Flor', 'Color', 'Variedad'],
+                    columns='Semana',
+                    values=col_tallos,
+                    aggfunc='sum',
+                    fill_value=0
+                ).reset_index()
+                
+                df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_plan_factible)
+                has_mva = True
+                fuente_plan_mva = "Plan Maestro Factible (Capacidad Aprobada en Suelo)"
+            except Exception as e:
+                st.warning(f"Error procesando Plan Aprobado Factible: {e}")
+                df_forecast = df_forecast_vivo
+        elif os.path.exists("Plan_Aprobado_Detallado.csv"):
             try:
                 df_app_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
                 if 'Esquejes' in df_app_det.columns and not df_app_det.empty:
@@ -288,12 +311,11 @@ elif modulo == "ForeCast y Exportación":
                     df_proyeccion_mva = proyectar_cosecha_desde_mva(df_app_det, db)
                     df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
                     has_mva = not df_proyeccion_mva.empty
-                    fuente_plan_mva = "Plan Maestro Factible Aprobado (Plan_Aprobado_Detallado.csv)"
+                    fuente_plan_mva = "Plan Detallado Aprobado"
             except Exception as e:
                 st.warning(f"Error procesando Plan Detallado Aprobado: {e}")
                 df_forecast = df_forecast_vivo
-        
-        if not has_mva and os.path.exists(file_path):
+        elif os.path.exists(file_path):
             try:
                 df_mrp = generar_plan_mva(file_path, week_is="Pedido")
                 df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
@@ -303,15 +325,15 @@ elif modulo == "ForeCast y Exportación":
             except Exception as e:
                 st.warning(f"Error procesando el archivo Maestro MVA: {e}")
                 df_forecast = df_forecast_vivo
-        elif not has_mva:
+        else:
             st.warning("No se encontró el Plan Aprobado ni el Pedido Consolidado Maestro. Mostrando únicamente el inventario vivo.")
             df_forecast = df_forecast_vivo
 
         st.info(
             f"💡 **Curvas S&OP:** "
             f"🟢 **Inventario Vivo (Verde Esmeralda):** Semanas 1 a 10 (Corto Plazo: actual + 9) provienen al 100% del **Inventario Vivo** en campo. | "
-            f"🔷 **Plan Maestro Factible (Verde Azulado / Teal):** Semana 11 en adelante proyectado desde **{fuente_plan_mva or 'Plan Factible'}**. | "
-            f"🟦 **Demanda Comercial Aprobada (Azul Zafiro Discontinuo):** Meta aprobada en el Plan Maestro de Producción."
+            f"🟣 **Plan Maestro Factible (Púrpura Amatista):** Semana 11 en adelante corresponde a la **ejecución factible del pedido acorde al área y capacidad física de camas** (`Plan_Aprobado.csv`). | "
+            f"🟦 **Demanda Comercial Aprobada (Azul Zafiro Discontinuo):** Meta semanal aprobada en el Plan Maestro de Producción."
         )
         
     if df_forecast.empty:
@@ -403,17 +425,17 @@ elif modulo == "ForeCast y Exportación":
                     hovertemplate="<b>Semana %{x}</b><br>🟢 Inventario Vivo (Suelo): %{y:,.0f} tallos<extra></extra>"
                 ))
 
-                # Tramo 2: Plan Maestro Factible (Semana 11 en adelante, conectando desde la semana 10 para continuidad)
+                # Tramo 2: Plan Maestro Factible (Semana 11 en adelante, en Púrpura #7C3AED para alto contraste con el verde)
                 sems_plan = semanas_futuras[limite_corto_plazo - 1:]
                 y_plan = y_fc[limite_corto_plazo - 1:]
                 fig_fc.add_trace(go.Scatter(
                     x=sems_plan,
                     y=y_plan,
                     mode='lines+markers',
-                    name="2. Plan Maestro Factible (Siembras Programadas S11+)",
-                    line=dict(color='#0D9488', width=3.0, dash='solid'),
-                    marker=dict(size=7, symbol='diamond'),
-                    hovertemplate="<b>Semana %{x}</b><br>🔷 Plan Maestro Factible: %{y:,.0f} tallos<extra></extra>"
+                    name="2. Plan Maestro Factible (Capacidad en Suelo S11+)",
+                    line=dict(color='#7C3AED', width=3.0, dash='solid'),
+                    marker=dict(size=8, symbol='diamond'),
+                    hovertemplate="<b>Semana %{x}</b><br>🟣 Plan Maestro Factible: %{y:,.0f} tallos<extra></extra>"
                 ))
             
             # Trazo 3: Plan de Producción (Demanda Aprobada)
@@ -449,28 +471,6 @@ elif modulo == "ForeCast y Exportación":
             estilizar_figura_plotly(fig_fc)
             
             st.plotly_chart(fig_fc, width='stretch', config={'scrollZoom': False, 'displayModeBar': False})
-            
-            st.markdown("**Comparativo ForeCast vs Plan de Producción Aprobado:**")
-            df_comp = pd.DataFrame(index=semanas_futuras)
-            df_comp['Horizonte S&OP'] = [
-                'Corto Plazo (Inventario Vivo)' if i < 10 else 'Plan Maestro Factible'
-                for i in range(len(semanas_futuras))
-            ]
-            df_comp['ForeCast Biológico'] = fc_agrupado
-            df_comp['Plan de Producción'] = plan_series_cap
-            df_comp['Brecha / Gap (Tallos)'] = df_comp['ForeCast Biológico'] - df_comp['Plan de Producción']
-            df_comp['Cumplimiento %'] = df_comp.apply(
-                lambda row: ((row['ForeCast Biológico'] / row['Plan de Producción']) * 100) if row['Plan de Producción'] > 0 else 0,
-                axis=1
-            )
-            
-            df_comp_display = df_comp.copy()
-            df_comp_display['ForeCast Biológico'] = df_comp_display['ForeCast Biológico'].apply(lambda x: f"{int(x):,}")
-            df_comp_display['Plan de Producción'] = df_comp_display['Plan de Producción'].apply(lambda x: f"{int(x):,}")
-            df_comp_display['Brecha / Gap (Tallos)'] = df_comp_display['Brecha / Gap (Tallos)'].apply(lambda x: f"{int(x):+,}")
-            df_comp_display['Cumplimiento %'] = df_comp_display['Cumplimiento %'].apply(lambda x: f"{x:.1f}%")
-            
-            st.dataframe(df_comp_display.T, width='stretch')
             
         st.divider()
         # Filtrar por variedades que tengan inventario vivo (sembradas actualmente)
@@ -518,24 +518,30 @@ elif modulo == "ForeCast y Exportación":
         # EXPORTACIONES
         if "13" in vista:
             st.subheader("📤 Exportación Webflowers (13 Semanas)")
-            st.markdown("Carga las plantillas vacías descargadas de la plataforma. El sistema inyectará **10 semanas** de proyecciones basadas en inventario vivo (Corto Plazo), y rellenará las **3 semanas** restantes con el Plan de Producción del Pedido Consolidado Maestro.")
+            st.markdown("Carga las plantillas vacías descargadas de la plataforma Webflowers. El sistema inyecta **9 semanas** de proyecciones basadas en **Inventario Vivo** (a partir de la siguiente semana operativa) y completa las **4 semanas** restantes con el **Plan Maestro Factible** (`Plan_Aprobado.csv`), asegurando consistencia con el área real y sin inflar cifras.")
             
             col_up1, col_up2 = st.columns(2)
             with col_up1:
                 uploaded_templates = st.file_uploader("📥 Subir Plantillas Webflowers Vacías (Excel)", type=["xlsx", "xls"], accept_multiple_files=True)
             
             with col_up2:
-                st.info("💡 **Automatización 13 Semanas:** Las primeras 10 semanas se llenan con la proyección real de campo (Inventario Vivo). Las 3 semanas restantes se completan con el Pedido Consolidado MVA.")
+                st.info("💡 **Regla S&OP Webflowers (13 Semanas):** Proyección a partir de la siguiente semana operativa conformada por exactamente **9 semanas de Inventario Vivo en suelo** + **4 semanas de Plan Maestro Factible**, manteniendo la rigurosidad de la capacidad instalada.")
             
             if uploaded_templates:
                 if st.button("Procesar y Llenar Plantillas 13 Wk"):
                     with st.spinner("Generando proyecciones e inyectando datos en las plantillas..."):
-                        # df_forecast ya está calculado con los datos MVA en df_forecast. 
-                        # PERO OJO: export_plataforma procesar_plantillas_plataforma espera 
-                        # df_forecast (el vivo) y df_plan (el MVA separado).
-                        
+                        # df_plan toma la capacidad real de Plan_Aprobado.csv sin inflar cifras
                         df_plan = None
-                        if not df_mrp.empty:
+                        if os.path.exists("Plan_Aprobado.csv"):
+                            try:
+                                df_p_raw = pd.read_csv("Plan_Aprobado.csv")
+                                col_t = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_p_raw.columns else 'Suma de Tallos'
+                                df_p_raw['Semana'] = df_p_raw['Semana'].apply(lambda v: str(int(float(v))) if pd.notna(v) and str(v).replace('.','',1).isdigit() else str(v).strip())
+                                df_plan = df_p_raw.pivot_table(index='Variedad', columns='Semana', values=col_t, aggfunc='sum', fill_value=0)
+                                df_plan.index = df_plan.index.astype(str).str.strip().str.lower()
+                            except Exception:
+                                df_plan = None
+                        elif not df_mrp.empty:
                             df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
                             if not df_proyeccion_mva.empty:
                                 df_plan = df_proyeccion_mva.copy()
