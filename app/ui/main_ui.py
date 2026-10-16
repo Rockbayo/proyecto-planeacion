@@ -728,10 +728,18 @@ elif modulo == "Programación Diaria y Temporadas":
         
         flores_db = sorted(list(set([v.flor for v in db.query(Variedad).all() if v.flor])))
         
-        # Horarios base: Lunes, Martes, Jueves, Viernes: 8h | Miercoles: 7.5h | Sabado: 5h | Domingo: 0h
-        # Total normal = 8+8+7.5+8+8+5 = 44.5h
-        horas = {"Lunes": 8, "Martes": 8, "Miércoles": 7.5, "Jueves": 8, "Viernes": 8, "Sábado": 5, "Domingo": 0}
-        total_horas = sum(horas.values())
+        from app.services.enraizamiento_service import (
+            HORAS_JORNADA, 
+            TOTAL_HORAS_SEMANA_ESTANDAR,
+            HORAS_JORNADA_TEMPORADA,
+            TOTAL_HORAS_SEMANA_TEMPORADA
+        )
+        
+        # Horarios base efectivos (con deducción de 30 min de almuerzo L-V; Sábado continuo):
+        # Lunes, Martes, Jueves, Viernes: 7.5h | Miércoles: 7.0h | Sábado: 5.0h | Domingo: 0.0h
+        # Total normal = 7.5 + 7.5 + 7.0 + 7.5 + 7.5 + 5.0 = 42.0h efectivas
+        horas = HORAS_JORNADA.copy()
+        total_horas = TOTAL_HORAS_SEMANA_ESTANDAR
         
         pct_base_raw = {dia: (h / total_horas) * 100.0 for dia, h in horas.items()}
         pct_base_int = ajustar_porcentajes_enteros(pct_base_raw)
@@ -751,8 +759,8 @@ elif modulo == "Programación Diaria y Temporadas":
             st.dataframe(df_config.style.format(format_config), width='stretch', hide_index=True)
             
         with col_ed2:
-            st.info("💡 **Nota de Capacidad**: Estos porcentajes reflejan la capacidad operativa estándar (Lun, Mar, Jue, Vie: 6am-2pm [8h] | Mie: 6am-1:30pm [7.5h] | Sab: 6am-11am [5h]).")
-            st.info("🔥 **Temporadas**: Los Domingos solo se activarán automáticamente si la semana a desagregar pertenece a las temporadas de 'San valentin' o 'madres'.")
+            st.info(f"💡 **Nota de Capacidad**: Estos porcentajes reflejan la jornada laboral efectiva con deducción de 30 min de almuerzo de lunes a viernes (Lun, Mar, Jue, Vie: 7.5h | Mié: 7.0h | Sáb: 5.0h = **{TOTAL_HORAS_SEMANA_ESTANDAR:.1f}h efectivas/semana**).")
+            st.info(f"🔥 **Temporadas**: Los Domingos solo se activarán automáticamente si la semana a desagregar pertenece a las temporadas de 'San valentin' o 'madres' (+5.0h domingo = **{TOTAL_HORAS_SEMANA_TEMPORADA:.1f}h efectivas**).")
             
         st.divider()
         st.subheader("Generar Plan de Corte Diario")
@@ -830,9 +838,9 @@ elif modulo == "Programación Diaria y Temporadas":
                             vol_semanal = int(round(row[semana_target]))
                             
                             if es_temporada_domingo:
-                                # Temporada con domingo activo: 8h L,M,J,V, 7.5h Mie, 5h Sab, 5h Dom = 49.5h
-                                h_temp = {"Lunes": 8, "Martes": 8, "Miércoles": 7.5, "Jueves": 8, "Viernes": 8, "Sábado": 5, "Domingo": 5}
-                                tot_temp = sum(h_temp.values())
+                                # Temporada con domingo activo: 7.5h L,M,J,V, 7.0h Mie, 5.0h Sab, 5.0h Dom = 47.0h efectivas
+                                h_temp = HORAS_JORNADA_TEMPORADA.copy()
+                                tot_temp = TOTAL_HORAS_SEMANA_TEMPORADA
                                 pcts_float = {d: (h_temp[d] / tot_temp) * 100.0 for d in dias}
                             else:
                                 pcts_float = {d: (horas[d] / total_horas) * 100.0 for d in dias}

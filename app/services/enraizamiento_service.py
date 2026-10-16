@@ -24,12 +24,24 @@ HORAS_JORNADA = {
     "Lunes": 7.5,       # 6:00 am - 2:00 pm (8.0h brutas - 0.5h almuerzo = 7.5h)
     "Martes": 7.5,      # 6:00 am - 2:00 pm (8.0h brutas - 0.5h almuerzo = 7.5h)
     "Miércoles": 7.0,   # 6:00 am - 1:30 pm (7.5h brutas - 0.5h almuerzo = 7.0h)
-    "Jueves": 7.5,      # 6:00 am - 2:00 pm (8.0h brutas - 0.5h almuerzo = 7.5h) - Pico de siembra en campo
+    "Jueves": 7.5,      # 6:00 am - 2:00 pm (8.0h brutas - 0.5h almuerzo = 7.5h) - Clavado clave
     "Viernes": 7.5,     # 6:00 am - 2:00 pm (8.0h brutas - 0.5h almuerzo = 7.5h)
     "Sábado": 5.0,      # 6:00 am - 11:00 am (5.0h sin almuerzo = 5.0h)
-    "Domingo": 0.0      # 0h estándar (activo sólo en contingencia pico)
+    "Domingo": 0.0      # 0h estándar (descanso protegido)
 }
 TOTAL_HORAS_SEMANA_ESTANDAR = sum(HORAS_JORNADA.values()) # 42.0 horas efectivas
+
+# Jornada en Temporada Pico (Domingo activo)
+HORAS_JORNADA_TEMPORADA = {
+    "Lunes": 7.5,
+    "Martes": 7.5,
+    "Miércoles": 7.0,
+    "Jueves": 7.5,
+    "Viernes": 7.5,
+    "Sábado": 5.0,
+    "Domingo": 5.0      # 5.0h activas en temporadas pico (San Valentín / Madres)
+}
+TOTAL_HORAS_SEMANA_TEMPORADA = sum(HORAS_JORNADA_TEMPORADA.values()) # 47.0 horas efectivas
 
 # Rendimientos Estándar de Mano de Obra (Esquejes / Hora)
 RENDIMIENTO_NORMAL = 2016.0         # 18 bandejas/hora (1 cada 3.33 min)
@@ -432,7 +444,7 @@ def calcular_mano_obra_enraizamiento(esquejes_por_dia: dict, config_cuadrilla: d
 
     for d in dias:
         esq_d = esquejes_por_dia.get(d, 0)
-        h_jornada = HORAS_JORNADA.get(d, 8.0)
+        h_jornada = HORAS_JORNADA.get(d, 7.5)
         bandejas_por_dia[d] = int(math.ceil(esq_d / CAVIDADES_POR_BANDEJA))
 
         h_req = round(esq_d / rendimiento_ponderado, 2) if rendimiento_ponderado > 0 else 0.0
@@ -631,7 +643,7 @@ def generar_plano_enraizamiento_semanal(
         pct_sem = (esq_d / tot_esq_sem * 100.0) if tot_esq_sem > 0 else 0.0
         resumen_diario_rows.append({
             "Día": d,
-            "Jornada (Horas)": HORAS_JORNADA.get(d, 8.0),
+            "Jornada (Horas)": HORAS_JORNADA.get(d, 7.5),
             "Esquejes": esq_d,
             "Bandejas (112)": res_mano_obra['bandejas_por_dia'][d],
             "% Semana": round(pct_sem, 1),
