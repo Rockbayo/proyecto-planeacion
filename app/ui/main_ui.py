@@ -271,40 +271,47 @@ elif modulo == "ForeCast y Exportación":
         df_forecast_vivo = generar_forecast_13wk(db, alpha=alpha_fc, num_ciclos=ciclos_fc, params_por_flor=params_flor_fc)
 
         
-        # 2. Cargar MVA para las semanas faltantes
+        # 2. Cargar Plan Maestro Factible (Prioridad 1: Plan_Aprobado_Detallado.csv; Fallback: PedidoConsolidado_master.xlsx)
         import os
         from app.services.mva_service import generar_plan_mva, proyectar_cosecha_desde_mva, combinar_proyecciones_52_semanas, llenar_plantilla_52_semanas
         file_path = "PedidoConsolidado_master.xlsx"
         
         df_mrp = pd.DataFrame()
         has_mva = False
-        if os.path.exists(file_path):
+        fuente_plan_mva = ""
+        
+        if os.path.exists("Plan_Aprobado_Detallado.csv"):
+            try:
+                df_app_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
+                if 'Esquejes' in df_app_det.columns and not df_app_det.empty:
+                    df_app_det['Esquejes_Para_Siembra (Final)'] = df_app_det['Esquejes']
+                    df_proyeccion_mva = proyectar_cosecha_desde_mva(df_app_det, db)
+                    df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
+                    has_mva = not df_proyeccion_mva.empty
+                    fuente_plan_mva = "Plan Maestro Factible Aprobado (Plan_Aprobado_Detallado.csv)"
+            except Exception as e:
+                st.warning(f"Error procesando Plan Detallado Aprobado: {e}")
+                df_forecast = df_forecast_vivo
+        
+        if not has_mva and os.path.exists(file_path):
             try:
                 df_mrp = generar_plan_mva(file_path, week_is="Pedido")
                 df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
                 df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
                 has_mva = not df_proyeccion_mva.empty
+                fuente_plan_mva = "Pedido Consolidado de Material Vegetal (PedidoConsolidado_master.xlsx)"
             except Exception as e:
                 st.warning(f"Error procesando el archivo Maestro MVA: {e}")
                 df_forecast = df_forecast_vivo
-        elif os.path.exists("Plan_Aprobado_Detallado.csv"):
-            try:
-                df_app_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
-                df_app_det['Esquejes_Para_Siembra (Final)'] = df_app_det['Esquejes']
-                df_proyeccion_mva = proyectar_cosecha_desde_mva(df_app_det, db)
-                df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
-                has_mva = not df_proyeccion_mva.empty
-            except Exception as e:
-                st.warning(f"Error procesando Plan Detallado: {e}")
-                df_forecast = df_forecast_vivo
-        else:
-            st.warning("No se encontró el Pedido Consolidado Maestro ni el Plan Aprobado. Mostrando únicamente el inventario vivo.")
+        elif not has_mva:
+            st.warning("No se encontró el Plan Aprobado ni el Pedido Consolidado Maestro. Mostrando únicamente el inventario vivo.")
             df_forecast = df_forecast_vivo
 
         st.info(
-            "💡 **Curvas S&OP:** "
-            "🟢 **ForeCast Biológico (Verde):** Proyección biológica factible. Las primeras **10 semanas** (Corto Plazo: actual + 9) provienen al 100% del **Inventario Vivo** en campo. A partir de la semana 11, se proyecta el **Plan Maestro Factible**. | "
-            "🔵 **Plan de Producción (Azul):** Meta semanal aprobada por S&OP en el Plan Maestro de Producción."
+            f"💡 **Curvas S&OP:** "
+            f"🟢 **Inventario Vivo (Verde Esmeralda):** Semanas 1 a 10 (Corto Plazo: actual + 9) provienen al 100% del **Inventario Vivo** en campo. | "
+            f"🔷 **Plan Maestro Factible (Verde Azulado / Teal):** Semana 11 en adelante proyectado desde **{fuente_plan_mva or 'Plan Factible'}**. | "
+            f"🟦 **Demanda Comercial Aprobada (Azul Zafiro Discontinuo):** Meta aprobada en el Plan Maestro de Producción."
         )
         
     if df_forecast.empty:
@@ -328,10 +335,6 @@ elif modulo == "ForeCast y Exportación":
             
         if semanas_futuras:
             fc_agrupado = df_forecast[semanas_futuras].sum()
-            
-            # Clasificar semanas entre Plano de Siembras (Inventario Vivo) y Pedido de Material Vegetal
-            cols_fc_vivo = sorted([c for c in df_forecast_vivo.columns if str(c).startswith('202')])
-            semanas_viv_raw = set([s for s in cols_fc_vivo if s >= semana_actual][:10])
             y_fc = [fc_agrupado.get(s, 0) for s in semanas_futuras]
             
             st.subheader(f"Proyección Semanal vs Plan de Producción Aprobado ({vista})")
@@ -372,26 +375,56 @@ elif modulo == "ForeCast y Exportación":
 
             fig_fc = go.Figure()
 
-            # 1. Trazo: ForeCast Biológico (Siembras Actuales unida a la Proyección del Pedido)
-            fig_fc.add_trace(go.Scatter(
-                x=semanas_futuras,
-                y=y_fc,
-                mode='lines+markers',
-                name="ForeCast Biológico (Oferta Real Factible)",
-                line=dict(color='#059669', width=3.2),
-                marker=dict(size=6, symbol='circle'),
-                hovertemplate="<b>Semana %{x}</b><br>ForeCast Biológico: %{y:,.0f} tallos<extra></extra>"
-            ))
+            # Corto plazo son exactamente 10 semanas (actual + 9 futuras)
+            limite_corto_plazo = 10
             
-            # 2. Trazo: Plan de Producción (Aprobado)
+            if len(semanas_futuras) <= limite_corto_plazo:
+                # Todo el horizonte visible está cubierto por Inventario Vivo
+                fig_fc.add_trace(go.Scatter(
+                    x=semanas_futuras,
+                    y=y_fc,
+                    mode='lines+markers',
+                    name="1. Inventario Vivo en Suelo (Corto Plazo)",
+                    line=dict(color='#059669', width=3.2),
+                    marker=dict(size=7, symbol='circle'),
+                    hovertemplate="<b>Semana %{x}</b><br>🟢 Inventario Vivo (Suelo): %{y:,.0f} tallos<extra></extra>"
+                ))
+            else:
+                # Tramo 1: Inventario Vivo en Campo (primeras 10 semanas)
+                sems_vivo = semanas_futuras[:limite_corto_plazo]
+                y_vivo = y_fc[:limite_corto_plazo]
+                fig_fc.add_trace(go.Scatter(
+                    x=sems_vivo,
+                    y=y_vivo,
+                    mode='lines+markers',
+                    name="1. Inventario Vivo en Campo (Corto Plazo: Semanas 1-10)",
+                    line=dict(color='#059669', width=3.2),
+                    marker=dict(size=7, symbol='circle'),
+                    hovertemplate="<b>Semana %{x}</b><br>🟢 Inventario Vivo (Suelo): %{y:,.0f} tallos<extra></extra>"
+                ))
+
+                # Tramo 2: Plan Maestro Factible (Semana 11 en adelante, conectando desde la semana 10 para continuidad)
+                sems_plan = semanas_futuras[limite_corto_plazo - 1:]
+                y_plan = y_fc[limite_corto_plazo - 1:]
+                fig_fc.add_trace(go.Scatter(
+                    x=sems_plan,
+                    y=y_plan,
+                    mode='lines+markers',
+                    name="2. Plan Maestro Factible (Siembras Programadas S11+)",
+                    line=dict(color='#0D9488', width=3.0, dash='solid'),
+                    marker=dict(size=7, symbol='diamond'),
+                    hovertemplate="<b>Semana %{x}</b><br>🔷 Plan Maestro Factible: %{y:,.0f} tallos<extra></extra>"
+                ))
+            
+            # Trazo 3: Plan de Producción (Demanda Aprobada)
             fig_fc.add_trace(go.Scatter(
                 x=semanas_futuras,
                 y=plan_series_cap,
                 mode='lines+markers',
-                name="Plan de Producción (Demanda Aprobada)",
+                name="Demanda Comercial (Plan Aprobado)",
                 line=dict(color='#1D4ED8', width=2.8, dash='dash'),
                 marker=dict(size=6, symbol='square'),
-                hovertemplate="<b>Semana %{x}</b><br>Plan Producción: %{y:,.0f} tallos<extra></extra>"
+                hovertemplate="<b>Semana %{x}</b><br>🟦 Demanda Aprobada: %{y:,.0f} tallos<extra></extra>"
             ))
 
             fig_fc.update_layout(
@@ -419,6 +452,10 @@ elif modulo == "ForeCast y Exportación":
             
             st.markdown("**Comparativo ForeCast vs Plan de Producción Aprobado:**")
             df_comp = pd.DataFrame(index=semanas_futuras)
+            df_comp['Horizonte S&OP'] = [
+                'Corto Plazo (Inventario Vivo)' if i < 10 else 'Plan Maestro Factible'
+                for i in range(len(semanas_futuras))
+            ]
             df_comp['ForeCast Biológico'] = fc_agrupado
             df_comp['Plan de Producción'] = plan_series_cap
             df_comp['Brecha / Gap (Tallos)'] = df_comp['ForeCast Biológico'] - df_comp['Plan de Producción']

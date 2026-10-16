@@ -249,12 +249,14 @@ def render_ocupacion_module(db):
             if mostrar_total:
                 lineas_a_graficar.append('Camas_Niveladas_OpB')
                 mapa_nombres['Camas_Niveladas_OpB'] = '3. Ocupación Total en Suelo (Vivo + Siembras)'
-                mapa_colores['3. Ocupación Total en Suelo (Vivo + Siembras)'] = '#7C3AED'  # Púrpura
+                mapa_colores['3. Ocupación Total en Suelo (Vivo + Siembras)'] = '#7C3AED'  # Púrpura Amatista
 
-            cols_id = ['Semana', 'Semana_Label', 'Temporada', 'Camas_Siembra', 'Esquejes_Siembra', 'Camas_Niveladas_OpB', 'Ocupacion_Nivelada_%']
+            cols_id = ['Semana', 'Semana_Label', 'Temporada', 'Camas_Siembra', 'Esquejes_Siembra', 'Ocupacion_Nivelada_%']
+            cols_id_limpias = [c for c in cols_id if c in df_plot.columns and c not in lineas_a_graficar]
+            
             df_melt = pd.melt(
                 df_plot,
-                id_vars=[c for c in cols_id if c in df_plot.columns],
+                id_vars=cols_id_limpias,
                 value_vars=lineas_a_graficar,
                 var_name='Tipo_Curva',
                 value_name='Camas'
@@ -277,7 +279,6 @@ def render_ocupacion_module(db):
                     alt.Tooltip('Camas:Q', title='Camas en Curva', format='.1f'),
                     alt.Tooltip('Camas_Siembra:Q', title='Siembras Semanales (Camas)', format='.1f'),
                     alt.Tooltip('Esquejes_Siembra:Q', title='Siembras Semanales (Esquejes)', format=',d'),
-                    alt.Tooltip('Camas_Niveladas_OpB:Q', title='Total Camas en Suelo', format='.1f'),
                     alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación Total (%)', format='.1f')
                 ]
             )

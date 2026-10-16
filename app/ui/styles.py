@@ -56,8 +56,9 @@ p, span, label, [data-testid="stMarkdownContainer"] p, [data-testid="stText"] {
     font-weight: 500 !important;
 }
 
-/* 2. Barra Lateral: Command Center Ejecutivo (Navy Slate) */
-section[data-testid="stSidebar"] {
+/* 2. Barra Lateral: Command Center Ejecutivo (Navy Slate) de Alto Contraste */
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div {
     background-color: #0F172A !important;
     border-right: 1px solid #1E293B !important;
 }
@@ -66,7 +67,13 @@ section[data-testid="stSidebar"] > div:first-child {
     background: transparent !important;
 }
 
-section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
+/* Encabezados del Sidebar */
+section[data-testid="stSidebar"] h1, 
+section[data-testid="stSidebar"] h2, 
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] h4,
+section[data-testid="stSidebar"] h5,
+section[data-testid="stSidebar"] h6 {
     color: #FFFFFF !important;
     font-size: 1.05rem !important;
     font-weight: 700 !important;
@@ -77,6 +84,37 @@ section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, sectio
     margin-bottom: 16px !important;
 }
 
+/* Párrafos, Spans y Textos Generales en Sidebar - Alto Contraste */
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+section[data-testid="stSidebar"] [data-testid="stText"] {
+    color: #F8FAFC !important;
+    font-size: 0.92rem !important;
+}
+
+/* Captions y Subtítulos en Sidebar */
+section[data-testid="stSidebar"] .stCaption,
+section[data-testid="stSidebar"] small,
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+    color: #94A3B8 !important;
+    font-size: 0.84rem !important;
+    font-weight: 500 !important;
+}
+
+/* Labels y Textos de Widgets en Sidebar */
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"],
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] span {
+    color: #E2E8F0 !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    letter-spacing: 0.02em !important;
+}
+
+/* Radios de Navegación en Sidebar */
 section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
     color: #CBD5E1 !important;
     padding: 7px 12px !important;
@@ -84,21 +122,34 @@ section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
     font-size: 0.88rem !important;
     font-weight: 500 !important;
     transition: all 0.15s ease !important;
+    margin-bottom: 3px !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label p,
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label span {
+    color: #CBD5E1 !important;
 }
 
 section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover {
-    background-color: rgba(255, 255, 255, 0.07) !important;
+    background-color: rgba(255, 255, 255, 0.08) !important;
     color: #FFFFFF !important;
 }
 
-section[data-testid="stSidebar"] div[data-testid="stRadio"] [aria-checked="true"] + div p {
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover p,
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover span {
+    color: #FFFFFF !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [aria-checked="true"] + div p,
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has([aria-checked="true"]) p,
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has([aria-checked="true"]) span {
     color: #FFFFFF !important;
     font-weight: 600 !important;
 }
 
 section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has([aria-checked="true"]) {
     background-color: #1E293B !important;
-    border-left: 3px solid #3B82F6 !important;
+    border-left: 3.5px solid #3B82F6 !important;
 }
 
 /* 3. Contenedores y Tarjetas de Alto Nivel */
@@ -198,91 +249,50 @@ div[data-baseweb="tab-highlight"] {
     display: none !important;
 }
 
-/* 4. Botones y Controles de Acción */
-button[kind="primary"], .stButton > button[kind="primary"] {
+/* 4. Botones y Controles de Acción Estandarizados (Formato S&OP Consolidado) */
+button,
+button[kind="primary"],
+button[kind="secondary"],
+.stButton > button,
+button[data-testid^="baseButton-"],
+div[data-testid="stDownloadButton"] > button {
     background-color: #1D4ED8 !important;
     color: #FFFFFF !important;
     border: 1px solid #1E40AF !important;
     border-radius: 6px !important;
     font-weight: 600 !important;
-    font-size: 0.9rem !important;
+    font-size: 0.90rem !important;
     padding: 8px 18px !important;
     box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
     transition: background-color 0.15s ease, box-shadow 0.15s ease !important;
 }
 
-button[kind="primary"]:hover, .stButton > button[kind="primary"]:hover {
+button:hover,
+button[kind="primary"]:hover,
+button[kind="secondary"]:hover,
+.stButton > button:hover,
+button[data-testid^="baseButton-"]:hover,
+div[data-testid="stDownloadButton"] > button:hover {
     background-color: #1E40AF !important;
     box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.12) !important;
+    border-color: #172554 !important;
 }
 
-button[kind="primary"] *,
-button[kind="primary"] p,
-button[kind="primary"] span,
-button[kind="primary"] div,
-.stButton > button[kind="primary"] *,
-.stButton > button[kind="primary"] p,
-.stButton > button[kind="primary"] span,
-button[data-testid="baseButton-primary"] *,
-button[data-testid="baseButton-primary"] p,
-button[data-testid="baseButton-primary"] span {
-    color: #FFFFFF !important;
-    font-weight: 600 !important;
-}
-
-button[kind="secondary"], .stButton > button:not([kind="primary"]) {
-    background: #FFFFFF !important;
-    color: #1E293B !important;
-    border: 1.5px solid #94A3B8 !important;
-    border-radius: 6px !important;
-    font-weight: 600 !important;
-    font-size: 0.9rem !important;
-    padding: 8px 16px !important;
-    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
-    transition: all 0.15s ease !important;
-}
-
-button[kind="secondary"]:hover, .stButton > button:not([kind="primary"]):hover {
-    background-color: #F1F5F9 !important;
-    border-color: #475569 !important;
-    color: #0F172A !important;
-}
-
-/* Botones de Descarga (stDownloadButton) - Alto Contraste y Cero Saturación */
-div[data-testid="stDownloadButton"] > button {
-    background-color: #FFFFFF !important;
-    color: #0F172A !important;
-    border: 1.5px solid #475569 !important;
-    border-radius: 6px !important;
-    font-weight: 600 !important;
-    font-size: 0.88rem !important;
-    padding: 8px 18px !important;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.06) !important;
-    transition: all 0.15s ease !important;
-}
-
-div[data-testid="stDownloadButton"] > button:hover {
-    background-color: #0F172A !important;
-    color: #FFFFFF !important;
-    border-color: #0F172A !important;
-    box-shadow: 0 2px 6px 0 rgba(0, 0, 0, 0.15) !important;
-}
-
-div[data-testid="stDownloadButton"] > button[kind="primary"] {
-    background-color: #0F172A !important;
-    color: #FFFFFF !important;
-    border: 1.5px solid #0F172A !important;
-}
-
-div[data-testid="stDownloadButton"] > button[kind="primary"]:hover {
-    background-color: #1E293B !important;
-    border-color: #1E293B !important;
-    color: #FFFFFF !important;
-}
-
+/* Forzar Texto Blanco Nítido en TODOS los Hijos y Elementos Internos de Botón */
+button *,
+button p,
+button span,
+button div,
+.stButton > button *,
+.stButton > button p,
+.stButton > button span,
+button[data-testid^="baseButton-"] *,
+button[data-testid^="baseButton-"] p,
+button[data-testid^="baseButton-"] span,
+div[data-testid="stDownloadButton"] > button *,
 div[data-testid="stDownloadButton"] > button p,
 div[data-testid="stDownloadButton"] > button span {
-    color: inherit !important;
+    color: #FFFFFF !important;
     font-weight: 600 !important;
 }
 
