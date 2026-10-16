@@ -306,7 +306,7 @@ elif modulo == "ForeCast y Exportación":
         st.info(
             f"💡 **Arquitectura de Suministro S&OP:** "
             f"🟢 **Inventario Vivo (Verde Esmeralda):** Semanas 1 a 10 provienen al 100% del **Inventario Vivo** en suelo. | "
-            f"🌿 **Siembras Programadas del Pedido (Teal):** Semana 11 en adelante proyecta la cosecha biológica real ({fuente_plan_mva}). | "
+            f"🟣 **Siembras Proyectadas del Pedido (Púrpura Amatista SAP):** Semana 11 en adelante proyecta la cosecha biológica real ({fuente_plan_mva}). | "
             f"🟦 **Demanda Comercial Aprobada (Azul SAP Fiori Discontinuo):** Meta acordada en el Plan Maestro de Producción."
         )
         
@@ -417,9 +417,9 @@ elif modulo == "ForeCast y Exportación":
                         y=y_plan,
                         mode='lines+markers',
                         name="2. Siembras Programadas Pedido (Mediano Plazo: S11+)",
-                        line=dict(color='#0D9488', width=3.0, dash='solid'),
+                        line=dict(color='#7C3AED', width=3.2, dash='solid'),
                         marker=dict(size=8, symbol='diamond'),
-                        hovertemplate="<b>Semana %{x}</b><br>🔷 Siembras Pedido: %{y:,.0f} tallos<extra></extra>"
+                        hovertemplate="<b>Semana %{x}</b><br>🟣 Proyección Pedido: %{y:,.0f} tallos<extra></extra>"
                     ))
 
                 # Trazo 3: Demanda Comercial Aprobada (Azul SAP Fiori #0070F2 dash)
@@ -455,55 +455,66 @@ elif modulo == "ForeCast y Exportación":
                 estilizar_figura_plotly(fig_fc)
                 st.plotly_chart(fig_fc, width='stretch', config={'scrollZoom': False, 'displayModeBar': False})
 
-                # TABLA SEMANAL S&OP INMEDIATAMENTE DEBAJO DEL GRÁFICO
+                # TABLA SEMANAL S&OP TRANSPUESTA INMEDIATAMENTE DEBAJO DEL GRÁFICO (SIN HORIZONTE)
                 st.markdown("#### 📋 Balance Semanal S&OP: Oferta vs Demanda")
-                df_comp = pd.DataFrame(index=semanas_futuras)
-                df_comp['Semana Operativa'] = semanas_futuras
-                df_comp['Horizonte S&OP'] = [
-                    '🌱 Corto Plazo (Inventario Vivo)' if i < 10 else '🌿 Mediano Plazo (Siembras Programadas)'
-                    for i in range(len(semanas_futuras))
+                
+                conceptos = [
+                    'ForeCast Biológico (Oferta)',
+                    'Demanda Comercial (Plan)',
+                    'Brecha / Gap (Tallos)',
+                    '% Cumplimiento',
+                    'Estado S&OP'
                 ]
-                df_comp['ForeCast Biológico (Oferta)'] = [fc_agrupado.get(s, 0.0) for s in semanas_futuras]
-                df_comp['Demanda Comercial (Plan)'] = [plan_series_cap.get(s, 0.0) for s in semanas_futuras]
-                df_comp['Brecha / Gap (Tallos)'] = df_comp['ForeCast Biológico (Oferta)'] - df_comp['Demanda Comercial (Plan)']
-                df_comp['% Cumplimiento'] = df_comp.apply(
-                    lambda r: (r['ForeCast Biológico (Oferta)'] / r['Demanda Comercial (Plan)'] * 100) if r['Demanda Comercial (Plan)'] > 0 else 100.0, 
-                    axis=1
-                )
-                def _asig_est(r):
-                    p = r['Demanda Comercial (Plan)']
-                    if p == 0:
-                        return '⚪ Sin Meta'
-                    pct = (r['ForeCast Biológico (Oferta)'] / p) * 100
-                    if pct < 90:
-                        return '🔴 Déficit'
-                    elif pct <= 110:
-                        return '🟢 Balanceado'
-                    else:
-                        return '🔵 Superávit'
+                
+                cols_semanas_tbl = semanas_futuras + ['TOTAL']
+                df_trans = pd.DataFrame(index=conceptos, columns=cols_semanas_tbl)
 
-                df_comp['Estado S&OP'] = df_comp.apply(_asig_est, axis=1)
+                for s in semanas_futuras:
+                    fc_val = fc_agrupado.get(s, 0.0)
+                    plan_val = plan_series_cap.get(s, 0.0)
+                    gap_val = fc_val - plan_val
+                    pct_val = (fc_val / plan_val * 100.0) if plan_val > 0 else 100.0
+                    
+                    if plan_val == 0:
+                        est = '⚪ Sin Meta'
+                    elif pct_val < 90:
+                        est = '🔴 Déficit'
+                    elif pct_val <= 110:
+                        est = '🟢 Balanceado'
+                    else:
+                        est = '🔵 Superávit'
+                        
+                    df_trans.loc['ForeCast Biológico (Oferta)', s] = f"{fc_val:,.0f}"
+                    df_trans.loc['Demanda Comercial (Plan)', s] = f"{plan_val:,.0f}"
+                    df_trans.loc['Brecha / Gap (Tallos)', s] = f"{gap_val:+,.0f}"
+                    df_trans.loc['% Cumplimiento', s] = f"{pct_val:.1f}%"
+                    df_trans.loc['Estado S&OP', s] = est
+
+                # Columna de Totales
+                tot_est = '🟢 Balanceado' if 90 <= cumpl_global <= 110 else ('🔴 Déficit' if cumpl_global < 90 else '🔵 Superávit')
+                df_trans.loc['ForeCast Biológico (Oferta)', 'TOTAL'] = f"{tot_fc:,.0f}"
+                df_trans.loc['Demanda Comercial (Plan)', 'TOTAL'] = f"{tot_plan:,.0f}"
+                df_trans.loc['Brecha / Gap (Tallos)', 'TOTAL'] = f"{brecha_tot:+,.0f}"
+                df_trans.loc['% Cumplimiento', 'TOTAL'] = f"{cumpl_global:.1f}%"
+                df_trans.loc['Estado S&OP', 'TOTAL'] = tot_est
+
+                df_trans_display = df_trans.reset_index().rename(columns={'index': 'Concepto S&OP'})
 
                 st.dataframe(
-                    df_comp.style.format({
-                        'ForeCast Biológico (Oferta)': '{:,.0f}',
-                        'Demanda Comercial (Plan)': '{:,.0f}',
-                        'Brecha / Gap (Tallos)': '{:+,.0f}',
-                        '% Cumplimiento': '{:.1f}%'
-                    }),
+                    df_trans_display,
                     width='stretch',
                     hide_index=True
                 )
 
                 col_dl_bal, _ = st.columns([1, 2])
                 with col_dl_bal:
-                    csv_comp = df_comp.to_csv(index=False).encode('utf-8-sig')
+                    csv_trans = df_trans_display.to_csv(index=False).encode('utf-8-sig')
                     st.download_button(
-                        label="⬇️ Descargar Balance Semanal S&OP (CSV)",
-                        data=csv_comp,
+                        label="⬇️ Descargar Balance Semanal Transpuesto (CSV)",
+                        data=csv_trans,
                         file_name=f"Balance_Semanal_SOP_{vista.replace(' ', '_')}.csv",
                         mime="text/csv",
-                        key="dl_balance_semanal_csv"
+                        key="dl_balance_semanal_transpuesto_csv"
                     )
 
         # =====================================================================
