@@ -266,81 +266,54 @@ elif modulo == "ForeCast y Exportación":
                 ciclos_fc = None
                 params_flor_fc = params_cal.get('por_flor')
     
-    with st.spinner(f"Generando matriz de pronóstico ({vista})..."):
-        # 1. Proyección de Inventario Vivo (Cubre hasta 9 semanas) con parámetros segmentados
+    with st.spinner(f"Generando balance S&OP y matriz de pronóstico ({vista})..."):
+        # 1. Proyección de Inventario Vivo en Suelo (Corto Plazo: primeras 10 semanas)
         df_forecast_vivo = generar_forecast_13wk(db, alpha=alpha_fc, num_ciclos=ciclos_fc, params_por_flor=params_flor_fc)
 
-        
-        # 2. Cargar Plan Maestro Factible (Prioridad 1: Plan_Aprobado.csv; Fallback: PedidoConsolidado_master.xlsx)
+        # 2. Proyección Biológica de Cosecha desde Pedido / Siembras Programadas (Mediano Plazo: Semana 11+)
         import os
         from app.services.mva_service import generar_plan_mva, proyectar_cosecha_desde_mva, combinar_proyecciones_52_semanas, llenar_plantilla_52_semanas
         file_path = "PedidoConsolidado_master.xlsx"
         
         df_mrp = pd.DataFrame()
-        has_mva = False
+        df_proyeccion_mva = pd.DataFrame()
         fuente_plan_mva = ""
         
-        if os.path.exists("Plan_Aprobado.csv"):
+        if os.path.exists("Plan_Aprobado_Detallado.csv"):
             try:
-                df_app = pd.read_csv("Plan_Aprobado.csv")
-                col_tallos = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_app.columns else 'Suma de Tallos'
-                def clean_sem(val):
-                    if pd.isna(val): return ""
-                    try: return str(int(float(val)))
-                    except: return str(val).strip()
-                df_app['Semana'] = df_app['Semana'].apply(clean_sem)
-                df_plan_factible = df_app.pivot_table(
-                    index=['Flor', 'Color', 'Variedad'],
-                    columns='Semana',
-                    values=col_tallos,
-                    aggfunc='sum',
-                    fill_value=0
-                ).reset_index()
+                df_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
+                if 'Esquejes' in df_det.columns and not df_det.empty:
+                    df_det['Esquejes_Para_Siembra (Final)'] = df_det['Esquejes']
+                    df_proyeccion_mva = proyectar_cosecha_desde_mva(df_det, db)
+                    fuente_plan_mva = "Plan Detallado Aprobado (Curvas Biológicas de Corte)"
+            except Exception:
+                df_proyeccion_mva = pd.DataFrame()
                 
-                df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_plan_factible)
-                has_mva = True
-                fuente_plan_mva = "Plan Maestro Factible (Capacidad Aprobada en Suelo)"
-            except Exception as e:
-                st.warning(f"Error procesando Plan Aprobado Factible: {e}")
-                df_forecast = df_forecast_vivo
-        elif os.path.exists("Plan_Aprobado_Detallado.csv"):
-            try:
-                df_app_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
-                if 'Esquejes' in df_app_det.columns and not df_app_det.empty:
-                    df_app_det['Esquejes_Para_Siembra (Final)'] = df_app_det['Esquejes']
-                    df_proyeccion_mva = proyectar_cosecha_desde_mva(df_app_det, db)
-                    df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
-                    has_mva = not df_proyeccion_mva.empty
-                    fuente_plan_mva = "Plan Detallado Aprobado"
-            except Exception as e:
-                st.warning(f"Error procesando Plan Detallado Aprobado: {e}")
-                df_forecast = df_forecast_vivo
-        elif os.path.exists(file_path):
+        if df_proyeccion_mva.empty and os.path.exists(file_path):
             try:
                 df_mrp = generar_plan_mva(file_path, week_is="Pedido")
                 df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
-                df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
-                has_mva = not df_proyeccion_mva.empty
-                fuente_plan_mva = "Pedido Consolidado de Material Vegetal (PedidoConsolidado_master.xlsx)"
-            except Exception as e:
-                st.warning(f"Error procesando el archivo Maestro MVA: {e}")
-                df_forecast = df_forecast_vivo
+                fuente_plan_mva = "Pedido Consolidado de Material Vegetal (Curvas Biológicas 24 Semanas)"
+            except Exception:
+                df_proyeccion_mva = pd.DataFrame()
+                
+        if not df_proyeccion_mva.empty:
+            df_forecast = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
         else:
-            st.warning("No se encontró el Plan Aprobado ni el Pedido Consolidado Maestro. Mostrando únicamente el inventario vivo.")
-            df_forecast = df_forecast_vivo
+            df_forecast = df_forecast_vivo.copy()
+            fuente_plan_mva = "Inventario Vivo Exclusivo"
 
         st.info(
-            f"💡 **Curvas S&OP:** "
-            f"🟢 **Inventario Vivo (Verde Esmeralda):** Semanas 1 a 10 (Corto Plazo: actual + 9) provienen al 100% del **Inventario Vivo** en campo. | "
-            f"🟣 **Plan Maestro Factible (Púrpura Amatista):** Semana 11 en adelante corresponde a la **ejecución factible del pedido acorde al área y capacidad física de camas** (`Plan_Aprobado.csv`). | "
-            f"🟦 **Demanda Comercial Aprobada (Azul Zafiro Discontinuo):** Meta semanal aprobada en el Plan Maestro de Producción."
+            f"💡 **Arquitectura de Suministro S&OP:** "
+            f"🟢 **Inventario Vivo (Verde Esmeralda):** Semanas 1 a 10 provienen al 100% del **Inventario Vivo** en suelo. | "
+            f"🌿 **Siembras Programadas del Pedido (Teal):** Semana 11 en adelante proyecta la cosecha biológica real ({fuente_plan_mva}). | "
+            f"🟦 **Demanda Comercial Aprobada (Azul SAP Fiori Discontinuo):** Meta acordada en el Plan Maestro de Producción."
         )
         
     if df_forecast.empty:
         st.warning("No hay datos suficientes para generar el forecast.")
     else:
-        semanas_cols = [col for col in df_forecast.columns if str(col).startswith('202')]
-        semanas_cols = sorted(semanas_cols)
+        semanas_cols = sorted([col for col in df_forecast.columns if str(col).startswith('202')])
         
         if "13" in vista:
             semanas_futuras = [s for s in semanas_cols if s >= semana_actual][:14]
@@ -355,363 +328,532 @@ elif modulo == "ForeCast y Exportación":
             df_forecast = df_forecast.rename(columns={semana_actual: nombre_actual})
             semanas_futuras = [nombre_actual if s == semana_actual else s for s in semanas_futuras]
             
-        if semanas_futuras:
-            fc_agrupado = df_forecast[semanas_futuras].sum()
-            y_fc = [fc_agrupado.get(s, 0) for s in semanas_futuras]
-            
-            st.subheader(f"Proyección Semanal vs Plan de Producción Aprobado ({vista})")
-            
-            # Serie 2: Cargar el Plan de Producción Aprobado
-            plan_aprobado_path = "Plan_Aprobado.csv"
-            plan_series_cap = pd.Series(0.0, index=semanas_futuras)
-            
-            if os.path.exists(plan_aprobado_path):
-                try:
-                    df_plan_app = pd.read_csv(plan_aprobado_path)
-                    col_capacidad = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_plan_app.columns else 'Suma de Tallos'
+        # Cargar Plan de Producción Aprobado (Demanda Comercial)
+        plan_aprobado_path = "Plan_Aprobado.csv"
+        plan_series_cap = pd.Series(0.0, index=semanas_futuras)
+        df_plan_app = pd.DataFrame()
+        
+        if os.path.exists(plan_aprobado_path):
+            try:
+                df_plan_app = pd.read_csv(plan_aprobado_path)
+                col_capacidad = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_plan_app.columns else 'Suma de Tallos'
+                
+                if 'Semana' in df_plan_app.columns:
+                    def clean_semana(val):
+                        if pd.isna(val): return ""
+                        try: return str(int(float(val)))
+                        except: return str(val).strip()
+                            
+                    df_plan_app['Semana'] = df_plan_app['Semana'].apply(clean_semana)
                     
-                    if 'Semana' in df_plan_app.columns:
-                        def clean_semana(val):
-                            if pd.isna(val):
-                                return ""
-                            try:
-                                return str(int(float(val)))
-                            except:
-                                return str(val).strip()
-                                
-                        df_plan_app['Semana'] = df_plan_app['Semana'].apply(clean_semana)
-                        
-                        if col_capacidad in df_plan_app.columns:
-                            df_plan_grp_cap = df_plan_app.groupby('Semana')[col_capacidad].sum()
-                            for sem_fut in semanas_futuras:
-                                sem_clean = sem_fut.split(" ")[0]
-                                if sem_clean in df_plan_grp_cap.index:
-                                    plan_series_cap[sem_fut] = df_plan_grp_cap[sem_clean]
-                                    
-                    st.success("✅ Comparando contra el Plan de Producción Aprobado.")
-                except Exception as e:
-                    st.warning(f"No se pudo leer el Plan Aprobado: {e}")
-            else:
-                st.info("💡 No hay un 'Plan Aprobado' guardado en el módulo MVA. Usa el módulo 'Plan de Producción' para procesar y consolidar un plan.")
-                plan_series_cap = pd.Series(0.0, index=semanas_futuras)
+                    if col_capacidad in df_plan_app.columns:
+                        df_plan_grp_cap = df_plan_app.groupby('Semana')[col_capacidad].sum()
+                        for sem_fut in semanas_futuras:
+                            sem_clean = sem_fut.split(" ")[0]
+                            if sem_clean in df_plan_grp_cap.index:
+                                plan_series_cap[sem_fut] = df_plan_grp_cap[sem_clean]
+            except Exception as e:
+                st.warning(f"No se pudo leer el Plan Aprobado: {e}")
 
-            fig_fc = go.Figure()
+        # 4 PESTAÑAS ESTRUCTURALES DEL MÓDULO FORECAST (ESTÁNDAR SAP FIORI HORIZON)
+        tab_bal, tab_gap, tab_matriz, tab_wf = st.tabs([
+            "📈 Proyección y Balance Semanal",
+            "🔍 Diagnóstico de Brechas (Flor / Variedad)",
+            "📋 Matriz de Producción (52 Semanas)",
+            "📤 Exportación a Plataformas"
+        ])
 
-            # Corto plazo son exactamente 10 semanas (actual + 9 futuras)
-            limite_corto_plazo = 10
-            
-            if len(semanas_futuras) <= limite_corto_plazo:
-                # Todo el horizonte visible está cubierto por Inventario Vivo
+        # =====================================================================
+        # PESTAÑA 1: PROYECCIÓN Y BALANCE SEMANAL S&OP
+        # =====================================================================
+        with tab_bal:
+            if semanas_futuras:
+                fc_agrupado = df_forecast[semanas_futuras].sum()
+                tot_fc = fc_agrupado.sum()
+                tot_plan = plan_series_cap.sum()
+                brecha_tot = tot_fc - tot_plan
+                cumpl_global = (tot_fc / tot_plan * 100) if tot_plan > 0 else 100.0
+
+                col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+                col_k1.metric("Oferta ForeCast Biológico", f"{tot_fc:,.0f}", f"{len(semanas_futuras)} semanas evaluadas")
+                col_k2.metric("Demanda Plan Aprobado", f"{tot_plan:,.0f}", "Meta Comercial")
+                col_k3.metric("Brecha / Gap Neto S&OP", f"{brecha_tot:+,.0f}", "Superávit (+)" if brecha_tot >= 0 else "Déficit (-)", delta_color="normal")
+                col_k4.metric("Cumplimiento Global", f"{cumpl_global:.1f}%", "Alineación Plan vs Oferta")
+
+                st.markdown("")
+
+                # Gráfico Plotly: Demanda Comercial vs Oferta Biológica
+                fig_fc = go.Figure()
+                limite_corto_plazo = 10
+                y_fc = [fc_agrupado.get(s, 0) for s in semanas_futuras]
+
+                if len(semanas_futuras) <= limite_corto_plazo:
+                    fig_fc.add_trace(go.Scatter(
+                        x=semanas_futuras,
+                        y=y_fc,
+                        mode='lines+markers',
+                        name="1. Inventario Vivo en Suelo (Corto Plazo: S1-S10)",
+                        line=dict(color='#059669', width=3.2),
+                        marker=dict(size=7, symbol='circle'),
+                        hovertemplate="<b>Semana %{x}</b><br>🟢 Inventario Vivo (Suelo): %{y:,.0f} tallos<extra></extra>"
+                    ))
+                else:
+                    sems_vivo = semanas_futuras[:limite_corto_plazo]
+                    y_vivo = y_fc[:limite_corto_plazo]
+                    fig_fc.add_trace(go.Scatter(
+                        x=sems_vivo,
+                        y=y_vivo,
+                        mode='lines+markers',
+                        name="1. Inventario Vivo en Campo (Corto Plazo: S1-S10)",
+                        line=dict(color='#059669', width=3.2),
+                        marker=dict(size=7, symbol='circle'),
+                        hovertemplate="<b>Semana %{x}</b><br>🟢 Inventario Vivo: %{y:,.0f} tallos<extra></extra>"
+                    ))
+
+                    sems_plan = semanas_futuras[limite_corto_plazo - 1:]
+                    y_plan = y_fc[limite_corto_plazo - 1:]
+                    fig_fc.add_trace(go.Scatter(
+                        x=sems_plan,
+                        y=y_plan,
+                        mode='lines+markers',
+                        name="2. Siembras Programadas Pedido (Mediano Plazo: S11+)",
+                        line=dict(color='#0D9488', width=3.0, dash='solid'),
+                        marker=dict(size=8, symbol='diamond'),
+                        hovertemplate="<b>Semana %{x}</b><br>🔷 Siembras Pedido: %{y:,.0f} tallos<extra></extra>"
+                    ))
+
+                # Trazo 3: Demanda Comercial Aprobada (Azul SAP Fiori #0070F2 dash)
                 fig_fc.add_trace(go.Scatter(
                     x=semanas_futuras,
-                    y=y_fc,
+                    y=plan_series_cap,
                     mode='lines+markers',
-                    name="1. Inventario Vivo en Suelo (Corto Plazo)",
-                    line=dict(color='#059669', width=3.2),
-                    marker=dict(size=7, symbol='circle'),
-                    hovertemplate="<b>Semana %{x}</b><br>🟢 Inventario Vivo (Suelo): %{y:,.0f} tallos<extra></extra>"
+                    name="Demanda Comercial (Plan Aprobado)",
+                    line=dict(color='#0070F2', width=2.8, dash='dash'),
+                    marker=dict(size=6, symbol='square'),
+                    hovertemplate="<b>Semana %{x}</b><br>🟦 Demanda Aprobada: %{y:,.0f} tallos<extra></extra>"
                 ))
+
+                fig_fc.update_layout(
+                    title=dict(text=f"Balance S&OP: Proyección de Oferta vs Demanda Comercial ({vista})", font=dict(size=15, color="#1C2D42", family="'72', Inter, sans-serif")),
+                    xaxis=dict(
+                        type='category',
+                        categoryorder='array',
+                        categoryarray=semanas_futuras,
+                        title="Semana Operativa",
+                        tickangle=-45,
+                        fixedrange=True
+                    ),
+                    yaxis=dict(
+                        title="Tallos Proyectados",
+                        tickformat=",.0f",
+                        fixedrange=True
+                    ),
+                    hovermode="x unified",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    margin=dict(l=40, r=40, t=60, b=40)
+                )
+                estilizar_figura_plotly(fig_fc)
+                st.plotly_chart(fig_fc, width='stretch', config={'scrollZoom': False, 'displayModeBar': False})
+
+                # TABLA SEMANAL S&OP INMEDIATAMENTE DEBAJO DEL GRÁFICO
+                st.markdown("#### 📋 Balance Semanal S&OP: Oferta vs Demanda")
+                df_comp = pd.DataFrame(index=semanas_futuras)
+                df_comp['Semana Operativa'] = semanas_futuras
+                df_comp['Horizonte S&OP'] = [
+                    '🌱 Corto Plazo (Inventario Vivo)' if i < 10 else '🌿 Mediano Plazo (Siembras Programadas)'
+                    for i in range(len(semanas_futuras))
+                ]
+                df_comp['ForeCast Biológico (Oferta)'] = [fc_agrupado.get(s, 0.0) for s in semanas_futuras]
+                df_comp['Demanda Comercial (Plan)'] = [plan_series_cap.get(s, 0.0) for s in semanas_futuras]
+                df_comp['Brecha / Gap (Tallos)'] = df_comp['ForeCast Biológico (Oferta)'] - df_comp['Demanda Comercial (Plan)']
+                df_comp['% Cumplimiento'] = df_comp.apply(
+                    lambda r: (r['ForeCast Biológico (Oferta)'] / r['Demanda Comercial (Plan)'] * 100) if r['Demanda Comercial (Plan)'] > 0 else 100.0, 
+                    axis=1
+                )
+                def _asig_est(r):
+                    p = r['Demanda Comercial (Plan)']
+                    if p == 0:
+                        return '⚪ Sin Meta'
+                    pct = (r['ForeCast Biológico (Oferta)'] / p) * 100
+                    if pct < 90:
+                        return '🔴 Déficit'
+                    elif pct <= 110:
+                        return '🟢 Balanceado'
+                    else:
+                        return '🔵 Superávit'
+
+                df_comp['Estado S&OP'] = df_comp.apply(_asig_est, axis=1)
+
+                st.dataframe(
+                    df_comp.style.format({
+                        'ForeCast Biológico (Oferta)': '{:,.0f}',
+                        'Demanda Comercial (Plan)': '{:,.0f}',
+                        'Brecha / Gap (Tallos)': '{:+,.0f}',
+                        '% Cumplimiento': '{:.1f}%'
+                    }),
+                    width='stretch',
+                    hide_index=True
+                )
+
+                col_dl_bal, _ = st.columns([1, 2])
+                with col_dl_bal:
+                    csv_comp = df_comp.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(
+                        label="⬇️ Descargar Balance Semanal S&OP (CSV)",
+                        data=csv_comp,
+                        file_name=f"Balance_Semanal_SOP_{vista.replace(' ', '_')}.csv",
+                        mime="text/csv",
+                        key="dl_balance_semanal_csv"
+                    )
+
+        # =====================================================================
+        # PESTAÑA 2: DIAGNÓSTICO DE BRECHAS (FLOR / COLOR / VARIEDAD)
+        # =====================================================================
+        with tab_gap:
+            st.subheader("🔍 Diagnóstico Detallado de Brechas por Flor, Color y Variedad")
+            st.markdown("Auditoría a nivel de SKU para identificar qué variedades presentan déficit o superávit frente a la demanda comercial aprobada.")
+
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                opc_sem_gap = ["Consolidado Horizonte Completo"] + semanas_futuras
+                sel_sem_gap = st.selectbox("Semana Operativa a Auditar:", opc_sem_gap, key="sel_sem_gap")
+            with col_g2:
+                flores_disp_gap = ["Todas"] + sorted(list(df_forecast['Flor'].dropna().unique()))
+                sel_flor_gap = st.selectbox("Filtrar por Flor:", flores_disp_gap, key="sel_flor_gap")
+
+            # Construir tabla de brechas por SKU
+            meta_cols = [c for c in ['Flor', 'Color', 'Variedad'] if c in df_forecast.columns]
+            
+            if sel_sem_gap == "Consolidado Horizonte Completo":
+                sems_evaluar = semanas_futuras
+                df_fc_sku = df_forecast.groupby(meta_cols)[sems_evaluar].sum().sum(axis=1).reset_index(name='ForeCast Biológico (Oferta)')
             else:
-                # Tramo 1: Inventario Vivo en Campo (primeras 10 semanas)
-                sems_vivo = semanas_futuras[:limite_corto_plazo]
-                y_vivo = y_fc[:limite_corto_plazo]
-                fig_fc.add_trace(go.Scatter(
-                    x=sems_vivo,
-                    y=y_vivo,
-                    mode='lines+markers',
-                    name="1. Inventario Vivo en Campo (Corto Plazo: Semanas 1-10)",
-                    line=dict(color='#059669', width=3.2),
-                    marker=dict(size=7, symbol='circle'),
-                    hovertemplate="<b>Semana %{x}</b><br>🟢 Inventario Vivo (Suelo): %{y:,.0f} tallos<extra></extra>"
-                ))
+                sems_evaluar = [sel_sem_gap]
+                df_fc_sku = df_forecast.groupby(meta_cols)[sel_sem_gap].sum().reset_index(name='ForeCast Biológico (Oferta)')
 
-                # Tramo 2: Plan Maestro Factible (Semana 11 en adelante, en Púrpura #7C3AED para alto contraste con el verde)
-                sems_plan = semanas_futuras[limite_corto_plazo - 1:]
-                y_plan = y_fc[limite_corto_plazo - 1:]
-                fig_fc.add_trace(go.Scatter(
-                    x=sems_plan,
-                    y=y_plan,
-                    mode='lines+markers',
-                    name="2. Plan Maestro Factible (Capacidad en Suelo S11+)",
-                    line=dict(color='#7C3AED', width=3.0, dash='solid'),
-                    marker=dict(size=8, symbol='diamond'),
-                    hovertemplate="<b>Semana %{x}</b><br>🟣 Plan Maestro Factible: %{y:,.0f} tallos<extra></extra>"
-                ))
-            
-            # Trazo 3: Plan de Producción (Demanda Aprobada)
-            fig_fc.add_trace(go.Scatter(
-                x=semanas_futuras,
-                y=plan_series_cap,
-                mode='lines+markers',
-                name="Demanda Comercial (Plan Aprobado)",
-                line=dict(color='#1D4ED8', width=2.8, dash='dash'),
-                marker=dict(size=6, symbol='square'),
-                hovertemplate="<b>Semana %{x}</b><br>🟦 Demanda Aprobada: %{y:,.0f} tallos<extra></extra>"
-            ))
+            # Plan comercial por SKU
+            if not df_plan_app.empty and 'Variedad' in df_plan_app.columns:
+                col_cap = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_plan_app.columns else 'Suma de Tallos'
+                sems_clean_set = set([s.split(' ')[0] for s in sems_evaluar])
+                df_plan_filtrado = df_plan_app[df_plan_app['Semana'].isin(sems_clean_set)].copy()
+                df_plan_sku = df_plan_filtrado.groupby(['Flor', 'Color', 'Variedad'])[col_cap].sum().reset_index(name='Demanda Comercial (Plan)')
+            else:
+                df_plan_sku = pd.DataFrame(columns=['Flor', 'Color', 'Variedad', 'Demanda Comercial (Plan)'])
 
-            fig_fc.update_layout(
-                title=dict(text=f"Proyección Semanal vs Plan de Producción Aprobado ({vista})", font=dict(size=15, color="#0F172A", family="Inter, sans-serif")),
-                xaxis=dict(
-                    type='category',
-                    categoryorder='array',
-                    categoryarray=semanas_futuras,
-                    title="Semana Operativa",
-                    tickangle=-45,
-                    fixedrange=True
-                ),
-                yaxis=dict(
-                    title="Tallos Proyectados",
-                    tickformat=",.0f",
-                    fixedrange=True
-                ),
-                hovermode="x unified",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                margin=dict(l=40, r=40, t=60, b=40)
+            # Merge por SKU
+            df_gap_sku = pd.merge(df_fc_sku, df_plan_sku, on=['Flor', 'Color', 'Variedad'], how='outer').fillna(0.0)
+
+            if sel_flor_gap != "Todas":
+                df_gap_sku = df_gap_sku[df_gap_sku['Flor'] == sel_flor_gap]
+
+            # Filtrar filas sin actividad en oferta ni demanda
+            df_gap_sku = df_gap_sku[(df_gap_sku['ForeCast Biológico (Oferta)'] > 0) | (df_gap_sku['Demanda Comercial (Plan)'] > 0)].copy()
+
+            df_gap_sku['Brecha / Gap (Tallos)'] = df_gap_sku['ForeCast Biológico (Oferta)'] - df_gap_sku['Demanda Comercial (Plan)']
+            df_gap_sku['% Cumplimiento'] = df_gap_sku.apply(
+                lambda r: (r['ForeCast Biológico (Oferta)'] / r['Demanda Comercial (Plan)'] * 100) if r['Demanda Comercial (Plan)'] > 0 else (100.0 if r['ForeCast Biológico (Oferta)'] > 0 else 0.0),
+                axis=1
             )
-            estilizar_figura_plotly(fig_fc)
-            
-            st.plotly_chart(fig_fc, width='stretch', config={'scrollZoom': False, 'displayModeBar': False})
-            
-        st.divider()
-        # Filtrar por variedades que tengan inventario vivo (sembradas actualmente)
-        if not df_forecast_vivo.empty and 'Variedad' in df_forecast_vivo.columns:
-            variedades_sembradas = df_forecast_vivo['Variedad'].dropna().unique()
-            df_forecast = df_forecast[df_forecast['Variedad'].isin(variedades_sembradas)]
 
-        st.subheader("Resumen Total por Flor")
-        df_forecast['TOTAL'] = df_forecast[semanas_futuras].sum(axis=1) if semanas_futuras else 0
-        
-        # Filtrar solo lo que tiene producción en el horizonte
-        df_forecast = df_forecast[df_forecast['TOTAL'] > 0]
-        
-        if semanas_futuras:
-            resumen_flor = df_forecast.groupby('Flor')[semanas_futuras + ['TOTAL']].sum()
-            total_row_flor = pd.DataFrame(resumen_flor.sum()).T
-            total_row_flor.index = ['TOTAL GENERAL']
-            resumen_flor = pd.concat([resumen_flor, total_row_flor])
-            st.dataframe(resumen_flor.style.format("{:,.0f}"), width='stretch')
+            def _diag_sku(r):
+                p = r['Demanda Comercial (Plan)']
+                fc = r['ForeCast Biológico (Oferta)']
+                if p == 0:
+                    return '🔵 Solo Oferta'
+                if fc == 0:
+                    return '🔴 Sin Oferta (Déficit Total)'
+                pct = (fc / p) * 100
+                if pct < 85:
+                    return '🔴 Déficit Crítico'
+                elif pct < 95:
+                    return '🟡 Déficit Menor'
+                elif pct <= 105:
+                    return '🟢 Balanceado'
+                else:
+                    return '🔵 Superávit'
 
-        st.subheader("Matriz ForeCast Detallada")
-        if semanas_futuras:
-            cols_num = semanas_futuras + ['TOTAL']
-            total_row = pd.DataFrame(df_forecast[cols_num].sum()).T
+            df_gap_sku['Diagnóstico S&OP'] = df_gap_sku.apply(_diag_sku, axis=1)
+            df_gap_sku = df_gap_sku.sort_values(by=['Brecha / Gap (Tallos)', 'Flor', 'Variedad'], ascending=[True, True, True])
+
+            # Métricas resumen del diagnóstico
+            tot_skus = len(df_gap_sku)
+            skus_def = (df_gap_sku['Brecha / Gap (Tallos)'] < -500).sum()
+            skus_bal = ((df_gap_sku['Brecha / Gap (Tallos)'] >= -500) & (df_gap_sku['Brecha / Gap (Tallos)'] <= 500)).sum()
+            skus_sup = (df_gap_sku['Brecha / Gap (Tallos)'] > 500).sum()
+
+            cd1, cd2, cd3, cd4 = st.columns(4)
+            cd1.metric("SKUs Evaluados", f"{tot_skus:,}")
+            cd2.metric("En Déficit Crítico", f"{skus_def:,}", f"{(skus_def/tot_skus*100 if tot_skus>0 else 0):.1f}% del mix", delta_color="inverse")
+            cd3.metric("Balanceados / En Meta", f"{skus_bal:,}", f"{(skus_bal/tot_skus*100 if tot_skus>0 else 0):.1f}% del mix")
+            cd4.metric("En Superávit", f"{skus_sup:,}", f"{(skus_sup/tot_skus*100 if tot_skus>0 else 0):.1f}% del mix")
+
+            st.markdown("")
+            st.dataframe(
+                df_gap_sku.style.format({
+                    'ForeCast Biológico (Oferta)': '{:,.0f}',
+                    'Demanda Comercial (Plan)': '{:,.0f}',
+                    'Brecha / Gap (Tallos)': '{:+,.0f}',
+                    '% Cumplimiento': '{:.1f}%'
+                }),
+                width='stretch',
+                hide_index=True
+            )
+
+            col_dl_gap, _ = st.columns([1, 2])
+            with col_dl_gap:
+                csv_gap = df_gap_sku.to_csv(index=False).encode('utf-8-sig')
+                st.download_button(
+                    label="⬇️ Descargar Diagnóstico de Brechas (CSV)",
+                    data=csv_gap,
+                    file_name=f"Diagnostico_Brechas_SKU_{sel_sem_gap.replace(' ', '_')}.csv",
+                    mime="text/csv",
+                    key="dl_gap_sku_csv"
+                )
+
+        # =====================================================================
+        # PESTAÑA 3: MATRIZ DE PRODUCCIÓN (52 SEMANAS)
+        # =====================================================================
+        with tab_matriz:
+            df_fc_matrix = df_forecast.copy()
+            df_fc_matrix['TOTAL'] = df_fc_matrix[semanas_futuras].sum(axis=1) if semanas_futuras else 0
+            df_fc_matrix = df_fc_matrix[df_fc_matrix['TOTAL'] > 0]
             
-            for col in ['Sede', 'Flor', 'Color', 'Variedad']:
-                if col in df_forecast.columns:
-                    total_row[col] = ""
-                    
-            if 'Variedad' in total_row.columns:
+            st.subheader("Resumen Total por Flor")
+            if semanas_futuras:
+                resumen_flor = df_fc_matrix.groupby('Flor')[semanas_futuras + ['TOTAL']].sum()
+                total_row_flor = pd.DataFrame(resumen_flor.sum()).T
+                total_row_flor.index = ['TOTAL GENERAL']
+                resumen_flor = pd.concat([resumen_flor, total_row_flor])
+                st.dataframe(resumen_flor.style.format("{:,.0f}"), width='stretch')
+
+            st.markdown("")
+            st.subheader("Matriz ForeCast Detallada")
+            if semanas_futuras:
+                cols_num = semanas_futuras + ['TOTAL']
+                total_row = pd.DataFrame(df_fc_matrix[cols_num].sum()).T
+                for col in ['Sede', 'Flor', 'Color', 'Variedad']:
+                    if col in df_fc_matrix.columns:
+                        total_row[col] = ""
                 total_row['Variedad'] = 'TOTAL GENERAL'
-            elif 'Flor' in total_row.columns:
-                total_row['Flor'] = 'TOTAL GENERAL'
-            
-            meta_cols = [c for c in ['Sede', 'Flor', 'Color', 'Variedad'] if c in df_forecast.columns]
-            df_forecast_display = df_forecast[meta_cols + cols_num].copy()
-            
-            df_forecast_display = pd.concat([df_forecast_display, total_row], ignore_index=True)
-            st.dataframe(df_forecast_display.style.format(formatter={col: "{:,.0f}" for col in cols_num}), width='stretch')
-        else:
-            st.dataframe(df_forecast, width='stretch')
+                meta_cols = [c for c in ['Sede', 'Flor', 'Color', 'Variedad'] if c in df_fc_matrix.columns]
+                df_fc_display = df_fc_matrix[meta_cols + cols_num].copy()
+                df_fc_display = pd.concat([df_fc_display, total_row], ignore_index=True)
+                st.dataframe(df_fc_display.style.format(formatter={col: "{:,.0f}" for col in cols_num}), width='stretch')
 
-        st.divider()
-        
-        # EXPORTACIONES
-        if "13" in vista:
-            st.subheader("📤 Exportación Webflowers (13 Semanas)")
-            st.markdown("Carga las plantillas vacías descargadas de la plataforma Webflowers. El sistema inyecta **9 semanas** de proyecciones basadas en **Inventario Vivo** (a partir de la siguiente semana operativa) y completa las **4 semanas** restantes con el **Plan Maestro Factible** (`Plan_Aprobado.csv`), asegurando consistencia con el área real y sin inflar cifras.")
+                col_dl_mat, _ = st.columns([1, 2])
+                with col_dl_mat:
+                    csv_matriz = df_fc_display.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button(
+                        label="⬇️ Descargar Matriz ForeCast Completa (CSV)",
+                        data=csv_matriz,
+                        file_name=f"Matriz_ForeCast_{vista.replace(' ', '_')}.csv",
+                        mime="text/csv",
+                        key="dl_matriz_fc_csv"
+                    )
+
+        # =====================================================================
+        # PESTAÑA 4: EXPORTACIÓN A PLATAFORMAS (WEBFLOWERS & 52 SEMANAS)
+        # =====================================================================
+        with tab_wf:
+            st.subheader("📤 Exportación de Proyecciones a Plataformas")
+            st.markdown("Generación de archivos oficiales para Webflowers (13 semanas móviles) y proyecciones de largo plazo (52 semanas).")
+
+            tab_exp_13, tab_exp_52 = st.tabs(["Exportación Webflowers (13 Semanas)", "Exportación Anual (52 Semanas)"])
             
-            col_up1, col_up2 = st.columns(2)
-            with col_up1:
-                uploaded_templates = st.file_uploader("📥 Subir Plantillas Webflowers Vacías (Excel)", type=["xlsx", "xls"], accept_multiple_files=True)
-            
-            with col_up2:
-                st.info("💡 **Regla S&OP Webflowers (13 Semanas):** Proyección a partir de la siguiente semana operativa conformada por exactamente **9 semanas de Inventario Vivo en suelo** + **4 semanas de Plan Maestro Factible**, manteniendo la rigurosidad de la capacidad instalada.")
-            
-            if uploaded_templates:
-                if st.button("Procesar y Llenar Plantillas 13 Wk"):
-                    with st.spinner("Generando proyecciones e inyectando datos en las plantillas..."):
-                        # df_plan toma la capacidad real de Plan_Aprobado.csv sin inflar cifras
-                        df_plan = None
-                        if os.path.exists("Plan_Aprobado.csv"):
-                            try:
-                                df_p_raw = pd.read_csv("Plan_Aprobado.csv")
-                                col_t = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_p_raw.columns else 'Suma de Tallos'
-                                df_p_raw['Semana'] = df_p_raw['Semana'].apply(lambda v: str(int(float(v))) if pd.notna(v) and str(v).replace('.','',1).isdigit() else str(v).strip())
-                                df_plan = df_p_raw.pivot_table(index='Variedad', columns='Semana', values=col_t, aggfunc='sum', fill_value=0)
-                                df_plan.index = df_plan.index.astype(str).str.strip().str.lower()
-                            except Exception:
-                                df_plan = None
-                        elif not df_mrp.empty:
-                            df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
-                            if not df_proyeccion_mva.empty:
-                                df_plan = df_proyeccion_mva.copy()
-                                df_plan['Variedad_norm'] = df_plan['Variedad'].astype(str).str.strip().str.lower()
-                                cols_num_mva = [c for c in df_plan.columns if str(c).startswith('202')]
-                                df_plan = df_plan.groupby('Variedad_norm')[cols_num_mva].sum()
-                                
-                        import sys
-                        import os
-                        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-                        from scripts.export_plataforma import procesar_plantillas_plataforma
-                        
-                        templates_dict = {f.name: f.getvalue() for f in uploaded_templates}
-                        resultados = procesar_plantillas_plataforma(templates_dict, df_forecast_vivo, df_plan)
-                        
-                        if resultados:
-                            st.success(f"✅ Se procesaron {len(resultados)} de {len(uploaded_templates)} plantillas exitosamente.")
-                        
-                        faltantes = [name for name in templates_dict if name not in resultados]
-                        if faltantes:
-                            st.warning(f"⚠️ Las siguientes plantillas no pudieron procesarse: {', '.join(faltantes)}")
-                        
-                        import base64
-                        import streamlit.components.v1 as components
-                        
-                        files_data = []
-                        for filename, filebytes in resultados.items():
-                            b64 = base64.b64encode(filebytes).decode("utf-8")
-                            files_data.append({"filename": filename, "b64": b64})
-                        
-                        if len(resultados) == 1:
-                            fname, fbytes = next(iter(resultados.items()))
-                            st.download_button(
-                                label=f"⬇️ Descargar {fname}",
-                                data=fbytes,
-                                file_name=fname,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                type="primary"
-                            )
-                        elif len(resultados) > 1:
-                            js_code = f"""
-                            <script>
-                            function downloadAll() {{
-                                const files = {json.dumps(files_data)};
-                                files.forEach((file, index) => {{
-                                    setTimeout(() => {{
-                                        const link = document.createElement("a");
-                                        link.href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + file.b64;
-                                        link.download = file.filename;
-                                        document.body.appendChild(link);
-                                        link.click();
-                                        document.body.removeChild(link);
-                                    }}, index * 500); 
-                                }});
-                            }}
-                            </script>
-                            <button onclick="downloadAll()" style="background-color: #1D4ED8; border: 1px solid #1E40AF; color: white; padding: 9px 20px; text-align: center; text-decoration: none; display: inline-block; font-size: 14px; margin: 4px 2px; cursor: pointer; border-radius: 6px; font-family: Inter, -apple-system, sans-serif; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-                                ⬇️ Descargar Todos los Archivos (1 Clic)
-                            </button>
-                            """
-                            components.html(js_code, height=60)
+            with tab_exp_13:
+                st.markdown("#### Exportación Webflowers (13 Semanas)")
+                st.info("💡 **Regla S&OP Webflowers (13 Semanas):** Proyección a partir de la siguiente semana operativa conformada por exactamente **9 semanas de Inventario Vivo en suelo** + **4 semanas de Plan Maestro Factible**, manteniendo la rigurosidad de la capacidad instalada y sin inflar cifras.")
+                
+                col_up1, col_up2 = st.columns([1.5, 1])
+                with col_up1:
+                    uploaded_templates = st.file_uploader("📥 Subir Plantillas Webflowers Vacías (Excel)", type=["xlsx", "xls"], accept_multiple_files=True, key="uploader_wf_13")
+                with col_up2:
+                    st.caption("Carga los archivos base descargados de Webflowers. El sistema conservará la estructura y formatos originales inyectando los valores correspondientes.")
+
+                if uploaded_templates:
+                    if st.button("Procesar y Llenar Plantillas 13 Wk", type="primary", key="btn_procesar_wf13"):
+                        with st.spinner("Generando proyecciones e inyectando datos en las plantillas..."):
+                            df_plan = None
+                            if os.path.exists("Plan_Aprobado.csv"):
+                                try:
+                                    df_p_raw = pd.read_csv("Plan_Aprobado.csv")
+                                    col_t = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_p_raw.columns else 'Suma de Tallos'
+                                    df_p_raw['Semana'] = df_p_raw['Semana'].apply(lambda v: str(int(float(v))) if pd.notna(v) and str(v).replace('.','',1).isdigit() else str(v).strip())
+                                    df_plan = df_p_raw.pivot_table(index='Variedad', columns='Semana', values=col_t, aggfunc='sum', fill_value=0)
+                                    df_plan.index = df_plan.index.astype(str).str.strip().str.lower()
+                                except Exception:
+                                    df_plan = None
+                            elif not df_mrp.empty:
+                                df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
+                                if not df_proyeccion_mva.empty:
+                                    df_plan = df_proyeccion_mva.copy()
+                                    df_plan['Variedad_norm'] = df_plan['Variedad'].astype(str).str.strip().str.lower()
+                                    cols_num_mva = [c for c in df_plan.columns if str(c).startswith('202')]
+                                    df_plan = df_plan.groupby('Variedad_norm')[cols_num_mva].sum()
+                                    
+                            from scripts.export_plataforma import procesar_plantillas_plataforma
                             
-                            with st.expander("Descargas Individuales", expanded=False):
-                                for filename, filebytes in resultados.items():
-                                    st.download_button(
-                                        label=f"⬇️ {filename}",
-                                        data=filebytes,
-                                        file_name=filename,
-                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                        key=f"dl_13_{filename}"
-                                    )
-        else:
-            st.subheader("📤 Exportación 52 Semanas")
-            st.info("🕒 **Línea de Tiempo Operativa**: Pedido Confirmado / Recepción (Semana **S**) ➔ 3 Semanas Enraizamiento ➔ Siembra a Campo (Semana **S+4**).")
-            
-            uploaded_templates_52 = st.file_uploader(
-                "📋 Cargar Plantilla(s) Vacía(s) 52 Semanas (Excel)", 
-                type=["xlsx", "xls"], 
-                accept_multiple_files=True
-            )
-            
-            if uploaded_templates_52:
-                if st.button("Procesar y Llenar Plantilla(s) 52 Semanas", type="primary"):
-                    with st.spinner("Procesando archivos para proyección 52 semanas..."):
-                        import io
-                        import base64
-                        import streamlit.components.v1 as components
-                        
-                        # Generar MVA original
-                        output_mrp = io.BytesIO()
-                        if not df_mrp.empty:
-                            with pd.ExcelWriter(output_mrp, engine='xlsxwriter') as writer:
-                                df_mrp.to_excel(writer, index=False, sheet_name="Explosion_MVA")
+                            templates_dict = {f.name: f.getvalue() for f in uploaded_templates}
+                            resultados = procesar_plantillas_plataforma(templates_dict, df_forecast_vivo, df_plan)
                             
-                        # Proyección combinada 52 semanas
-                        df_proy_mva = proyectar_cosecha_desde_mva(df_mrp, db) if not df_mrp.empty else pd.DataFrame()
-                        df_52_semanas = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proy_mva)
-                        
-                        resultados_52 = {}
-                        errores_52 = {}
-                        for f in uploaded_templates_52:
-                            try:
-                                filled_template_bytes = llenar_plantilla_52_semanas(f.getvalue(), df_52_semanas)
-                                resultados_52[f.name] = filled_template_bytes
-                            except Exception as e:
-                                errores_52[f.name] = str(e)
-                    
-                        if resultados_52:
-                            st.success(f"✅ Se procesaron {len(resultados_52)} de {len(uploaded_templates_52)} plantillas exitosamente.")
-                        
-                        if errores_52:
-                            for fname, err in errores_52.items():
-                                st.error(f"❌ Error procesando {fname}: {err}")
-                    
-                        col_dl1, col_dl2 = st.columns(2)
-                        if not df_mrp.empty:
-                            col_dl1.download_button(
-                                label="⬇️ Descargar Plan de Siembras (MVA)",
-                                data=output_mrp.getvalue(),
-                                file_name="Plan_Siembras_Proyectadas.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
-                        
-                        if len(resultados_52) == 1:
-                            fname, fbytes = next(iter(resultados_52.items()))
-                            col_dl2.download_button(
-                                label=f"⬇️ Descargar {fname}",
-                                data=fbytes,
-                                file_name=fname,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                type="primary"
-                            )
-                        elif len(resultados_52) > 1:
-                            files_data_52 = []
-                            for filename, filebytes in resultados_52.items():
+                            if resultados:
+                                st.success(f"✅ Se procesaron {len(resultados)} de {len(uploaded_templates)} plantillas exitosamente.")
+                            
+                            faltantes = [name for name in templates_dict if name not in resultados]
+                            if faltantes:
+                                st.warning(f"⚠️ Las siguientes plantillas no pudieron procesarse: {', '.join(faltantes)}")
+                            
+                            import base64
+                            import streamlit.components.v1 as components
+                            
+                            files_data = []
+                            for filename, filebytes in resultados.items():
                                 b64 = base64.b64encode(filebytes).decode("utf-8")
-                                files_data_52.append({"filename": filename, "b64": b64})
+                                files_data.append({"filename": filename, "b64": b64})
                             
-                            js_code_52 = f"""
-                            <script>
-                            function downloadAll52() {{
-                                const files = {json.dumps(files_data_52)};
-                                files.forEach((file, index) => {{
-                                    setTimeout(() => {{
-                                        const link = document.createElement("a");
-                                        link.href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + file.b64;
-                                        link.download = file.filename;
-                                        document.body.appendChild(link);
-                                        link.click();
-                                        document.body.removeChild(link);
-                                    }}, index * 500); 
-                                }});
-                            }}
-                            </script>
-                            <button onclick="downloadAll52()" style="background-color: #1D4ED8; border: 1px solid #1E40AF; color: white; padding: 9px 20px; text-align: center; text-decoration: none; display: inline-block; font-size: 14px; margin: 4px 2px; cursor: pointer; border-radius: 6px; font-family: Inter, -apple-system, sans-serif; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-                                ⬇️ Descargar Todos los Archivos 52 Wk (1 Clic)
-                            </button>
-                            """
-                            with col_dl2:
-                                components.html(js_code_52, height=60)
+                            if len(resultados) == 1:
+                                fname, fbytes = next(iter(resultados.items()))
+                                st.download_button(
+                                    label=f"⬇️ Descargar {fname}",
+                                    data=fbytes,
+                                    file_name=fname,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    type="primary",
+                                    key="dl_single_wf13"
+                                )
+                            elif len(resultados) > 1:
+                                js_code = f"""
+                                <script>
+                                function downloadAll() {{
+                                    const files = {json.dumps(files_data)};
+                                    files.forEach((file, index) => {{
+                                        setTimeout(() => {{
+                                            const link = document.createElement("a");
+                                            link.href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + file.b64;
+                                            link.download = file.filename;
+                                            document.body.appendChild(link);
+                                            link.click();
+                                            document.body.removeChild(link);
+                                        }}, index * 500); 
+                                    }});
+                                }}
+                                </script>
+                                <button onclick="downloadAll()" style="background-color: #0070F2; border: 1px solid #0056B3; color: white; padding: 9px 20px; text-align: center; text-decoration: none; display: inline-block; font-size: 14px; margin: 4px 2px; cursor: pointer; border-radius: 6px; font-family: '72', Inter, -apple-system, sans-serif; font-weight: 600; box-shadow: 0 1px 2px rgba(0,112,242,0.2);">
+                                    ⬇️ Descargar Todos los Archivos (1 Clic)
+                                </button>
+                                """
+                                components.html(js_code, height=60)
+                                
+                                with st.expander("Descargas Individuales", expanded=False):
+                                    for filename, filebytes in resultados.items():
+                                        st.download_button(
+                                            label=f"⬇️ {filename}",
+                                            data=filebytes,
+                                            file_name=filename,
+                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                            key=f"dl_13_{filename}"
+                                        )
+
+            with tab_exp_52:
+                st.markdown("#### Exportación Anual (52 Semanas)")
+                st.info("🕒 **Línea de Tiempo Operativa**: Pedido Confirmado / Recepción (Semana **S**) ➔ 3 Semanas Enraizamiento ➔ Siembra a Campo (Semana **S+4**).")
+                
+                uploaded_templates_52 = st.file_uploader(
+                    "📋 Cargar Plantilla(s) Vacía(s) 52 Semanas (Excel)", 
+                    type=["xlsx", "xls"], 
+                    accept_multiple_files=True,
+                    key="uploader_wf_52"
+                )
+                
+                if uploaded_templates_52:
+                    if st.button("Procesar y Llenar Plantilla(s) 52 Semanas", type="primary", key="btn_procesar_wf52"):
+                        with st.spinner("Procesando archivos para proyección 52 semanas..."):
+                            import io
+                            import base64
+                            import streamlit.components.v1 as components
                             
-                            with st.expander("Descargas Individuales (52 Semanas)", expanded=False):
-                                for fname, fbytes in resultados_52.items():
-                                    st.download_button(
-                                        label=f"⬇️ {fname}",
-                                        data=fbytes,
-                                        file_name=fname,
-                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                        key=f"dl_52_{fname}"
-                                    )
+                            output_mrp = io.BytesIO()
+                            if not df_mrp.empty:
+                                with pd.ExcelWriter(output_mrp, engine='xlsxwriter') as writer:
+                                    df_mrp.to_excel(writer, index=False, sheet_name="Explosion_MVA")
+                                
+                            df_proy_mva = proyectar_cosecha_desde_mva(df_mrp, db) if not df_mrp.empty else pd.DataFrame()
+                            df_52_semanas = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proy_mva)
+                            
+                            resultados_52 = {}
+                            errores_52 = {}
+                            for f in uploaded_templates_52:
+                                try:
+                                    filled_template_bytes = llenar_plantilla_52_semanas(f.getvalue(), df_52_semanas)
+                                    resultados_52[f.name] = filled_template_bytes
+                                except Exception as e:
+                                    errores_52[f.name] = str(e)
+                        
+                            if resultados_52:
+                                st.success(f"✅ Se procesaron {len(resultados_52)} de {len(uploaded_templates_52)} plantillas exitosamente.")
+                            
+                            if errores_52:
+                                for fname, err in errores_52.items():
+                                    st.error(f"❌ Error procesando {fname}: {err}")
+                        
+                            col_dl1, col_dl2 = st.columns(2)
+                            if not df_mrp.empty:
+                                col_dl1.download_button(
+                                    label="⬇️ Descargar Plan de Siembras (MVA)",
+                                    data=output_mrp.getvalue(),
+                                    file_name="Plan_Siembras_Proyectadas.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key="dl_mva_plan_52"
+                                )
+                            
+                            if len(resultados_52) == 1:
+                                fname, fbytes = next(iter(resultados_52.items()))
+                                col_dl2.download_button(
+                                    label=f"⬇️ Descargar {fname}",
+                                    data=fbytes,
+                                    file_name=fname,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    type="primary",
+                                    key="dl_single_wf52"
+                                )
+                            elif len(resultados_52) > 1:
+                                files_data_52 = []
+                                for filename, filebytes in resultados_52.items():
+                                    b64 = base64.b64encode(filebytes).decode("utf-8")
+                                    files_data_52.append({"filename": filename, "b64": b64})
+                                
+                                js_code_52 = f"""
+                                <script>
+                                function downloadAll52() {{
+                                    const files = {json.dumps(files_data_52)};
+                                    files.forEach((file, index) => {{
+                                        setTimeout(() => {{
+                                            const link = document.createElement("a");
+                                            link.href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + file.b64;
+                                            link.download = file.filename;
+                                            document.body.appendChild(link);
+                                            link.click();
+                                            document.body.removeChild(link);
+                                        }}, index * 500); 
+                                    }});
+                                }}
+                                </script>
+                                <button onclick="downloadAll52()" style="background-color: #0070F2; border: 1px solid #0056B3; color: white; padding: 9px 20px; text-align: center; text-decoration: none; display: inline-block; font-size: 14px; margin: 4px 2px; cursor: pointer; border-radius: 6px; font-family: '72', Inter, -apple-system, sans-serif; font-weight: 600; box-shadow: 0 1px 2px rgba(0,112,242,0.2);">
+                                    ⬇️ Descargar Todos los Archivos 52 Wk (1 Clic)
+                                </button>
+                                """
+                                with col_dl2:
+                                    components.html(js_code_52, height=60)
+                                
+                                with st.expander("Descargas Individuales (52 Semanas)", expanded=False):
+                                    for fname, fbytes in resultados_52.items():
+                                        st.download_button(
+                                            label=f"⬇️ {fname}",
+                                            data=fbytes,
+                                            file_name=fname,
+                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                            key=f"dl_52_{fname}"
+                                        )
 
 elif modulo == "Programación Diaria y Temporadas":
     st.header("📅 Programación Diaria y Gestión de Temporadas")
@@ -1066,7 +1208,7 @@ elif modulo == "Programación Diaria y Temporadas":
             with col_chart2:
                 if not df_res_seasons.empty and df_res_seasons["Tallos Proyectados"].sum() > 0:
                     import altair as alt
-                    chart = alt.Chart(df_res_seasons).mark_bar(color='#1D4ED8', cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                    chart = alt.Chart(df_res_seasons).mark_bar(color='#0070F2', cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
                         x=alt.X('Temporada:N', sort=list(df_res_seasons['Temporada']), title='Temporada', axis=alt.Axis(labelAngle=-45)),
                         y=alt.Y('Tallos Proyectados:Q', title='Tallos'),
                         tooltip=['Temporada', 'Tallos Proyectados']

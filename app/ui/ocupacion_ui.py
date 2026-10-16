@@ -243,7 +243,7 @@ def render_ocupacion_module(db):
             }
             mapa_colores = {
                 '1. Inventario Vivo en Suelo (Lotes Actuales)': '#059669',  # Verde Esmeralda
-                '2. Siembras Proyectadas (Enraizamiento / Pedido)': '#1D4ED8'   # Azul Zafiro
+                '2. Siembras Proyectadas (Enraizamiento / Pedido)': '#0070F2'   # Azul SAP Fiori Horizon
             }
 
             if mostrar_total:
@@ -305,11 +305,11 @@ def render_ocupacion_module(db):
                 y=alt.Y('Camas_Plan_Original:Q', title='Camas Requeridas', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
                 tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Siembra:Q', title='Siembra (Camas)', format='.1f'), alt.Tooltip('Camas_Plan_Original:Q', title='Plan Base (Camas)', format='.1f'), alt.Tooltip('Ocupacion_Original_%:Q', title='Ocupación Base (%)', format='.1f')]
             )
-            line_adj = base_chart.mark_line(point=True, color='#1D4ED8', strokeWidth=2.8).encode(
+            line_adj = base_chart.mark_line(point=True, color='#0070F2', strokeWidth=2.8).encode(
                 y='Camas_Niveladas_OpB:Q',
                 tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Siembra:Q', title='Siembra (Camas)', format='.1f'), alt.Tooltip('Camas_Niveladas_OpB:Q', title='Plan Vigente (Camas)', format='.1f'), alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación Vigente (%)', format='.1f')]
             )
-            titulo_grafico = f"Comparativa: Plan Base (Gris Pizarra) vs. Plan Vigente (Azul Zafiro) [{bloque_subtitulo}]"
+            titulo_grafico = f"Comparativa: Plan Base (Gris Pizarra) vs. Plan Vigente (Azul SAP Fiori) [{bloque_subtitulo}]"
             chart_final = band_opt + line_orig + line_adj + rule_techo_inst + rule_techo_red
 
         chart_render = chart_final.properties(height=380, title=titulo_grafico)

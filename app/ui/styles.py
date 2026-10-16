@@ -1,18 +1,19 @@
 """
-Tema Visual: S&OP Ejecutivo Profesional (Estilo SAP IBP / Kinaxis RapidResponse / o9 Solutions)
+Tema Visual: S&OP Ejecutivo Profesional (Estilo SAP Fiori Horizon / SAP IBP)
 Arquitectura Visual:
-- Canvas Principal: #F8FAFC (Slate-50 de alta legibilidad y confort visual)
-- Superficies y Tarjetas: #FFFFFF (Blanco nítido con micro-borde #E2E8F0 y sombra sutil)
-- Command Center Sidebar: #0F172A (Navy Slate Corporativo con acentos en #3B82F6)
-- Tipografía: Inter / Segoe UI (Negro pizarra #0F172A para títulos, #334155 para lectura, #64748B para metadata)
-- Botones de Acción: #1D4ED8 (Azul Zafiro Corporativo, hover #1E40AF)
+- Canvas Principal: #F5F6F7 (Horizon Light Shell Canvas)
+- Superficies y Tarjetas: #FFFFFF (Blanco nítido con micro-borde #DDE2E6 y sombra sutil)
+- Command Center Sidebar: #1C2D42 (Deep Shell Navy con acentos en #0070F2)
+- Tipografía: '72' / Inter / Segoe UI (Negro pizarra #1C2D42 para títulos, #2F3E4D para lectura, #556B82 para metadata)
+- Botones de Acción: #0070F2 (Azul SAP Fiori Horizon, hover #0056B3)
 - Paleta S&OP para Curvas:
-    * #1D4ED8 (Plan de Producción / Demanda Comercial)
-    * #059669 (ForeCast Biológico / Oferta de Cosecha)
-    * #D97706 (Pedido Propagación / Enraizamiento)
-    * #DC2626 (Capacidad Máxima / Restricciones / Sobrecupos)
-    * #94A3B8 (Línea Base Histórica)
-- Alertas y Semáforos: Cintas corporativas limpias (Verde #F0FDF4, Ámbar #FFFBEB, Rojo #FEF2F2, Azul #EFF6FF)
+    * #0070F2 (Demanda Comercial / Plan de Producción Aprobado)
+    * #059669 (Oferta de Campo / ForeCast Biológico)
+    * #D97706 (Propagación / Enraizamiento)
+    * #7C3AED (Suelo Total / Siembras Factibles)
+    * #BB0000 (Capacidad Máxima / Techo de Camas)
+    * #556B82 (Línea Base Neutra)
+- Alertas y Semáforos: Cintas corporativas SAP Fiori Message Strip (Positivo #107E3E, Preventivo #E9730C, Crítico #BB0000, Informativo #0070F2)
 """
 
 import streamlit as st
@@ -21,46 +22,46 @@ import altair as alt
 CSS_SOP_PROFESIONAL = """
 <style>
 /* ====================================================================
-   S&OP ENTERPRISE EXECUTIVE THEME (SAP IBP / KINAXIS STYLE)
+   S&OP ENTERPRISE EXECUTIVE THEME (SAP FIORI / HORIZON DESIGN SYSTEM)
    ==================================================================== */
 
-/* 1. Fondo Global y Tipografía Corporativa */
+/* 1. Fondo Global y Tipografía Corporativa SAP */
 html, body, [data-testid="stAppViewContainer"], .main, .stApp {
-    background-color: #F8FAFC !important;
-    color: #1E293B !important;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    background-color: #F5F6F7 !important;
+    color: #1C2D42 !important;
+    font-family: '72', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
     -webkit-font-smoothing: antialiased !important;
 }
 
 header[data-testid="stHeader"] {
     background-color: #FFFFFF !important;
-    border-bottom: 1px solid #E2E8F0 !important;
+    border-bottom: 1px solid #E5E7EB !important;
 }
 
-/* Encabezados y Jerarquía de Texto */
+/* Encabezados y Jerarquía de Texto SAP Fiori */
 h1, h2, h3, h4, h5, h6, .stHeading, [data-testid="stHeading"] {
-    color: #0F172A !important;
+    color: #1C2D42 !important;
     font-weight: 700 !important;
-    letter-spacing: -0.02em !important;
+    letter-spacing: -0.015em !important;
 }
 
 p, span, label, [data-testid="stMarkdownContainer"] p, [data-testid="stText"] {
-    color: #334155 !important;
+    color: #2F3E4D !important;
     font-size: 0.925rem !important;
     line-height: 1.5 !important;
 }
 
 .stCaption, small, [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p, [data-testid="stWidgetLabel"] small {
-    color: #475569 !important;
+    color: #556B82 !important;
     font-size: 0.835rem !important;
     font-weight: 500 !important;
 }
 
-/* 2. Barra Lateral: Command Center Ejecutivo (Navy Slate) de Alto Contraste */
+/* 2. Barra Lateral: SAP Shell Navigation (Deep Shell Navy) */
 section[data-testid="stSidebar"],
 section[data-testid="stSidebar"] > div {
-    background-color: #0F172A !important;
-    border-right: 1px solid #1E293B !important;
+    background-color: #1C2D42 !important;
+    border-right: 1px solid #2B3D52 !important;
 }
 
 section[data-testid="stSidebar"] > div:first-child {
@@ -148,14 +149,14 @@ section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has([aria-chec
 }
 
 section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has([aria-checked="true"]) {
-    background-color: #1E293B !important;
-    border-left: 3.5px solid #3B82F6 !important;
+    background-color: #23374D !important;
+    border-left: 4px solid #0070F2 !important;
 }
 
 /* 3. Contenedores y Tarjetas de Alto Nivel */
 div[data-testid="stVerticalBlockBorderWrapper"] {
     background: #FFFFFF !important;
-    border: 1px solid #E2E8F0 !important;
+    border: 1px solid #DDE2E6 !important;
     border-radius: 8px !important;
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05) !important;
     padding: 4px !important;
@@ -168,7 +169,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {
 /* Tarjetas de Métricas / KPI Cards Ejecutivas */
 div[data-testid="stMetric"] {
     background: #FFFFFF !important;
-    border: 1px solid #E2E8F0 !important;
+    border: 1px solid #DDE2E6 !important;
     border-radius: 8px !important;
     padding: 16px 20px !important;
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05) !important;
@@ -176,12 +177,12 @@ div[data-testid="stMetric"] {
 }
 
 div[data-testid="stMetric"]:hover {
-    border-color: #CBD5E1 !important;
+    border-color: #0070F2 !important;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07) !important;
 }
 
 div[data-testid="stMetricLabel"] p {
-    color: #64748B !important;
+    color: #556B82 !important;
     font-size: 0.78rem !important;
     font-weight: 600 !important;
     text-transform: uppercase !important;
@@ -189,7 +190,7 @@ div[data-testid="stMetricLabel"] p {
 }
 
 div[data-testid="stMetricValue"] {
-    color: #0F172A !important;
+    color: #1C2D42 !important;
     font-weight: 700 !important;
     font-size: 1.85rem !important;
     letter-spacing: -0.02em !important;
@@ -198,34 +199,34 @@ div[data-testid="stMetricValue"] {
 /* Expanders */
 details[data-testid="stExpander"] {
     background: #FFFFFF !important;
-    border: 1px solid #E2E8F0 !important;
+    border: 1px solid #DDE2E6 !important;
     border-radius: 8px !important;
     box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
 }
 
 details[data-testid="stExpander"] summary {
-    color: #0F172A !important;
+    color: #1C2D42 !important;
     font-weight: 600 !important;
     font-size: 0.92rem !important;
     padding: 12px 16px !important;
 }
 
-/* Pestañas (Tabs) Estilo Ribbon Corporativo */
+/* Pestañas (Tabs) Estilo Ribbon Corporativo SAP Fiori */
 div[data-testid="stTabs"] {
     background: transparent !important;
 }
 
 div[data-baseweb="tab-list"] {
-    background: #F1F5F9 !important;
+    background: #EAEEF2 !important;
     border-radius: 8px !important;
     padding: 4px !important;
-    border: 1px solid #E2E8F0 !important;
+    border: 1px solid #DDE2E6 !important;
     gap: 4px !important;
 }
 
 button[data-baseweb="tab"] {
     border-radius: 6px !important;
-    color: #64748B !important;
+    color: #556B82 !important;
     border: none !important;
     padding: 8px 16px !important;
     font-weight: 500 !important;
@@ -234,15 +235,16 @@ button[data-baseweb="tab"] {
 }
 
 button[data-baseweb="tab"]:hover {
-    color: #0F172A !important;
-    background: rgba(255, 255, 255, 0.6) !important;
+    color: #1C2D42 !important;
+    background: rgba(255, 255, 255, 0.7) !important;
 }
 
 button[data-baseweb="tab"][aria-selected="true"] {
     background: #FFFFFF !important;
-    color: #1D4ED8 !important;
+    color: #0070F2 !important;
     font-weight: 600 !important;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1) !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08) !important;
+    border-bottom: 2.5px solid #0070F2 !important;
 }
 
 div[data-baseweb="tab-highlight"] {
@@ -362,24 +364,24 @@ div[data-testid="stDownloadButton"] > button:hover * {
     color: #0056B3 !important;
 }
 
-/* 5. Alertas S&OP de Alta Dirección (Cintas Corporativas sin Neón) */
+/* 5. Alertas S&OP de Alta Dirección (Estilo SAP Message Strip) */
 /* Alerta Error / Retraso Crítico */
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertErrorIcon"]),
 div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]),
 div[data-testid="stAlert"][kind="error"],
 .stAlert:has(svg[data-testid="stAlertErrorIcon"]),
 .stAlert:has([data-testid="stAlertContentError"]) {
-    background-color: #FEF2F2 !important;
-    border: 1px solid #FECACA !important;
-    border-left: 4px solid #DC2626 !important;
+    background-color: #FDF3F2 !important;
+    border: 1px solid #F9C6C4 !important;
+    border-left: 4px solid #BB0000 !important;
     border-radius: 6px !important;
-    color: #991B1B !important;
+    color: #BB0000 !important;
     box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertErrorIcon"]) *,
 div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) * {
-    color: #991B1B !important;
+    color: #BB0000 !important;
 }
 
 /* Alerta Warning / Atención Preventiva */
@@ -388,17 +390,17 @@ div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]),
 div[data-testid="stAlert"][kind="warning"],
 .stAlert:has(svg[data-testid="stAlertWarningIcon"]),
 .stAlert:has([data-testid="stAlertContentWarning"]) {
-    background-color: #FFFBEB !important;
-    border: 1px solid #FDE68A !important;
-    border-left: 4px solid #D97706 !important;
+    background-color: #FEF7F1 !important;
+    border: 1px solid #F8D7B8 !important;
+    border-left: 4px solid #E9730C !important;
     border-radius: 6px !important;
-    color: #92400E !important;
+    color: #E9730C !important;
     box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertWarningIcon"]) *,
 div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) * {
-    color: #92400E !important;
+    color: #E9730C !important;
 }
 
 /* Alerta Success / Cumplimiento Óptimo */
@@ -407,17 +409,17 @@ div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]),
 div[data-testid="stAlert"][kind="success"],
 .stAlert:has(svg[data-testid="stAlertSuccessIcon"]),
 .stAlert:has([data-testid="stAlertContentSuccess"]) {
-    background-color: #F0FDF4 !important;
-    border: 1px solid #BBF7D0 !important;
-    border-left: 4px solid #16A34A !important;
+    background-color: #F1FDF6 !important;
+    border: 1px solid #A6E9D5 !important;
+    border-left: 4px solid #107E3E !important;
     border-radius: 6px !important;
-    color: #166534 !important;
+    color: #107E3E !important;
     box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertSuccessIcon"]) *,
 div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) * {
-    color: #166534 !important;
+    color: #107E3E !important;
 }
 
 /* Alerta Info / Informativo de Gobierno */
@@ -428,34 +430,34 @@ div[data-testid="stAlert"][kind="info"],
 .stAlert:has([data-testid="stAlertContentInfo"]) {
     background-color: #EFF6FF !important;
     border: 1px solid #BFDBFE !important;
-    border-left: 4px solid #1D4ED8 !important;
+    border-left: 4px solid #0070F2 !important;
     border-radius: 6px !important;
-    color: #1E40AF !important;
+    color: #0070F2 !important;
     box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertInfoIcon"]) *,
 div[data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) * {
-    color: #1E40AF !important;
+    color: #0070F2 !important;
 }
 
 /* 6. Tablas y DataFrames Ejecutivos */
 div[data-testid="stDataFrame"], div[data-testid="stTable"] {
     background: #FFFFFF !important;
-    border: 1px solid #E2E8F0 !important;
+    border: 1px solid #DDE2E6 !important;
     border-radius: 8px !important;
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
-/* 7. Inputs, Textareas, Selectboxes y Checkboxes con Borde Nítido */
+/* 7. Inputs, Textareas, Selectboxes y Checkboxes con Estándar SAP */
 div[data-baseweb="select"] > div, 
 div[data-testid="stTextInput"] input, 
 div[data-testid="stNumberInput"] input, 
 div[data-testid="stDateInput"] input,
 textarea {
     background-color: #FFFFFF !important;
-    border: 1.5px solid #94A3B8 !important;
-    color: #0F172A !important;
+    border: 1.5px solid #C4C9D0 !important;
+    color: #1C2D42 !important;
     border-radius: 6px !important;
     font-size: 0.9rem !important;
 }
@@ -464,33 +466,33 @@ div[data-baseweb="select"] > div:hover,
 div[data-testid="stTextInput"] input:hover, 
 div[data-testid="stNumberInput"] input:hover,
 textarea:hover {
-    border-color: #475569 !important;
+    border-color: #89919A !important;
 }
 
 div[data-baseweb="select"] > div:focus-within, 
 div[data-testid="stTextInput"] input:focus, 
 div[data-testid="stNumberInput"] input:focus,
 textarea:focus {
-    border-color: #1D4ED8 !important;
-    box-shadow: 0 0 0 1px #1D4ED8 !important;
+    border-color: #0070F2 !important;
+    box-shadow: 0 0 0 1px #0070F2 !important;
 }
 
 /* Casillas de Verificación (Checkboxes) con Contraste y Borde Definido */
 div[data-testid="stCheckbox"] label span[role="checkbox"],
 div[data-testid="stCheckbox"] [data-baseweb="checkbox"] span {
-    border: 1.5px solid #64748B !important;
+    border: 1.5px solid #89919A !important;
     border-radius: 4px !important;
     background-color: #FFFFFF !important;
 }
 
 div[data-testid="stCheckbox"] label:hover span[role="checkbox"] {
-    border-color: #1D4ED8 !important;
+    border-color: #0070F2 !important;
 }
 
-/* 8. Badges Ejecutivos Corporativos */
+/* 8. Badges Ejecutivos Corporativos (Estándar Semántico SAP Fiori) */
 .badge-sop-blue {
     background-color: #EFF6FF !important;
-    color: #1D4ED8 !important;
+    color: #0070F2 !important;
     border: 1px solid #BFDBFE !important;
     padding: 3px 10px !important;
     border-radius: 4px !important;
@@ -501,9 +503,9 @@ div[data-testid="stCheckbox"] label:hover span[role="checkbox"] {
 }
 
 .badge-sop-green {
-    background-color: #F0FDF4 !important;
-    color: #166534 !important;
-    border: 1px solid #BBF7D0 !important;
+    background-color: #F1FDF6 !important;
+    color: #107E3E !important;
+    border: 1px solid #A6E9D5 !important;
     padding: 3px 10px !important;
     border-radius: 4px !important;
     font-size: 0.78rem !important;
@@ -513,9 +515,9 @@ div[data-testid="stCheckbox"] label:hover span[role="checkbox"] {
 }
 
 .badge-sop-amber {
-    background-color: #FFFBEB !important;
-    color: #92400E !important;
-    border: 1px solid #FDE68A !important;
+    background-color: #FEF7F1 !important;
+    color: #E9730C !important;
+    border: 1px solid #F8D7B8 !important;
     padding: 3px 10px !important;
     border-radius: 4px !important;
     font-size: 0.78rem !important;
@@ -525,9 +527,9 @@ div[data-testid="stCheckbox"] label:hover span[role="checkbox"] {
 }
 
 .badge-sop-red {
-    background-color: #FEF2F2 !important;
-    color: #991B1B !important;
-    border: 1px solid #FECACA !important;
+    background-color: #FDF3F2 !important;
+    color: #BB0000 !important;
+    border: 1px solid #F9C6C4 !important;
     padding: 3px 10px !important;
     border-radius: 4px !important;
     font-size: 0.78rem !important;
@@ -537,9 +539,9 @@ div[data-testid="stCheckbox"] label:hover span[role="checkbox"] {
 }
 
 .badge-sop-slate {
-    background-color: #F1F5F9 !important;
-    color: #475569 !important;
-    border: 1px solid #CBD5E1 !important;
+    background-color: #F5F6F7 !important;
+    color: #556B82 !important;
+    border: 1px solid #DDE2E6 !important;
     padding: 3px 10px !important;
     border-radius: 4px !important;
     font-size: 0.78rem !important;
@@ -562,30 +564,30 @@ try:
                     'fill': '#FFFFFF'
                 },
                 'title': {
-                    'color': '#0F172A',
+                    'color': '#1C2D42',
                     'fontSize': 14,
                     'fontWeight': 600
                 },
                 'axis': {
-                    'domainColor': '#CBD5E1',
+                    'domainColor': '#DDE2E6',
                     'gridColor': '#F1F5F9',
-                    'labelColor': '#64748B',
-                    'titleColor': '#0F172A',
-                    'tickColor': '#CBD5E1'
+                    'labelColor': '#556B82',
+                    'titleColor': '#1C2D42',
+                    'tickColor': '#DDE2E6'
                 },
                 'legend': {
-                    'labelColor': '#334155',
-                    'titleColor': '#0F172A'
+                    'labelColor': '#2F3E4D',
+                    'titleColor': '#1C2D42'
                 },
                 'range': {
                     'category': [
-                        '#1D4ED8',  # Demanda / Plan
-                        '#059669',  # Oferta / ForeCast
-                        '#D97706',  # Enraizamiento
-                        '#7C3AED',  # Especiales
-                        '#0284C7',  # Ajustado
-                        '#DC2626',  # Alerta
-                        '#64748B'   # Neutro
+                        '#0070F2',  # Demanda / Plan Aprobado (Azul SAP Fiori Horizon)
+                        '#059669',  # Oferta / ForeCast (Verde Esmeralda)
+                        '#D97706',  # Enraizamiento (Ámbar)
+                        '#7C3AED',  # Siembras / Especiales (Púrpura)
+                        '#0284C7',  # Capacidad (Celeste)
+                        '#BB0000',  # Alerta / Techo (Rojo SAP)
+                        '#556B82'   # Neutro (Slate SAP)
                     ]
                 }
             }
@@ -602,58 +604,59 @@ aplicar_tema_sop_ejecutivo = aplicar_tema_invernadero_industrial
 
 def estilizar_figura_plotly(fig):
     """
-    Aplica el estándar visual corporativo S&OP a cualquier figura de Plotly:
+    Aplica el estándar visual corporativo SAP Fiori Horizon a cualquier figura de Plotly:
     lienzo blanco inmaculado, cuadrícula tenue, tipografía clara y paleta oficial.
     """
     fig.update_layout(
         paper_bgcolor='#FFFFFF',
         plot_bgcolor='#FFFFFF',
-        font=dict(color='#0F172A', family='Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'),
+        font=dict(color='#1C2D42', family="'72', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"),
         colorway=[
-            '#1D4ED8',  # Demanda / Plan Aprobado (Azul Zafiro)
+            '#0070F2',  # Demanda / Plan Aprobado (Azul SAP Fiori Horizon)
             '#059669',  # ForeCast / Cosecha Viva (Verde Esmeralda)
             '#D97706',  # Proyección Enraizamiento (Ámbar)
-            '#7C3AED',  # Fast Track
-            '#0284C7',  # Capacidad
-            '#DC2626',  # Techo / Riesgo
-            '#64748B'   # Línea Base
+            '#7C3AED',  # Suelo Total / Siembras (Púrpura)
+            '#0284C7',  # Capacidad (Celeste)
+            '#BB0000',  # Techo / Riesgo (Rojo SAP)
+            '#556B82'   # Línea Base Neutra (Gris SAP)
         ],
         xaxis=dict(
             gridcolor='#F1F5F9',
             zerolinecolor='#E2E8F0',
-            tickfont=dict(color='#64748B', size=11),
-            title_font=dict(color='#0F172A', size=12)
+            tickfont=dict(color='#556B82', size=11),
+            title_font=dict(color='#1C2D42', size=12)
         ),
         yaxis=dict(
             gridcolor='#F1F5F9',
             zerolinecolor='#E2E8F0',
-            tickfont=dict(color='#64748B', size=11),
-            title_font=dict(color='#0F172A', size=12)
+            tickfont=dict(color='#556B82', size=11),
+            title_font=dict(color='#1C2D42', size=12)
         ),
         legend=dict(
-            font=dict(color='#334155', size=12),
+            font=dict(color='#2F3E4D', size=12),
             bgcolor='rgba(255, 255, 255, 0.95)',
-            bordercolor='#E2E8F0',
+            bordercolor='#DDE2E6',
             borderwidth=1
         )
     )
     return fig
 
-# Paleta oficial S&OP Profesional
+# Paleta oficial S&OP Profesional SAP Fiori Horizon
 PALETA_INVERNADERO = {
-    "fondo_app": "#F8FAFC",
+    "fondo_app": "#F5F6F7",
     "fondo_panel": "#FFFFFF",
-    "borde_metalico": "#E2E8F0",
-    "plan_demanda": "#1D4ED8",
+    "borde_metalico": "#DDE2E6",
+    "plan_demanda": "#0070F2",
     "forecast_oferta": "#059669",
     "enraizamiento": "#D97706",
-    "alerta_techo": "#DC2626",
-    "neutro": "#64748B",
-    "texto_titulos": "#0F172A",
-    "texto_cuerpo": "#334155"
+    "alerta_techo": "#BB0000",
+    "neutro": "#556B82",
+    "texto_titulos": "#1C2D42",
+    "texto_cuerpo": "#2F3E4D"
 }
 
 PALETA_EJECUTIVA = PALETA_INVERNADERO
+PALETA_SAP = PALETA_INVERNADERO
 
 def badge_variedad(nombre: str, tipo_color: str = "azul") -> str:
     """Genera HTML para un badge corporativo S&OP."""

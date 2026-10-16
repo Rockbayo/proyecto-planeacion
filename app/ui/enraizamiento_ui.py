@@ -408,7 +408,7 @@ def render_enraizamiento_module(db):
         
         with col_g1:
             st.markdown("###### 📊 Volumen de Esquejes por Día")
-            chart_esq = alt.Chart(df_res_dia).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color="#1D4ED8").encode(
+            chart_esq = alt.Chart(df_res_dia).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color="#0070F2").encode(
                 x=alt.X('Día:N', sort=["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"], title="Día de la Semana"),
                 y=alt.Y('Esquejes:Q', title="Esquejes Programados"),
                 tooltip=['Día', 'Esquejes', 'Bandejas (112)', '% Semana']
@@ -433,7 +433,7 @@ def render_enraizamiento_module(db):
             chart_h = alt.Chart(df_melted).mark_bar(opacity=0.85).encode(
                 x=alt.X('Día:N', sort=["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"], title="Día"),
                 y=alt.Y('Horas:Q', title="Horas de Mano de Obra"),
-                color=alt.Color('Tipo:N', scale=alt.Scale(domain=['Horas Requeridas', 'Horas Disponibles'], range=['#DC2626', '#1D4ED8'])),
+                color=alt.Color('Tipo:N', scale=alt.Scale(domain=['Horas Requeridas', 'Horas Disponibles'], range=['#BB0000', '#0070F2'])),
                 xOffset='Tipo:N',
                 tooltip=['Día', 'Tipo', alt.Tooltip('Horas:Q', format='.1f')]
             ).properties(height=300)
@@ -580,7 +580,7 @@ def render_enraizamiento_module(db):
                 y=alt.Y('Tallos:Q', title="Tallos Semanales"),
                 color=alt.Color('Fuente:N', scale=alt.Scale(
                     domain=['Cosecha Proyectada Enraizamiento', 'Meta Plan Producción (ForeCast)'],
-                    range=['#059669', '#1D4ED8']
+                    range=['#059669', '#0070F2']
                 )),
                 xOffset='Fuente:N',
                 tooltip=['Semana_Cosecha_Label', 'Fuente', alt.Tooltip('Tallos:Q', format=',d'), 'Temporada']
@@ -630,7 +630,7 @@ def render_enraizamiento_module(db):
             chart_comp = alt.Chart(df_melt_enr).mark_bar(opacity=0.85).encode(
                 x=alt.X('Semana_Enraizamiento_Label:N', title="Semana de Enraizamiento"),
                 y=alt.Y('Esquejes:Q', title="Esquejes a Enraizar"),
-                color=alt.Color('Fuente:N', scale=alt.Scale(domain=['Plataforma S&OP', 'Pedido Programado (Analítica)'], range=['#1D4ED8', '#D97706'])),
+                color=alt.Color('Fuente:N', scale=alt.Scale(domain=['Plataforma S&OP', 'Pedido Programado (Analítica)'], range=['#0070F2', '#D97706'])),
                 xOffset='Fuente:N',
                 tooltip=['Semana_Enraizamiento_Label', 'Fuente', alt.Tooltip('Esquejes:Q', format=',d'), 'Temporada']
             ).properties(height=320)
