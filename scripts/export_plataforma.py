@@ -48,16 +48,16 @@ def procesar_plantillas_plataforma(templates_dict, df_forecast, df_plan=None):
             # Extraer las columnas que son semanas
             cols_semanas = [c for c in df.columns if str(c).startswith('202')]
             
-            # Separar en las primeras 10 semanas de corto plazo (Inventario Vivo) y las restantes (Plan MVA)
-            semanas_forecast = cols_semanas[:10]
-            semanas_plan = cols_semanas[10:]
+            # Separar en las primeras 9 semanas a partir de la siguiente semana (Inventario Vivo) y las 4 restantes (Plan Maestro)
+            semanas_forecast = cols_semanas[:9]
+            semanas_plan = cols_semanas[9:]
             
             # Rellenar cada fila
             for idx, row in df.iterrows():
                 variedad_original = row['Variedad']
                 variedad_norm = str(variedad_original).strip().lower()
                 
-                # 1. Rellenar las primeras 10 semanas con el ForeCast (Inventario Vivo)
+                # 1. Rellenar las primeras 9 semanas con el ForeCast (Inventario Vivo)
                 for sem in semanas_forecast:
                     sem_str = str(int(sem)) if isinstance(sem, float) else str(sem)
                     valor_proyectado = 0

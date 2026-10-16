@@ -216,6 +216,20 @@ button[kind="primary"]:hover, .stButton > button[kind="primary"]:hover {
     box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.12) !important;
 }
 
+button[kind="primary"] *,
+button[kind="primary"] p,
+button[kind="primary"] span,
+button[kind="primary"] div,
+.stButton > button[kind="primary"] *,
+.stButton > button[kind="primary"] p,
+.stButton > button[kind="primary"] span,
+button[data-testid="baseButton-primary"] *,
+button[data-testid="baseButton-primary"] p,
+button[data-testid="baseButton-primary"] span {
+    color: #FFFFFF !important;
+    font-weight: 600 !important;
+}
+
 button[kind="secondary"], .stButton > button:not([kind="primary"]) {
     background: #FFFFFF !important;
     color: #1E293B !important;

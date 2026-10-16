@@ -371,23 +371,6 @@ elif modulo == "ForeCast y Exportación":
                 plan_series_cap = pd.Series(0.0, index=semanas_futuras)
 
             fig_fc = go.Figure()
-            
-            # Diferenciación visual: Zona de Inventario Vivo (Primeras 10 semanas de corto plazo)
-            idx_10w = min(9, len(semanas_futuras) - 1)
-            if idx_10w > 0:
-                fig_fc.add_vrect(
-                    x0=semanas_futuras[0],
-                    x1=semanas_futuras[idx_10w],
-                    fillcolor="#059669",
-                    opacity=0.08,
-                    line_width=1,
-                    line_dash="dot",
-                    line_color="#10B981",
-                    annotation_text="🌿 Corto Plazo: Inventario Vivo en Campo (10 Semanas)",
-                    annotation_position="top left",
-                    annotation_font_size=11,
-                    annotation_font_color="#047857"
-                )
 
             # 1. Trazo: ForeCast Biológico (Siembras Actuales unida a la Proyección del Pedido)
             fig_fc.add_trace(go.Scatter(
@@ -415,6 +398,8 @@ elif modulo == "ForeCast y Exportación":
                 title=dict(text=f"Proyección Semanal vs Plan de Producción Aprobado ({vista})", font=dict(size=15, color="#0F172A", family="Inter, sans-serif")),
                 xaxis=dict(
                     type='category',
+                    categoryorder='array',
+                    categoryarray=semanas_futuras,
                     title="Semana Operativa",
                     tickangle=-45,
                     fixedrange=True

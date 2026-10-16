@@ -121,11 +121,11 @@ def render_ocupacion_module(db):
         )
 
         st.info("""
-        💡 **Hallazgos Clave de Capacidad Física:**
-        1. **Ningún bloque supera el 100% de ocupación física:** Los bloques **01, 02 y 05 están al 100%** (completamente sembrados) y el **Bloque 06 al 99%** (190 de 192 camas).
-        2. **Camas Multivariedad (Diferencia entre Lotes y Camas):** Existen **82 camas** que albergan 2 o más variedades simultáneas (ej. en Bloque 01 hay 260 lotes en 240 camas físicas, con 20 camas compartidas). Esto explica por qué el conteo de lotes parecía superar las camas.
-        3. **Variabilidad Real de Eras:** El área de cada cama varía entre **51.57 m²** (Bloque 06) y **60.62 m²** (Bloque 03) según los planos de la finca.
-        4. **Disponibilidad Inmediata:** La finca cuenta hoy con **249 camas libres** disponibles para programar siembras, concentradas en el **Bloque 03 (134 camas)** y **Bloque 04 (113 camas)**.
+        💡 **Capacidad Física y Disponibilidad Operativa:**
+        1. **Distribución de Ocupación por Bloque:** Los bloques **01, 02 y 05** se encuentran al 100% de ocupación en suelo, y el **Bloque 06** al 99% (190 de 192 camas).
+        2. **Camas Multivariedad:** Existen **82 camas** compartidas que albergan 2 o más variedades simultáneas optimizando el área productiva.
+        3. **Variabilidad de Eras:** El área promedio de cama varía entre **51.57 m²** (Bloque 06) y **60.62 m²** (Bloque 03) según los planos oficiales de la finca.
+        4. **Disponibilidad Inmediata:** La finca cuenta hoy con **249 camas libres** disponibles para programación de siembras, concentradas en el **Bloque 03 (134 camas)** y **Bloque 04 (113 camas)**.
         """)
 
     # =========================================================================
@@ -233,17 +233,55 @@ def render_ocupacion_module(db):
         )
 
         if modo_vista == "Plan Operativo Vigente":
-            line_chart = base_chart.mark_line(point=True, color='#1D4ED8', strokeWidth=2.8).encode(
-                y=alt.Y('Camas_Niveladas_OpB:Q', title='Camas Ocupadas', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
+            # Checkbox opcional para incluir Ocupación Total en Suelo
+            mostrar_total = st.checkbox("Mostrar además curva de Ocupación Total en Suelo (Vivo + Siembras)", value=False, key="chk_occ_total")
+            
+            lineas_a_graficar = ['Camas_Inventario_Vivo', 'Camas_Siembras_Futuras']
+            mapa_nombres = {
+                'Camas_Inventario_Vivo': '1. Inventario Vivo en Suelo (Lotes Actuales)',
+                'Camas_Siembras_Futuras': '2. Siembras Proyectadas (Enraizamiento / Pedido)'
+            }
+            mapa_colores = {
+                '1. Inventario Vivo en Suelo (Lotes Actuales)': '#059669',  # Verde Esmeralda
+                '2. Siembras Proyectadas (Enraizamiento / Pedido)': '#1D4ED8'   # Azul Zafiro
+            }
+
+            if mostrar_total:
+                lineas_a_graficar.append('Camas_Niveladas_OpB')
+                mapa_nombres['Camas_Niveladas_OpB'] = '3. Ocupación Total en Suelo (Vivo + Siembras)'
+                mapa_colores['3. Ocupación Total en Suelo (Vivo + Siembras)'] = '#7C3AED'  # Púrpura
+
+            cols_id = ['Semana', 'Semana_Label', 'Temporada', 'Camas_Siembra', 'Esquejes_Siembra', 'Camas_Niveladas_OpB', 'Ocupacion_Nivelada_%']
+            df_melt = pd.melt(
+                df_plot,
+                id_vars=[c for c in cols_id if c in df_plot.columns],
+                value_vars=lineas_a_graficar,
+                var_name='Tipo_Curva',
+                value_name='Camas'
+            )
+            df_melt['Tipo_Curva'] = df_melt['Tipo_Curva'].map(mapa_nombres)
+
+            domain_colores = list(mapa_colores.keys())
+            range_colores = [mapa_colores[k] for k in domain_colores]
+
+            line_chart = alt.Chart(df_melt).mark_line(point=True, strokeWidth=2.6).encode(
+                x=alt.X('Semana_Label:N', sort=orden_cronologico, title='Semana Operativa (Cronológica)', axis=alt.Axis(labelAngle=-45)),
+                y=alt.Y('Camas:Q', title='Camas Ocupadas en Suelo', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
+                color=alt.Color(
+                    'Tipo_Curva:N',
+                    scale=alt.Scale(domain=domain_colores, range=range_colores),
+                    legend=alt.Legend(title='Curvas de Capacidad', orient='top', labelFontSize=12, symbolSize=100)
+                ),
                 tooltip=[
-                    'Semana_Label:N', 'Semana:N', 'Temporada:N',
+                    'Semana_Label:N', 'Semana:N', 'Temporada:N', 'Tipo_Curva:N',
+                    alt.Tooltip('Camas:Q', title='Camas en Curva', format='.1f'),
                     alt.Tooltip('Camas_Siembra:Q', title='Siembras Semanales (Camas)', format='.1f'),
                     alt.Tooltip('Esquejes_Siembra:Q', title='Siembras Semanales (Esquejes)', format=',d'),
-                    alt.Tooltip('Camas_Niveladas_OpB:Q', title='Camas Ocupadas en Suelo', format='.1f'),
-                    alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación (%)', format='.1f')
+                    alt.Tooltip('Camas_Niveladas_OpB:Q', title='Total Camas en Suelo', format='.1f'),
+                    alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación Total (%)', format='.1f')
                 ]
             )
-            titulo_grafico = f"Curva de Ocupación - Plan Operativo Vigente [{bloque_subtitulo}]"
+            titulo_grafico = f"Curvas de Ocupación: Inventario Vivo vs. Siembras de Enraizamiento [{bloque_subtitulo}]"
             chart_final = band_opt + line_chart + rule_techo_inst + rule_techo_red
 
         elif modo_vista == "Plan Base (Referencia)":
@@ -279,9 +317,10 @@ def render_ocupacion_module(db):
         st.caption(f"🔴 **Línea Roja Discontinua:** Capacidad física instalada ({int(techo_camas)} camas). | 🟠 **Línea Naranja Discontinua:** Capacidad post-reducción de área (~{int(techo_reducido)} camas / ~100 camas descontadas a partir de S{SEMANA_CORTE_REDUCCION_AREA}). | 🟢 **Franja Verde Esmeralda:** Rango operativo óptimo (85% a 95%).")
 
         st.info("""
-        💡 **Distinción Clave entre Siembra y Cosecha (San Valentín 2027):**
-        * 🌱 **Ventana de Siembra:** Ocurre entre las semanas **S2643 y S2647** (Pico en **S2646 con 130.8 camas sembradas / 680,000 esquejes**). En esta ventana, la finca sostiene una ocupación en suelo de **~980 a 996 camas (85.2%)**, ya que las nuevas siembras coexisten con el cultivo previo en cosecha.
-        * 🌹 **Ventana de Cosecha:** Ocurre 14 semanas después, entre **S2701 y S2706** (Pico en **S2706 con 1,168 camas** niveladas al 100.0% de capacidad comercial).
+        💡 **Distinción Clave entre Inventario Vivo, Siembras de Enraizamiento y Cosecha San Valentín:**
+        * 🟢 **Línea Verde (Inventario Vivo en Suelo):** Muestra el decaimiento natural del cultivo actual a medida que se cosechan los lotes en campo (baja de ~918 camas en S2642 hasta 0 camas en S2703).
+        * 🔵 **Línea Azul (Siembras Proyectadas de Enraizamiento):** Demuestra cómo el material vegetal ingresado a partir de S2643 va ocupando las camas liberadas, alcanzando **1,144 camas (~98-100% de ocupación)** en la ventana pico de San Valentín (S2704-S2706).
+        * 🤝 **Coexistencia y Relevo:** Durante las semanas de siembra de San Valentín (S2643-S2647), las nuevas siembras coexisten con el cultivo saliente garantizando que la finca no quede desocupada ni sobrepase el límite físico.
         """)
 
         # Tabla Semanal Detallada
@@ -289,22 +328,27 @@ def render_ocupacion_module(db):
             df_plot_tbl = df_plot.copy()
             df_plot_tbl['Diferencia_Camas'] = (df_plot_tbl['Camas_Plan_Original'] - df_plot_tbl['Camas_Niveladas_OpB']).clip(lower=0).round(1)
             df_plot_tbl['Ahorro_Esquejes'] = (df_plot_tbl['Diferencia_Camas'] * 5200).round().astype(int)
+            cols_para_mostrar = [
+                "Semana", "Semana_Label", "Temporada", 
+                "Camas_Siembra", "Esquejes_Siembra",
+                "Camas_Inventario_Vivo", "Camas_Siembras_Futuras",
+                "Camas_Niveladas_OpB", "Ocupacion_Nivelada_%", 
+                "Camas_Plan_Original", "Ocupacion_Original_%",
+                "Diferencia_Camas", "Ahorro_Esquejes", "Estado_Capacidad"
+            ]
+            cols_existentes = [c for c in cols_para_mostrar if c in df_plot_tbl.columns]
             st.dataframe(
-                df_plot_tbl[[
-                    "Semana", "Semana_Label", "Temporada", 
-                    "Camas_Siembra", "Esquejes_Siembra",
-                    "Camas_Niveladas_OpB", "Ocupacion_Nivelada_%", 
-                    "Camas_Plan_Original", "Ocupacion_Original_%",
-                    "Diferencia_Camas", "Ahorro_Esquejes", "Estado_Capacidad"
-                ]],
+                df_plot_tbl[cols_existentes],
                 column_config={
                     "Semana_Label": st.column_config.TextColumn("Semana Ops"),
                     "Temporada": st.column_config.TextColumn("Temporada / Etapa"),
                     "Camas_Siembra": st.column_config.NumberColumn("Siembra (Camas)", format="%.1f"),
                     "Esquejes_Siembra": st.column_config.NumberColumn("Siembra (Esquejes)", format="%,d"),
+                    "Camas_Inventario_Vivo": st.column_config.NumberColumn("Camas Vivo en Suelo", format="%.1f"),
+                    "Camas_Siembras_Futuras": st.column_config.NumberColumn("Camas Siembras Proy.", format="%.1f"),
                     "Ocupacion_Nivelada_%": st.column_config.NumberColumn("Ocup. Vigente (%)", format="%.1f%%"),
                     "Ocupacion_Original_%": st.column_config.NumberColumn("Ocup. Base (%)", format="%.1f%%"),
-                    "Camas_Niveladas_OpB": st.column_config.NumberColumn("Camas Plan Vigente", format="%.1f"),
+                    "Camas_Niveladas_OpB": st.column_config.NumberColumn("Camas Total en Suelo", format="%.1f"),
                     "Camas_Plan_Original": st.column_config.NumberColumn("Camas Plan Base", format="%.1f"),
                     "Diferencia_Camas": st.column_config.NumberColumn("Diferencia Camas", format="%.1f"),
                     "Ahorro_Esquejes": st.column_config.NumberColumn("Diferencia Esquejes", format="%,d"),

@@ -441,6 +441,8 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
             "Area_Capacidad_m2": area_cap_sem,
             "Camas_Siembra": s_camas,
             "Esquejes_Siembra": int(round(s_camas * 5200)),
+            "Camas_Inventario_Vivo": round(float(c_vivas), 1),
+            "Camas_Siembras_Futuras": round(float(c_ped_adj), 1),
             "Camas_Ocupadas": round(c_adj_clamped, 1),
             "Camas_Libres": round(libres_adj, 1),
             "Ocupacion_%": pct_adj,
@@ -493,6 +495,8 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
                 "Camas_Capacidad": cap_b,
                 "Camas_Siembra": s_camas_b,
                 "Esquejes_Siembra": esquejes_b,
+                "Camas_Inventario_Vivo": round(float(c_vivas_b), 1),
+                "Camas_Siembras_Futuras": round(float(c_ped_adj_b), 1),
                 "Camas_Ocupadas": round(camas_tot_adj_b, 1),
                 "Camas_Niveladas_OpB": round(camas_niv_b, 1),
                 "Camas_Plan_Original": round(camas_tot_orig_b, 1),
@@ -699,11 +703,15 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
         semanas_52 = sorted(list(df_52w['Semana'].unique()))
         orig_camas_map = dict(zip(df_52w['Semana'], df_52w['Camas_Plan_Original']))
         siembra_camas_map = dict(zip(df_52w['Semana'], df_52w['Camas_Siembra'])) if 'Camas_Siembra' in df_52w.columns else {}
+        vivas_camas_map = dict(zip(df_52w['Semana'], df_52w['Camas_Inventario_Vivo'])) if 'Camas_Inventario_Vivo' in df_52w.columns else {}
+        siembras_fut_map = dict(zip(df_52w['Semana'], df_52w['Camas_Siembras_Futuras'])) if 'Camas_Siembras_Futuras' in df_52w.columns else {}
     else:
         semanas_todas = sorted(list(set(list(occ_orig.keys()) + list(occ_nivelada.keys()))))
         semanas_52 = [s for s in semanas_todas if '202640' <= s <= '202740']
         orig_camas_map = {}
         siembra_camas_map = {}
+        vivas_camas_map = {}
+        siembras_fut_map = {}
 
     def clasificar_temporada(sem_int):
         if 202640 <= sem_int <= 202642:
@@ -728,6 +736,8 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
         c_orig = round(float(orig_camas_map.get(s, occ_orig.get(s, 0.0))), 1)
         c_niv = round(min(max_camas, c_orig), 1)
         s_camas = round(float(siembra_camas_map.get(s, 0.0)), 1)
+        c_vivas = round(float(vivas_camas_map.get(s, 0.0)), 1)
+        c_fut = round(float(siembras_fut_map.get(s, 0.0)), 1)
         pct_orig = round((c_orig / max_camas) * 100.0, 1)
         pct_niv = round((c_niv / max_camas) * 100.0, 1)
         libres_niv = round(max(0.0, max_camas - c_niv), 1)
@@ -753,6 +763,8 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
             "Temporada": temp,
             "Camas_Siembra": s_camas,
             "Esquejes_Siembra": int(round(s_camas * 5200)),
+            "Camas_Inventario_Vivo": c_vivas,
+            "Camas_Siembras_Futuras": c_fut,
             "Camas_Plan_Original": c_orig,
             "Ocupacion_Original_%": pct_orig,
             "Camas_Niveladas_OpB": c_niv,
