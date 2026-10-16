@@ -177,11 +177,20 @@ if modulo == "Dashboard General":
             
         uploaded_pedido = st.file_uploader("Cargar nuevo Pedido Consolidado", type=["xlsx", "xls"], key="upload_pedido")
         if uploaded_pedido is not None:
-            if st.button("Guardar Pedido MVA"):
-                with open("PedidoConsolidado_master.xlsx", "wb") as f:
-                    f.write(uploaded_pedido.getbuffer())
-                st.success("Pedido guardado. Se usará automáticamente en las proyecciones.")
-                st.rerun()
+            st.caption("ℹ️ **Lógica S&OP:** Se actualizan las semanas presentes en el archivo y se **preserva intacto todo el histórico** de semanas anteriores.")
+            if st.button("Procesar y Sincronizar Pedido", type="primary"):
+                with st.spinner("Sincronizando pedido y preservando semanas históricas..."):
+                    from app.services.mva_service import sincronizar_pedido_consolidado_master
+                    res_sync = sincronizar_pedido_consolidado_master(uploaded_pedido)
+                    if res_sync.get("status") == "success":
+                        n_act = len(res_sync['semanas_actualizadas'])
+                        n_hist = len(res_sync['semanas_historicas_preservadas'])
+                        s_min = res_sync['semana_min']
+                        s_max = res_sync['semana_max']
+                        st.success(f"✅ Pedido sincronizado: {n_act} semanas actualizadas y {n_hist} semanas históricas conservadas (Total: {s_min} a {s_max}, {res_sync['total_variedades']} variedades).")
+                        st.rerun()
+                    else:
+                        st.error(f"Error procesando pedido: {res_sync.get('message', 'Desconocido')}")
                 
     st.divider()
 

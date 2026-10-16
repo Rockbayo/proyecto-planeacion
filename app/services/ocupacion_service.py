@@ -11,25 +11,49 @@ from app.services.forecast_service import isocalendar_to_string
 
 # Constantes Maestras de la Finca y Cronograma de Transición
 SEMANA_CORTE_REDUCCION_AREA = 202648     # Semana de corte: la reducción física se aplica a partir de S202648
-AREA_PRODUCTIVA_ACTUAL_M2 = 64878.0       # Área productiva real actual (hasta semana 202647)
-AREA_PRODUCTIVA_REDUCIDA_M2 = 61878.0     # Área productiva reducida a partir de semana 202648
-AREA_PRODUCTIVA_TOTAL_M2 = 61878.0        # Área comercial productiva régimen post-reducción
-AREA_PRODUCTIVA_ANTERIOR_M2 = 64878.0    # Área comercial previa (con la que se diseñó el Plan Original)
-FACTOR_AJUSTE_AREA = AREA_PRODUCTIVA_REDUCIDA_M2 / AREA_PRODUCTIVA_ANTERIOR_M2 # 0.953759 (-4.624%)
 
-CAMAS_COMERCIALES_TOTALES = 1168.0       # Camas en bloques 01 a 06
-CAMAS_INV_TOTALES = 48.0                 # Bloque INV (Investigación / I+D)
-CAMAS_TOTALES_INSTALADAS = 1216.0        # 1,168 comerciales + 48 INV
+# Capacidad de Camas Físicas
+CAMAS_COMERCIALES_TOTALES = 1168.0       # Camas en bloques 01 a 06 vigentes hoy (hasta S202647)
+CAMAS_REDUCIDAS_TOTALES = 48.0           # 6 naves en total: 48 camas (8 camas por nave)
+CAMAS_COMERCIALES_REDUCIDAS = 1120.0     # Capacidad comercial post-reducción (1,168 - 48)
+NAVES_REDUCIDAS_TOTALES = 6              # 2 naves en B01, 2 naves en B02, 2 naves en B03
+CAMAS_INV_TOTALES = 48.0                 # Bloque INV (Investigación / I+D, sin cambio)
+CAMAS_TOTALES_INSTALADAS = 1216.0        # 1,168 comerciales + 48 INV hoy
+CAMAS_TOTALES_POST_REDUCCION = 1168.0    # 1,120 comerciales + 48 INV post-reducción
 
-CAPACIDAD_BLOQUES = {
-    '01': 240.0,
-    '02': 160.0,
-    '03': 184.0,
-    '04': 232.0,
-    '05': 160.0,
-    '06': 192.0,
-    'INV': 48.0
+# Distribución por Bloque de la Reducción
+NAVES_POR_BLOQUE_REDUCIDAS = {'01': 2, '02': 2, '03': 2, '04': 0, '05': 0, '06': 0, 'INV': 0}
+CAMAS_POR_BLOQUE_REDUCIDAS = {'01': 16.0, '02': 16.0, '03': 16.0, '04': 0.0, '05': 0.0, '06': 0.0, 'INV': 0.0}
+
+CAPACIDAD_BLOQUES_ACTUAL = {
+    '01': 240.0,  # 30 naves
+    '02': 160.0,  # 27 naves
+    '03': 184.0,  # 25 naves
+    '04': 232.0,  # 29 naves
+    '05': 160.0,  # 20 naves
+    '06': 192.0,  # 24 naves
+    'INV': 48.0   # 8 naves
 }
+
+CAPACIDAD_BLOQUES_REDUCIDA = {
+    '01': 224.0,  # 240 - 16 (28 naves, -2 naves)
+    '02': 144.0,  # 160 - 16 (25 naves, -2 naves)
+    '03': 168.0,  # 184 - 16 (23 naves, -2 naves)
+    '04': 232.0,  # 29 naves (sin cambio)
+    '05': 160.0,  # 20 naves (sin cambio)
+    '06': 192.0,  # 24 naves (sin cambio)
+    'INV': 48.0   # 8 naves (sin cambio)
+}
+
+# Alias para compatibilidad
+CAPACIDAD_BLOQUES = CAPACIDAD_BLOQUES_ACTUAL
+
+# Áreas Productivas Físicas
+AREA_PRODUCTIVA_ACTUAL_M2 = 64878.0       # Área productiva real comercial actual (hasta semana 202647)
+AREA_PRODUCTIVA_REDUCIDA_M2 = 62212.0     # Área productiva reducida a partir de semana 202648 (-2,666 m2, -4.11%)
+AREA_PRODUCTIVA_TOTAL_M2 = 62212.0        # Área comercial productiva régimen post-reducción
+AREA_PRODUCTIVA_ANTERIOR_M2 = 64878.0    # Área comercial previa
+FACTOR_AJUSTE_AREA = CAMAS_COMERCIALES_REDUCIDAS / CAMAS_COMERCIALES_TOTALES # 0.958904 (-4.1096%)
 
 ANCHO_CAMA_M = 1.20
 LARGO_CAMA_M = 30.00
@@ -400,20 +424,22 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
 
         if sem_int < SEMANA_CORTE_REDUCCION_AREA:
             area_cap_sem = AREA_PRODUCTIVA_ACTUAL_M2
-            regimen_area = "Base Actual (64,878 m²)"
+            camas_cap_sem = CAMAS_COMERCIALES_TOTALES
+            regimen_area = "Base Actual (64,878 m² - 1,168 camas)"
         else:
             area_cap_sem = AREA_PRODUCTIVA_REDUCIDA_M2
-            regimen_area = "Base Reducida (61,878 m²)"
+            camas_cap_sem = CAMAS_COMERCIALES_REDUCIDAS
+            regimen_area = "Base Reducida (62,212 m² - 1,120 camas, -48 camas en B01, B02, B03)"
 
-        m2_cama_sem = area_cap_sem / CAMAS_COMERCIALES_TOTALES
+        m2_cama_sem = area_cap_sem / camas_cap_sem
 
-        # Métricas del Plan Original (Base 64,878 m2)
+        # Métricas del Plan Original (Base 64,878 m2 / 1,168 camas)
         pct_orig = round((camas_tot_orig / CAMAS_COMERCIALES_TOTALES) * 100.0, 1)
 
-        # Métricas del Plan Ajustado
-        c_adj_clamped = min(CAMAS_COMERCIALES_TOTALES, round(camas_tot_adj, 1))
-        pct_adj = round((c_adj_clamped / CAMAS_COMERCIALES_TOTALES) * 100.0, 1)
-        libres_adj = max(0.0, CAMAS_COMERCIALES_TOTALES - c_adj_clamped)
+        # Métricas del Plan Ajustado al régimen vigente de la semana
+        c_adj_clamped = min(camas_cap_sem, round(camas_tot_adj, 1))
+        pct_adj = round((c_adj_clamped / camas_cap_sem) * 100.0, 1)
+        libres_adj = max(0.0, camas_cap_sem - c_adj_clamped)
 
         area_occ_adj = round(c_adj_clamped * m2_cama_sem, 1)
         area_lib_adj = round(max(0.0, area_cap_sem - area_occ_adj), 1)
@@ -455,10 +481,14 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
             "Estado_Capacidad": estado
         })
 
-        # Detalle por bloques para cada semana
+        # Detalle por bloques para cada semana (aplica reducción en B01, B02, B03 desde S2648)
         for b_code in ['01', '02', '03', '04', '05', '06', 'INV']:
-            cap_b = CAPACIDAD_BLOQUES.get(b_code, 240.0)
-            ratio_b = (cap_b / CAMAS_COMERCIALES_TOTALES) if b_code != 'INV' else 0.0
+            if sem_int < SEMANA_CORTE_REDUCCION_AREA:
+                cap_b = CAPACIDAD_BLOQUES_ACTUAL.get(b_code, 240.0)
+                ratio_b = (cap_b / CAMAS_COMERCIALES_TOTALES) if b_code != 'INV' else 0.0
+            else:
+                cap_b = CAPACIDAD_BLOQUES_REDUCIDA.get(b_code, 240.0)
+                ratio_b = (cap_b / CAMAS_COMERCIALES_REDUCIDAS) if b_code != 'INV' else 0.0
 
             c_vivas_b = info['por_bloque_vivas'].get(b_code, 0.0)
             c_ped_orig_b = c_ped_orig * ratio_b
@@ -547,14 +577,14 @@ def calcular_balanceo_estacional(df_semanal: pd.DataFrame, meta_tallos_m2: float
     # Diagnóstico de Picos y Summer
     recomendaciones = []
 
-    # Ajuste por Reducción de Área (64,878 m2 -> 61,878 m2)
+    # Ajuste por Reducción de Área (64,878 m2 -> 62,212 m2, -48 camas en B01, B02, B03)
     dif_m2 = AREA_PRODUCTIVA_ANTERIOR_M2 - AREA_PRODUCTIVA_TOTAL_M2
     dif_tallos_meta = int(round(dif_m2 * meta_tallos_m2))
     dif_tallos_plan = int(round(PLAN_TALLOS_ANUAL_DEFAULT * (1.0 - FACTOR_AJUSTE_AREA)))
     recomendaciones.append({
-        "Tipo": "Ajuste Mandatorio por Disminución de Área (64,878 m² → 61,878 m²)",
-        "Diagnostico": f"El Plan de Producción y el Pedido de Esquejes se diseñaron con el área anterior de 64,878 m². Con la reducción física a 61,878 m² (-3,000 m², -4.62%), la finca tiene un sobrecupo estructurado de ~{dif_tallos_meta:,.0f} tallos/año frente a la meta (o ~{dif_tallos_plan:,.0f} tallos del plan asignado).",
-        "Accion_Optima": f"Aplicar el Factor de Escalamiento Real de {FACTOR_AJUSTE_AREA:.5f} (-4.62%) sobre el pedido consolidado de esquejes. Esto reduce la demanda pico de 1,200 camas a 1,144 camas, manteniendo la ocupación en todo momento dentro del techo de 1,168 camas comerciales."
+        "Tipo": "Ajuste Mandatorio por Reducción Física (6 Naves / 48 Camas en B01, B02, B03)",
+        "Diagnostico": f"A partir de S{SEMANA_CORTE_REDUCCION_AREA}, la finca reduce físicamente 6 naves (48 camas en total: 2 naves / 16 camas en B01, 2 naves / 16 camas en B02 y 2 naves / 16 camas en B03). La capacidad comercial pasa de 1,168 a 1,120 camas (62,212 m², -4.11%).",
+        "Accion_Optima": f"Aplicar el Factor de Escalamiento Real de {FACTOR_AJUSTE_AREA:.5f} (-4.11%) y las cancelaciones dirigidas sobre los bloques 1, 2 y 3 para operar dentro del nuevo techo físico de 1,120 camas comerciales."
     })
     
     # Summer
@@ -652,14 +682,20 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
     occ_orig = calcular_ocupacion_matriz(siembras_orig)
     siembras_niveladas = dict(siembras_orig)
 
-    # Nivelación iterativa exclusivamente sobre las semanas con sobrecupo (> max_camas)
+    # Nivelación iterativa exclusivamente sobre las semanas con sobrecupo (> techo_semana)
     for _ in range(6):
         occ_curr = calcular_ocupacion_matriz(siembras_niveladas)
-        over_weeks = {s: v for s, v in occ_curr.items() if v > max_camas and '202635' <= s <= '202752'}
+        over_weeks = {}
+        for s, v in occ_curr.items():
+            if '202635' <= s <= '202752':
+                s_int = int(s) if str(s).isdigit() else 202640
+                techo_sem = CAMAS_COMERCIALES_REDUCIDAS if s_int >= SEMANA_CORTE_REDUCCION_AREA else max_camas
+                if v > techo_sem:
+                    over_weeks[s] = (v, techo_sem)
         if not over_weeks:
             break
-        for s_over, v_over in over_weeks.items():
-            exceso = v_over - max_camas
+        for s_over, (v_over, t_over) in over_weeks.items():
+            exceso = v_over - t_over
             y_o = int(str(s_over)[:4])
             w_o = int(str(s_over)[4:])
             dt_o = date.fromisocalendar(y_o, w_o, 1)
@@ -888,7 +924,7 @@ def obtener_dimensiones_camas_bloques(db: Session = None, base_area: str = "prod
 
         info["FINCA"] = {
             "bloque": "FINCA",
-            "nombre": "Promedio Ponderado Finca (61,878 m²)",
+            "nombre": "Promedio Ponderado Finca (62,212 m²)",
             "camas": tot_camas,
             "area_total_m2": round(tot_area, 2),
             "m2_cama": m2_cama_finca,
@@ -950,8 +986,9 @@ def resolver_bloque_tentativo(sem_siembra: str, df_bloques_52w: pd.DataFrame = N
 
 def calcular_cancelaciones_reduccion_area_s2648(archivo_pedido: str = "PedidoConsolidado_master.xlsx", sem_inicio: str = None, sem_fin: str = None) -> pd.DataFrame:
     """
-    Calcula el excedente de material vegetal derivado de la reducción de área física 
-    (64,878 m2 -> 61,878 m2, -4.624%) a partir de la semana de siembra 202648.
+    Calcula el excedente de material vegetal derivado de la reducción física de 48 camas en 6 naves 
+    (2 naves en B01, 2 naves en B02 y 2 naves en B03, pasando de 1,168 a 1,120 camas, -4.11%) 
+    a partir de la semana de siembra 202648.
     
     Identifica para cada orden en la ventana ejecutable (< 24 semanas) los esquejes 
     que no tienen cama disponible y deben ser cancelados para evitar sobrecostos.
@@ -995,7 +1032,7 @@ def calcular_cancelaciones_reduccion_area_s2648(archivo_pedido: str = "PedidoCon
     if df_filt.empty:
         return pd.DataFrame()
 
-    FACTOR_REDUCCION = AREA_PRODUCTIVA_REDUCIDA_M2 / AREA_PRODUCTIVA_ACTUAL_M2
+    FACTOR_REDUCCION = CAMAS_COMERCIALES_REDUCIDAS / CAMAS_COMERCIALES_TOTALES
 
     # Cargar Plan Detallado Aprobado para proteger el surtido al 100% y validar techo +10%
     plan_map = {}
@@ -1059,7 +1096,7 @@ def calcular_cancelaciones_reduccion_area_s2648(archivo_pedido: str = "PedidoCon
                             "Motivo": f"Excedente supera el límite máximo permitido (+10% sobre Plan) y libera {camas_canc} cama(s) completa(s)"
                         })
         else:
-            # Si no hay registro en Plan Detallado, evaluar reducción física de área (-4.62%)
+            # Si no hay registro en Plan Detallado, evaluar reducción física de área (-4.11%, 48 camas)
             exceso_area = esq_ped * (1.0 - FACTOR_REDUCCION)
             camas_canc = int(exceso_area // 5200)
             if camas_canc >= 1:
@@ -1073,19 +1110,114 @@ def calcular_cancelaciones_reduccion_area_s2648(archivo_pedido: str = "PedidoCon
                     "Tallos_Plan": esq_ped,
                     "Plan_con_Colchon_10%": int(round(esq_ped * 1.10)),
                     "Tallos_ForeCast": esq_ped,
-                    "Excedente_Color_Neto": f"Exceso Reducción Área: {esq_canc:,} esq",
+                    "Excedente_Color_Neto": f"Exceso Reducción 48 Camas: {esq_canc:,} esq",
                     "Excedente_Tallos": int(round(exceso_area)),
                     "Aprovechamiento_%": 100.0,
                     "Camas_a_Cancelar": camas_canc,
                     "Esquejes_a_Cancelar": esq_canc,
                     "Finca_Cumplimiento_%": 100.0,
                     "Finca_Margen_Tallos": 0,
-                    "Gobernanza_Riesgo": "🟢 Mandatorio (Área Reducida a 61,878 m²)",
+                    "Gobernanza_Riesgo": "🟢 Mandatorio (48 Camas Reducidas en B01, B02, B03)",
                     "Es_Segura": True,
-                    "Motivo": f"Ajuste por reducción física de área a partir de S{SEMANA_CORTE_REDUCCION_AREA} (libera {camas_canc} cama(s))"
+                    "Motivo": f"Ajuste por reducción física de 48 camas (6 naves en B01, B02, B03) a partir de S{SEMANA_CORTE_REDUCCION_AREA} (libera {camas_canc} cama(s))"
                 })
 
     return pd.DataFrame(records)
+
+
+def aplicar_cancelaciones_a_planes_maestros(
+    df_canc: pd.DataFrame,
+    detailed_file: str = "Plan_Aprobado_Detallado.csv",
+    pedido_file: str = "PedidoConsolidado_master.xlsx"
+) -> dict:
+    """
+    Aplica de manera permanente las cancelaciones aprobadas sobre:
+    1. Plan_Aprobado_Detallado.csv (para que el Plan de Enraizamiento y Siembras descuente esas camas).
+    2. PedidoConsolidado_master.xlsx (para que el archivo maestro de pedidos quede actualizado).
+    
+    Retorna un resumen de camas y esquejes descontados y semanas afectadas.
+    """
+    import os
+    if df_canc.empty:
+        return {"status": "warning", "message": "No hay cancelaciones para aplicar.", "camas": 0, "esquejes": 0}
+
+    tot_esq_canc = int(df_canc['Esquejes_a_Cancelar'].sum())
+    tot_cam_canc = int(df_canc['Camas_a_Cancelar'].sum())
+    afectados_det = 0
+    afectados_ped = 0
+
+    # 1. Actualizar Plan_Aprobado_Detallado.csv
+    if os.path.exists(detailed_file):
+        try:
+            df_det = pd.read_csv(detailed_file)
+            df_det['Var_Norm'] = df_det['Variedad'].astype(str).str.strip().str.lower()
+            df_det['Sem_Siem_Clean'] = df_det['Semana_Siembra'].astype(str).str.replace('S', '').str.strip()
+
+            from app.services.mva_service import iso_add_weeks
+            for _, row in df_canc.iterrows():
+                v_norm = str(row['Variedad']).strip().lower()
+                sem_s = str(row.get('Semana_Siembra', '')).replace('S', '').strip()
+                if not sem_s or sem_s.lower() == 'nan':
+                    sem_canc = str(row.get('Semana_Cancelacion', '')).replace('S', '').strip()
+                    sem_s = iso_add_weeks(sem_canc, 4) if sem_canc else ""
+                esq_canc = int(row['Esquejes_a_Cancelar'])
+                cam_canc = float(row['Camas_a_Cancelar'])
+
+                mask = (df_det['Var_Norm'] == v_norm) & (df_det['Sem_Siem_Clean'] == sem_s)
+                if mask.any():
+                    idx = df_det[mask].index[0]
+                    esq_act = int(df_det.at[idx, 'Esquejes'])
+                    cam_act = float(df_det.at[idx, 'Camas'])
+                    
+                    df_det.at[idx, 'Esquejes'] = max(0, esq_act - esq_canc)
+                    df_det.at[idx, 'Camas'] = max(0.0, round(cam_act - cam_canc, 1))
+                    afectados_det += 1
+
+            df_det = df_det.drop(columns=['Var_Norm', 'Sem_Siem_Clean'], errors='ignore')
+            df_det.to_csv(detailed_file, index=False)
+        except Exception as e:
+            return {"status": "error", "message": f"Error actualizando Plan Detallado: {e}", "camas": 0, "esquejes": 0}
+
+    # 2. Actualizar PedidoConsolidado_master.xlsx
+    if os.path.exists(pedido_file):
+        try:
+            df_ped = pd.read_excel(pedido_file)
+            df_ped['Var_Norm'] = df_ped['Variedad'].astype(str).str.strip().str.lower()
+
+            for _, row in df_canc.iterrows():
+                v_norm = str(row['Variedad']).strip().lower()
+                sem_ped = str(row.get('Semana_Cancelacion', '')).strip()
+                if not sem_ped.startswith('S'):
+                    sem_ped = f"S{sem_ped}"
+                esq_canc = int(row['Esquejes_a_Cancelar'])
+
+                if sem_ped in df_ped.columns:
+                    mask = df_ped['Var_Norm'] == v_norm
+                    if mask.any():
+                        idx = df_ped[mask].index[0]
+                        val_act = pd.to_numeric(df_ped.at[idx, sem_ped], errors='coerce') or 0
+                        df_ped.at[idx, sem_ped] = max(0, int(round(val_act - esq_canc)))
+                        afectados_ped += 1
+
+            df_ped = df_ped.drop(columns=['Var_Norm'], errors='ignore')
+            cols_sem = [c for c in df_ped.columns if str(c).startswith('S202')]
+            if 'Total' in df_ped.columns and cols_sem:
+                df_ped['Total'] = df_ped[cols_sem].sum(axis=1)
+
+            with pd.ExcelWriter(pedido_file, engine='xlsxwriter') as writer:
+                df_ped.to_excel(writer, sheet_name='Hoja1', index=False)
+        except Exception as e:
+            return {"status": "error", "message": f"Error actualizando Pedido Master: {e}", "camas": 0, "esquejes": 0}
+
+    return {
+        "status": "success",
+        "message": f"Se aplicaron con éxito las cancelaciones de {tot_cam_canc} camas ({tot_esq_canc:,} esquejes).",
+        "camas": tot_cam_canc,
+        "esquejes": tot_esq_canc,
+        "ordenes_detallado": afectados_det,
+        "ordenes_pedido": afectados_ped
+    }
+
 
 
 

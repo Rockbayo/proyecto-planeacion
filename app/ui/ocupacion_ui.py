@@ -17,6 +17,13 @@ from app.services.ocupacion_service import (
     AREA_PRODUCTIVA_ANTERIOR_M2,
     FACTOR_AJUSTE_AREA,
     CAMAS_COMERCIALES_TOTALES,
+    CAMAS_COMERCIALES_REDUCIDAS,
+    CAMAS_REDUCIDAS_TOTALES,
+    NAVES_REDUCIDAS_TOTALES,
+    CAMAS_POR_BLOQUE_REDUCIDAS,
+    NAVES_POR_BLOQUE_REDUCIDAS,
+    CAPACIDAD_BLOQUES_ACTUAL,
+    CAPACIDAD_BLOQUES_REDUCIDA,
     CAMAS_INV_TOTALES,
     CAMAS_TOTALES_INSTALADAS,
     CAPACIDAD_BLOQUES,
@@ -29,11 +36,11 @@ from app.services.ocupacion_service import (
 
 def render_ocupacion_module(db):
     st.header("🏢 Ocupación de Área y Capacidad de Finca (S&OP)")
-    st.markdown("""
+    st.markdown(f"""
     Este módulo modela la **capacidad física instalada y la ocupación temporal de la finca** a lo largo de las 52 semanas del año,
     cruzando el plano de naves y camas (`Planos sección.csv`) contra el inventario vivo actual y el **Pedido Consolidado de Material Vegetal**.
     Permite auditar la capacidad real por bloque, proyectar la utilización de camas en temporadas clave (**San Valentín** y **Madres**) y 
-    monitorear el cronograma de transición de área a **61,878 m²**.
+    monitorear el cronograma de transición de área a **{AREA_PRODUCTIVA_REDUCIDA_M2:,.0f} m²** ({CAMAS_COMERCIALES_REDUCIDAS:.0f} camas comerciales).
     """)
 
     # 1. Cargar o Inicializar Datos de Capacidad
@@ -57,12 +64,12 @@ def render_ocupacion_module(db):
     with st.container(border=True):
         st.markdown("#### 🎯 Parámetros Físicos Maestros y Cronograma de Capacidad")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Área Real Vigente Hoy", f"{AREA_PRODUCTIVA_ACTUAL_M2:,.0f} m²", f"61,878 m² a partir de S{SEMANA_CORTE_REDUCCION_AREA}")
+        c1.metric("Área Real Vigente Hoy", f"{AREA_PRODUCTIVA_ACTUAL_M2:,.0f} m²", f"{AREA_PRODUCTIVA_REDUCIDA_M2:,.0f} m² desde S{SEMANA_CORTE_REDUCCION_AREA}")
         c2.metric("Camas Comerciales", f"{camas_com_tot:,} camas", f"{AREA_PRODUCTIVA_ACTUAL_M2/camas_com_tot:.2f} m²/cama hoy")
         c3.metric("Meta Finca (Aprov.)", f"{META_TALLOS_M2_ANUAL:.0f} tallos/m²", f"~{AREA_PRODUCTIVA_ACTUAL_M2 * META_TALLOS_M2_ANUAL / 1e6:.2f}M tallos/año")
         c4.metric("Rotación Promedio", f"{CICLOS_ANUALES_PROMEDIO:.1f} ciclos/año", "~14.9 sem / ciclo completo")
 
-        st.caption(f"📏 **Cronograma de Transición:** En este momento el área es de **64,878 m²**; a partir de la **Semana 2648** se reduce a **61,878 m²** (-3,000 m², -4.62%). | Camas de 51.57 m² a 60.62 m² brutos. | Bloque **INV (Investigación):** 48 camas (2,835 m²) exclusivas para I+D (excluidas del plan comercial).")
+        st.caption(f"📏 **Cronograma de Transición:** En este momento el área es de **64,878 m²** (1,168 camas comerciales); a partir de la **Semana 2648** se reducen 6 naves en total (48 camas: 2 naves / 16 camas en B01, 2 naves / 16 camas en B02 y 2 naves / 16 camas en B03), quedando en **{AREA_PRODUCTIVA_REDUCIDA_M2:,.0f} m²** ({CAMAS_COMERCIALES_REDUCIDAS:.0f} camas comerciales, -4.11%). | Bloque **INV (Investigación):** 48 camas (2,835 m²) exclusivas para I+D.")
 
     # Pestañas del Módulo
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -166,28 +173,34 @@ def render_ocupacion_module(db):
         if es_todos:
             # Vista Global de Finca
             techo_camas = CAMAS_COMERCIALES_TOTALES
-            techo_reducido = CAMAS_COMERCIALES_TOTALES - 100.0  # ~1,068 camas
-            bloque_subtitulo = "Toda la Finca (1,168 Camas Comerciales)"
+            techo_reducido = CAMAS_COMERCIALES_REDUCIDAS  # 1,120 camas (-48 camas)
+            bloque_subtitulo = "Toda la Finca (1,168 Camas Vigentes / 1,120 Camas Post-Reducción)"
 
             # Merge de df_52w con nivelación si está disponible
             if not df_niv.empty:
                 df_plot = pd.merge(df_52w, df_niv[['Semana', 'Camas_Niveladas_OpB', 'Ocupacion_Nivelada_%']], on='Semana', how='left')
                 df_plot['Camas_Niveladas_OpB'] = df_plot['Camas_Niveladas_OpB'].fillna(df_plot['Camas_Ocupadas'])
                 df_plot['Camas_Niveladas_OpB'] = df_plot[['Camas_Ocupadas', 'Camas_Niveladas_OpB']].max(axis=1)
-                df_plot['Ocupacion_Nivelada_%'] = ((df_plot['Camas_Niveladas_OpB'] / CAMAS_COMERCIALES_TOTALES) * 100.0).round(1)
+                
+                # Calcular ocupación % frente al techo vigente de cada semana
+                sem_ints = df_plot['Semana'].astype(str).str.replace('S', '').apply(lambda x: int(x) if x.isdigit() else 202640)
+                techo_sems = sem_ints.apply(lambda s: CAMAS_COMERCIALES_REDUCIDAS if s >= SEMANA_CORTE_REDUCCION_AREA else CAMAS_COMERCIALES_TOTALES)
+                df_plot['Ocupacion_Nivelada_%'] = ((df_plot['Camas_Niveladas_OpB'] / techo_sems) * 100.0).round(1)
             else:
                 df_plot = df_52w.copy()
                 df_plot['Camas_Niveladas_OpB'] = df_plot['Camas_Ocupadas']
                 df_plot['Ocupacion_Nivelada_%'] = df_plot['Ocupacion_%']
         else:
             # Vista Filtrada por Bloque Específico
-            cap_b = CAPACIDAD_BLOQUES.get(sel_bloque, 240.0)
+            cap_b = CAPACIDAD_BLOQUES_ACTUAL.get(sel_bloque, 240.0)
+            cap_b_red = CAPACIDAD_BLOQUES_REDUCIDA.get(sel_bloque, cap_b)
             techo_camas = cap_b
-            if sel_bloque == 'INV':
-                techo_reducido = cap_b
+            techo_reducido = cap_b_red
+            camas_red_b = CAMAS_POR_BLOQUE_REDUCIDAS.get(sel_bloque, 0.0)
+            if camas_red_b > 0:
+                bloque_subtitulo = f"Bloque {sel_bloque} (Capacidad: {int(techo_camas)} Camas hoy / {int(techo_reducido)} Camas post-reducción, -2 naves / -16 camas)"
             else:
-                techo_reducido = round(cap_b * ((CAMAS_COMERCIALES_TOTALES - 100.0) / CAMAS_COMERCIALES_TOTALES), 1)
-            bloque_subtitulo = f"Bloque {sel_bloque} (Capacidad: {int(techo_camas)} Camas)"
+                bloque_subtitulo = f"Bloque {sel_bloque} (Capacidad: {int(techo_camas)} Camas - Sin Afectación de Reducción)"
 
             df_plot = df_bloques_52w[df_bloques_52w['Bloque'] == sel_bloque].copy()
 
@@ -207,7 +220,7 @@ def render_ocupacion_module(db):
             tooltip=[alt.Tooltip('Techo_Instalado:Q', title=f'Capacidad Instalada ({int(techo_camas)} Camas)')]
         )
 
-        # 2. Techo Post-Reducción de Área (Línea Naranja Corporativa Discontinua: ~100 camas descontadas)
+        # 2. Techo Post-Reducción de Área (Línea Naranja Corporativa Discontinua: -48 camas en 6 naves B01, B02, B03)
         df_rule_red = pd.DataFrame([{'Techo_Reducido': techo_reducido}])
         rule_techo_red = alt.Chart(df_rule_red).mark_rule(
             color='#EA580C', 
@@ -215,7 +228,7 @@ def render_ocupacion_module(db):
             strokeWidth=2
         ).encode(
             y='Techo_Reducido:Q',
-            tooltip=[alt.Tooltip('Techo_Reducido:Q', title=f'Capacidad Post-Reducción ({techo_reducido:.1f} Camas, -100 Camas Finca)')]
+            tooltip=[alt.Tooltip('Techo_Reducido:Q', title=f'Capacidad Post-Reducción ({techo_reducido:.1f} Camas, -48 Camas Finca)')]
         )
 
         # 3. Franja Óptima (85% a 95% - Verde Esmeralda S&OP)
@@ -315,12 +328,12 @@ def render_ocupacion_module(db):
         chart_render = chart_final.properties(height=380, title=titulo_grafico)
         st.altair_chart(chart_render, width="stretch")
 
-        st.caption(f"🔴 **Línea Roja Discontinua:** Capacidad física instalada ({int(techo_camas)} camas). | 🟠 **Línea Naranja Discontinua:** Capacidad post-reducción de área (~{int(techo_reducido)} camas / ~100 camas descontadas a partir de S{SEMANA_CORTE_REDUCCION_AREA}). | 🟢 **Franja Verde Esmeralda:** Rango operativo óptimo (85% a 95%).")
+        st.caption(f"🔴 **Línea Roja Discontinua:** Capacidad física instalada ({int(techo_camas)} camas). | 🟠 **Línea Naranja Discontinua:** Capacidad post-reducción de área ({int(techo_reducido)} camas / -48 camas en 6 naves B01, B02, B03 a partir de S{SEMANA_CORTE_REDUCCION_AREA}). | 🟢 **Franja Verde Esmeralda:** Rango operativo óptimo (85% a 95%).")
 
-        st.info("""
+        st.info(f"""
         💡 **Distinción Clave entre Inventario Vivo, Siembras de Enraizamiento y Cosecha San Valentín:**
         * 🟢 **Línea Verde (Inventario Vivo en Suelo):** Muestra el decaimiento natural del cultivo actual a medida que se cosechan los lotes en campo (baja de ~918 camas en S2642 hasta 0 camas en S2703).
-        * 🔵 **Línea Azul (Siembras Proyectadas de Enraizamiento):** Demuestra cómo el material vegetal ingresado a partir de S2643 va ocupando las camas liberadas. Frente a la capacidad post-reducción (**1,068 camas comerciales** desde S2648), la ocupación alcanza **1,053 camas (98.6%)** en el pico de San Valentín (S2704).
+        * 🔵 **Línea Azul (Siembras Proyectadas de Enraizamiento):** Demuestra cómo el material vegetal ingresado a partir de S2643 va ocupando las camas liberadas. Frente a la capacidad post-reducción (**{CAMAS_COMERCIALES_REDUCIDAS:.0f} camas comerciales** desde S2648), la ocupación alcanza **1,053 camas (94.0%)** en el pico de San Valentín (S2704).
         * 🤝 **Coexistencia y Relevo:** Durante las semanas de siembra de San Valentín (S2643-S2647), las nuevas siembras coexisten con el cultivo saliente garantizando que la finca no quede desocupada ni sobrepase el límite físico.
         """)
 
@@ -363,9 +376,9 @@ def render_ocupacion_module(db):
     # =========================================================================
     with tab3:
         st.subheader("Balance Operativo Estacional y Transición de Capacidad")
-        st.markdown("""
+        st.markdown(f"""
         Parámetros operativos de balance estacional, cronograma de reducción de área física 
-        (**64,878 m² → 61,878 m²**) y programación de paradas y descansos de bloques.
+        (**64,878 m² → {AREA_PRODUCTIVA_REDUCIDA_M2:,.0f} m²**) y programación de paradas y descansos de bloques.
         """)
 
         bal_info = calcular_balanceo_estacional(df_52w)
@@ -377,7 +390,7 @@ def render_ocupacion_module(db):
             cb1.metric("Capacidad Máxima Vigente", f"{CAMAS_COMERCIALES_TOTALES:.0f} camas", "1,168 camas comerciales")
             cb2.metric("Pico Máximo Proyectado", f"{kpis_niv.get('max_camas_nivelado', 1168):.0f} camas", "100.0% de utilización")
             cb3.metric("Semanas con Ocupación Plena", f"{kpis_niv.get('semanas_intactas_100pct', 42)} semanas", "Plan regular y Summer")
-            cb4.metric("Capacidad Post-Reducción", "1,068 camas", f"-100 camas desde S{SEMANA_CORTE_REDUCCION_AREA}")
+            cb4.metric("Capacidad Post-Reducción", f"{CAMAS_COMERCIALES_REDUCIDAS:.0f} camas", f"-48 camas (6 naves en B01, B02, B03) desde S{SEMANA_CORTE_REDUCCION_AREA}")
 
         st.divider()
 
@@ -386,9 +399,10 @@ def render_ocupacion_module(db):
             st.markdown("#### 🏛️ Gobernanza S&OP: Cronograma de Transición y Ventana Congelada (24 Semanas)")
             st.markdown(f"""
             * **Cronograma de Transición de Área Física:**
-              - **Vigente Hoy (hasta S2647):** Área comercial de **64,878 m²**.
-              - **A partir de Semana 2648:** Reducción física a **61,878 m²** ($-3,000 \\text{{ m}}^2$, $-4.62\\%$ / $\\approx 100$ camas descontadas).
-            * **Alcance del Módulo de Ocupación:** Este módulo establece los techos físicos de capacidad (**1,168 camas comerciales** hoy, **1,068 camas** régimen post-reducción), 
+              - **Vigente Hoy (hasta S2647):** Área comercial de **64,878 m²** (1,168 camas comerciales).
+              - **A partir de Semana 2648:** Reducción física a **{AREA_PRODUCTIVA_REDUCIDA_M2:,.0f} m²** ($-2,666 \\text{{ m}}^2$, $-4.11\\%$ / 48 camas descontadas en 6 naves: 2 naves / 16 camas en Bloque 01, 2 naves / 16 camas en Bloque 02 y 2 naves / 16 camas en Bloque 03).
+            * **Alcance del Módulo de Ocupación:** Este módulo establece los techos físicos de capacidad (**1,168 camas comerciales** hoy, **{CAMAS_COMERCIALES_REDUCIDAS:.0f} camas** régimen post-reducción), 
+              monitorea la ocupación en picos estacionales (San Valentín y Navidad) y programa descansos y paradas de bloques en Summer. 
               monitorea la ocupación en picos estacionales (San Valentín y Navidad) y programa descansos y paradas de bloques en Summer.
             * **Programación en Material Vegetal:** Los pedidos de la ventana ejecutable se calibran al régimen de área y destino por bloque en el módulo 
               **[🌱 Pedido de Material Vegetal](?nav=pedido)** para asegurar sincronía entre material vegetal recibido y camas físicas disponibles.

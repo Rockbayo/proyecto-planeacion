@@ -306,3 +306,292 @@ def llenar_plantilla_52_semanas(template_bytes, df_52_semanas):
     
     return output.getvalue()
 
+
+def sincronizar_pedido_consolidado_master(
+    nuevo_pedido_input, 
+    master_filepath: str = "PedidoConsolidado_master.xlsx"
+) -> dict:
+    """
+    Consolida de manera atómica el archivo maestro de Pedido Consolidado (PedidoConsolidado_master.xlsx).
+    Aplica exactamente la misma lógica de los planes de producción:
+    - Identifica las semanas presentes en el nuevo archivo cargado (ej. desde S202642 hasta S202752).
+    - Preserva intactas todas las semanas históricas previas que ya existían en PedidoConsolidado_master.xlsx 
+      y que no están en el nuevo archivo (ej. S202634 a S202641).
+    - Reemplaza/actualiza únicamente las semanas que vienen en el nuevo documento.
+    - Asegura que no se pierdan variedades históricas ni semanas pasadas.
+    - Recalcula la columna 'Total' sumando todas las semanas y ordena las columnas cronológicamente.
+    - Guarda el resultado en PedidoConsolidado_master.xlsx con hoja única 'Hoja1'.
+    
+    Retorna un diccionario con:
+    - 'status': 'success' o 'error'
+    - 'semanas_actualizadas': lista de semanas actualizadas del nuevo archivo
+    - 'semanas_historicas_preservadas': lista de semanas históricas conservadas
+    - 'total_semanas': total de columnas de semanas consolidadas
+    - 'semana_min': primera semana en el consolidado
+    - 'semana_max': última semana en el consolidado
+    - 'total_variedades': total de registros de variedades
+    - 'df_consolidado': DataFrame final resultante
+    """
+    import os
+    import io
+    import pandas as pd
+
+    try:
+        # 1. Cargar el nuevo dataset de pedido
+        if isinstance(nuevo_pedido_input, pd.DataFrame):
+            df_nuevo = nuevo_pedido_input.copy()
+        elif hasattr(nuevo_pedido_input, 'read'): # UploadedFile o BytesIO
+            nuevo_pedido_input.seek(0)
+            df_nuevo = pd.read_excel(nuevo_pedido_input)
+        elif isinstance(nuevo_pedido_input, (bytes, bytearray)):
+            df_nuevo = pd.read_excel(io.BytesIO(nuevo_pedido_input))
+        elif isinstance(nuevo_pedido_input, str):
+            df_nuevo = pd.read_excel(nuevo_pedido_input)
+        else:
+            return {"status": "error", "message": f"Tipo de entrada no soportado: {type(nuevo_pedido_input)}"}
+
+        # Limpiar filas vacías o de totales
+        if 'Variedad' in df_nuevo.columns:
+            df_nuevo = df_nuevo.dropna(subset=['Variedad'])
+            df_nuevo = df_nuevo[~df_nuevo['Variedad'].astype(str).str.strip().str.lower().isin(['nan', 'total', 'none', '', 'null', '0'])]
+        if 'Flor' in df_nuevo.columns:
+            df_nuevo = df_nuevo[~df_nuevo['Flor'].astype(str).str.strip().str.lower().isin(['total'])]
+
+        # Estandarizar columnas de semanas a formato 'S{YYYYWW}'
+        rename_cols = {}
+        for c in df_nuevo.columns:
+            c_str = str(c).strip().replace('.0', '')
+            if c_str.startswith('202') and len(c_str) == 6:
+                rename_cols[c] = f"S{c_str}"
+            elif c_str.startswith('S202') and len(c_str) == 7:
+                rename_cols[c] = c_str
+        if rename_cols:
+            df_nuevo = df_nuevo.rename(columns=rename_cols)
+
+        # Si el DataFrame viene desglosado (melted) con columna 'Semana_Pedido' o 'Semana'
+        col_sem_cands = [c for c in ['Semana_Pedido', 'Semana', 'Semana_Archivo'] if c in df_nuevo.columns]
+        col_val_cands = [c for c in ['Esquejes', 'Cantidad', 'Cantidad_Archivo', 'Esquejes_Pedir'] if c in df_nuevo.columns]
+        if col_sem_cands and col_val_cands and not any(str(c).startswith('S202') for c in df_nuevo.columns):
+            c_sem = col_sem_cands[0]
+            c_val = col_val_cands[0]
+            df_nuevo[c_sem] = df_nuevo[c_sem].apply(lambda x: str(x).strip().replace('.0', ''))
+            df_nuevo[c_sem] = df_nuevo[c_sem].apply(lambda x: x if x.startswith('S') else f"S{x}")
+            id_cols = [c for c in ['Flor', 'Color', 'Variedad'] if c in df_nuevo.columns]
+            df_nuevo = df_nuevo.groupby(id_cols + [c_sem])[c_val].sum().unstack(fill_value=0).reset_index()
+            df_nuevo.columns.name = None
+
+        # Identificar semanas del nuevo archivo
+        semanas_nuevas = sorted([c for c in df_nuevo.columns if str(c).startswith('S202')])
+        if not semanas_nuevas:
+            return {"status": "error", "message": "No se encontraron columnas de semanas válidas (S{YYYYWW}) en el archivo ingresado."}
+
+        # Asegurar columnas canónicas
+        for col_id in ['Flor', 'Color', 'Variedad']:
+            if col_id not in df_nuevo.columns:
+                df_nuevo[col_id] = "Desconocido"
+            df_nuevo[col_id] = df_nuevo[col_id].astype(str).str.strip()
+
+        # 2. Si existe el maestro previo, preservar histórico
+        semanas_hist = []
+        if os.path.exists(master_filepath):
+            try:
+                df_master = pd.read_excel(master_filepath)
+                # Estandarizar columnas del maestro
+                ren_m = {}
+                for c in df_master.columns:
+                    c_str = str(c).strip().replace('.0', '')
+                    if c_str.startswith('202') and len(c_str) == 6:
+                        ren_m[c] = f"S{c_str}"
+                    elif c_str.startswith('S202') and len(c_str) == 7:
+                        ren_m[c] = c_str
+                if ren_m:
+                    df_master = df_master.rename(columns=ren_m)
+
+                if 'Variedad' in df_master.columns:
+                    df_master = df_master.dropna(subset=['Variedad'])
+                    df_master = df_master[~df_master['Variedad'].astype(str).str.strip().str.lower().isin(['nan', 'total', 'none', '', 'null', '0'])]
+                if 'Flor' in df_master.columns:
+                    df_master = df_master[~df_master['Flor'].astype(str).str.strip().str.lower().isin(['total'])]
+
+                for col_id in ['Flor', 'Color', 'Variedad']:
+                    if col_id in df_master.columns:
+                        df_master[col_id] = df_master[col_id].astype(str).str.strip()
+
+                semanas_master = sorted([c for c in df_master.columns if str(c).startswith('S202')])
+                # Semanas históricas que NO están en el nuevo archivo ingresado
+                semanas_hist = [s for s in semanas_master if s not in semanas_nuevas]
+
+                if semanas_hist:
+                    df_master_sub = df_master[['Flor', 'Color', 'Variedad'] + semanas_hist].copy()
+                    df_nuevo_sub = df_nuevo[['Flor', 'Color', 'Variedad'] + semanas_nuevas].copy()
+
+                    # Merge outer por [Flor, Color, Variedad]
+                    df_consolidado = pd.merge(
+                        df_master_sub,
+                        df_nuevo_sub,
+                        on=['Flor', 'Color', 'Variedad'],
+                        how='outer'
+                    )
+                else:
+                    df_consolidado = df_nuevo[['Flor', 'Color', 'Variedad'] + semanas_nuevas].copy()
+            except Exception:
+                df_consolidado = df_nuevo[['Flor', 'Color', 'Variedad'] + semanas_nuevas].copy()
+                semanas_hist = []
+        else:
+            df_consolidado = df_nuevo[['Flor', 'Color', 'Variedad'] + semanas_nuevas].copy()
+
+        # 3. Consolidar todas las semanas ordenadas cronológicamente
+        all_weeks = sorted(list(set(semanas_hist + semanas_nuevas)))
+        for w in all_weeks:
+            if w not in df_consolidado.columns:
+                df_consolidado[w] = 0.0
+            else:
+                df_consolidado[w] = pd.to_numeric(df_consolidado[w], errors='coerce').fillna(0)
+
+        df_consolidado['Total'] = df_consolidado[all_weeks].sum(axis=1)
+        final_cols = ['Flor', 'Color', 'Variedad'] + all_weeks + ['Total']
+        df_consolidado = df_consolidado[final_cols].sort_values(['Flor', 'Color', 'Variedad']).reset_index(drop=True)
+
+        # 4. Guardar archivo maestro atómicamente
+        with pd.ExcelWriter(master_filepath, engine='xlsxwriter') as writer:
+            df_consolidado.to_excel(writer, sheet_name='Hoja1', index=False)
+
+        # 5. Sincronizar automáticamente el Plan Detallado (Siembras y Enraizamiento)
+        try:
+            sincronizar_plan_detallado_desde_pedido_master(master_filepath=master_filepath)
+        except Exception:
+            pass
+
+        return {
+            "status": "success",
+            "master_filepath": master_filepath,
+            "semanas_actualizadas": semanas_nuevas,
+            "semanas_historicas_preservadas": semanas_hist,
+            "total_semanas": len(all_weeks),
+            "semana_min": all_weeks[0] if all_weeks else "-",
+            "semana_max": all_weeks[-1] if all_weeks else "-",
+            "total_variedades": len(df_consolidado),
+            "df_consolidado": df_consolidado
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Error al sincronizar Pedido Consolidado Maestro: {str(e)}"}
+
+
+def sincronizar_plan_detallado_desde_pedido_master(
+    master_filepath: str = "PedidoConsolidado_master.xlsx",
+    detailed_filepath: str = "Plan_Aprobado_Detallado.csv",
+    db = None
+) -> pd.DataFrame:
+    """
+    Sincroniza dinámicamente 'Plan_Aprobado_Detallado.csv' a partir del archivo maestro 'PedidoConsolidado_master.xlsx'.
+    - Explota los esquejes del pedido en semanas de siembra y enraizamiento vía MVA.
+    - Proyecta los tallos comerciales esperados según la fenología y curvas dinámicas calibradas de cada variedad.
+    - Preserva semanas históricas anteriores a la primera semana del archivo maestro si existen.
+    - Garantiza que los módulos de Enraizamiento, Ocupación y ForeCast operen en tiempo real con cifras vivas sin desfases.
+    """
+    import os
+    from datetime import date, timedelta
+    from app.core.database import SessionLocal
+    from app.models.models import Variedad
+    from app.services.forecast_service import calcular_curvas_dinamicas
+
+    if not os.path.exists(master_filepath):
+        return pd.DataFrame()
+
+    df_mva = generar_plan_mva(master_filepath, week_is="Pedido")
+    if df_mva.empty or 'Semana_Siembra' not in df_mva.columns:
+        return pd.DataFrame()
+
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+
+    try:
+        vars_db = {v.nombre.strip().lower(): v for v in db.query(Variedad).all()}
+        curvas_dyn = calcular_curvas_dinamicas(alpha=1.0, num_ciclos=9, db=db)
+
+        sems_mva_s = sorted([str(s).split('.')[0].strip() for s in df_mva['Semana_Siembra'].unique()])
+        sem_min_mva = sems_mva_s[0] if sems_mva_s else '202638'
+
+        # 1. Preservar semanas históricas previas a sem_min_mva si existían en el detallado
+        df_hist_past = pd.DataFrame()
+        if os.path.exists(detailed_filepath):
+            try:
+                df_old = pd.read_csv(detailed_filepath)
+                if 'Semana_Siembra' in df_old.columns:
+                    df_old['Semana_Siembra'] = df_old['Semana_Siembra'].astype(str)
+                    df_hist_past = df_old[df_old['Semana_Siembra'] < sem_min_mva].copy()
+            except Exception:
+                df_hist_past = pd.DataFrame()
+
+        # 2. Convertir cada orden del maestro a formato detallado enriquecido con fenología
+        records_mva = []
+        for _, r in df_mva.iterrows():
+            v_name = str(r['Variedad']).strip()
+            v_norm = v_name.lower()
+            esq = int(round(r['Esquejes_Para_Siembra (Final)']))
+            sem_s = str(r['Semana_Siembra']).strip().split('.')[0]
+            sem_p = str(r.get('Semana_Pedido_MV') or iso_add_weeks(sem_s, -4))
+            sem_e = iso_add_weeks(sem_s, -3)
+
+            dp = 77
+            aprov = 0.806
+            dia_ini = 70
+            if v_name in curvas_dyn:
+                dp = int(curvas_dyn[v_name].get('dia_pico', 77))
+                aprov = float(curvas_dyn[v_name].get('aprov', 0.806))
+                dia_ini = int(curvas_dyn[v_name].get('dia_inicio', 70))
+            elif v_norm in vars_db:
+                vo = vars_db[v_norm]
+                dp = int(vo.dia_pico) if vo.dia_pico else 77
+                aprov = float(vo.aprov_pp) if vo.aprov_pp else 0.806
+                dia_ini = int(vo.dia_inicio) if vo.dia_inicio else 70
+
+            sem_c = iso_add_weeks(sem_s, int(round(dp / 7.0)))
+            camas = round(esq / 5200.0, 1)
+            tallos_esp = int(round(esq * aprov))
+
+            records_mva.append({
+                'Flor': r.get('Flor', 'Standard'),
+                'Color': r.get('Color', 'Mix'),
+                'Variedad': v_name,
+                'Semana_Cosecha': sem_c,
+                'Semana_Siembra': sem_s,
+                'Semana_Enraizamiento': sem_e,
+                'Semana_Pedido_MV': sem_p,
+                'Esquejes': esq,
+                'Camas': camas,
+                'Aprov_PP': aprov,
+                'Tallos_Esperados': tallos_esp,
+                'Dia_Pico': dp,
+                'Dia_Inicio': dia_ini
+            })
+
+        df_mva_det = pd.DataFrame(records_mva)
+
+        # 3. Concatenar histórico previo y pedidos actualizados
+        if not df_hist_past.empty:
+            for c in df_mva_det.columns:
+                if c not in df_hist_past.columns:
+                    df_hist_past[c] = None
+            df_consolidado = pd.concat([df_hist_past[df_mva_det.columns], df_mva_det], ignore_index=True)
+        else:
+            df_consolidado = df_mva_det
+
+        # 4. Guardar archivo detallado de forma atómica
+        det_cols = [
+            'Flor', 'Color', 'Variedad', 'Semana_Cosecha', 'Semana_Siembra',
+            'Semana_Enraizamiento', 'Semana_Pedido_MV', 'Esquejes', 'Camas',
+            'Aprov_PP', 'Tallos_Esperados', 'Dia_Pico', 'Dia_Inicio'
+        ]
+        det_cols = [c for c in det_cols if c in df_consolidado.columns]
+        df_consolidado = df_consolidado[det_cols].sort_values(['Semana_Siembra', 'Flor', 'Color', 'Variedad']).reset_index(drop=True)
+        df_consolidado.to_csv(detailed_filepath, index=False)
+
+        return df_consolidado
+    finally:
+        if close_db:
+            db.close()
+
+

@@ -124,24 +124,76 @@ def obtener_forecast_52w_completo(db):
             return df_fc_vivo
     return df_fc_vivo
 
-def exportar_matriz_estandar_erp(df_records: pd.DataFrame, col_semana: str = 'Semana_Pedido', col_valor: str = 'Esquejes') -> bytes:
+def exportar_matriz_estandar_erp(
+    df_records: pd.DataFrame, 
+    col_semana: str = 'Semana_Pedido', 
+    col_valor: str = 'Esquejes',
+    preservar_historico_master: bool = False,
+    master_file: str = "PedidoConsolidado_master.xlsx"
+) -> bytes:
     """
     Genera un archivo Excel exactamente con la estructura estándar requerida por la plataforma ERP:
     - Hoja única: 'Hoja1'
     - Columnas: 'Flor', 'Color', 'Variedad', seguidas de las semanas 'S{YYYYWW}'
     - Sin encabezados adicionales, comentarios ni columnas auxiliares.
+    - Si preservar_historico_master=True, rescata las semanas históricas existentes en el maestro previo.
     """
-    if df_records.empty:
+    if df_records.empty and not (preservar_historico_master and os.path.exists(master_file)):
         df_empty = pd.DataFrame(columns=['Flor', 'Color', 'Variedad'])
         out = io.BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
             df_empty.to_excel(writer, sheet_name='Hoja1', index=False)
         return out.getvalue()
         
-    df_pivot = df_records.groupby(['Flor', 'Color', 'Variedad', col_semana])[col_valor].sum().unstack(fill_value=0).reset_index()
-    semanas = sorted([c for c in df_pivot.columns if str(c).startswith('S')])
-    df_pivot = df_pivot[['Flor', 'Color', 'Variedad'] + semanas]
-    df_pivot.columns.name = None
+    df_rec = df_records.copy()
+    if not df_rec.empty:
+        df_rec[col_semana] = df_rec[col_semana].astype(str).str.strip().str.replace('.0', '')
+        df_rec[col_semana] = df_rec[col_semana].apply(lambda x: x if x.startswith('S') else f"S{x}")
+        df_pivot = df_rec.groupby(['Flor', 'Color', 'Variedad', col_semana])[col_valor].sum().unstack(fill_value=0).reset_index()
+        semanas_nuevas = sorted([c for c in df_pivot.columns if str(c).startswith('S')])
+        df_pivot.columns.name = None
+    else:
+        df_pivot = pd.DataFrame(columns=['Flor', 'Color', 'Variedad'])
+        semanas_nuevas = []
+
+    if preservar_historico_master and os.path.exists(master_file):
+        try:
+            df_m = pd.read_excel(master_file)
+            if 'Variedad' in df_m.columns:
+                df_m = df_m.dropna(subset=['Variedad'])
+                df_m = df_m[~df_m['Variedad'].astype(str).str.strip().str.lower().isin(['nan', 'total', 'none', '', 'null', '0'])]
+            ren_m = {c: f"S{str(c).replace('.0', '')}" for c in df_m.columns if str(c).startswith('202') and len(str(c).replace('.0', '')) == 6}
+            if ren_m:
+                df_m = df_m.rename(columns=ren_m)
+
+            semanas_m = sorted([c for c in df_m.columns if str(c).startswith('S202')])
+            semanas_hist = [s for s in semanas_m if s not in semanas_nuevas]
+
+            if semanas_hist:
+                df_m_sub = df_m[['Flor', 'Color', 'Variedad'] + semanas_hist].copy()
+                for c in ['Flor', 'Color', 'Variedad']:
+                    df_m_sub[c] = df_m_sub[c].astype(str).str.strip()
+                    if c in df_pivot.columns:
+                        df_pivot[c] = df_pivot[c].astype(str).str.strip()
+
+                df_merged = pd.merge(df_m_sub, df_pivot, on=['Flor', 'Color', 'Variedad'], how='outer')
+                all_semanas = sorted(list(set(semanas_hist + semanas_nuevas)))
+                for s in all_semanas:
+                    if s not in df_merged.columns:
+                        df_merged[s] = 0.0
+                    else:
+                        df_merged[s] = pd.to_numeric(df_merged[s], errors='coerce').fillna(0)
+
+                df_pivot = df_merged[['Flor', 'Color', 'Variedad'] + all_semanas].sort_values(['Flor', 'Color', 'Variedad']).reset_index(drop=True)
+            else:
+                if semanas_nuevas:
+                    df_pivot = df_pivot[['Flor', 'Color', 'Variedad'] + semanas_nuevas]
+        except Exception:
+            if semanas_nuevas:
+                df_pivot = df_pivot[['Flor', 'Color', 'Variedad'] + semanas_nuevas]
+    else:
+        if semanas_nuevas:
+            df_pivot = df_pivot[['Flor', 'Color', 'Variedad'] + semanas_nuevas]
     
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
@@ -213,7 +265,7 @@ def render_pedido_module(db):
             🔒 **Horizonte Congelado Inmutable (24 Semanas — S&OP Freeze Zone):**
             * **Regla Inmutable:** Las semanas entre la semana actual (**{sem_actual}**) y **{sem_firme_default}** (24 semanas) ya se encuentran comprometidas en firme y contratadas con las casas de propagación. **No pueden modificarse ni recalcularse en este ciclo regular**.
             * **Horizonte Ejecutable en Firme:** El cálculo del pedido regular aplica estrictamente a partir de **{sem_firme_default}** en adelante.
-            * **Régimen de Área Reducida:** Este horizonte regular opera 100% bajo la capacidad reducida de **61,878 m²** (que rige desde la **Semana 2648**), calibrado dinámicamente según el bloque de destino.
+            * **Régimen de Área Reducida:** Este horizonte regular opera 100% bajo la capacidad reducida de **62,212 m²** (1,120 camas comerciales que rige desde la **Semana 2648**), calibrado dinámicamente según el bloque de destino.
             """)
 
         col_h1, col_h2 = st.columns([1.5, 2.5])
@@ -233,7 +285,7 @@ def render_pedido_module(db):
                     "Modo de Dimensionamiento de Camas:",
                     [
                         "🎯 Calibración por Bloque Tentativo de Destino (Recomendado)",
-                        "🌐 Promedio Ponderado de Finca (61,878 m² / 1,168 Camas)",
+                        "🌐 Promedio Ponderado de Finca (62,212 m² / 1,120 Camas Post-Reducción)",
                         "📏 Estándar Fijo Anterior (5,200 Esquejes/Cama)"
                     ],
                     key="sel_modo_dim"
@@ -245,9 +297,9 @@ def render_pedido_module(db):
                         "Asignación de Bloque Tentativo:",
                         [
                             "🔄 Rotación Dinámica según Disponibilidad (Auto)",
-                            "Bloque 01 (240 Camas - 55.3 m²)",
-                            "Bloque 02 (160 Camas - 55.7 m²)",
-                            "Bloque 03 (184 Camas - 57.1 m²)",
+                            "Bloque 01 (240 Camas hoy / 224 Camas post-red)",
+                            "Bloque 02 (160 Camas hoy / 144 Camas post-red)",
+                            "Bloque 03 (184 Camas hoy / 168 Camas post-red)",
                             "Bloque 04 (232 Camas - 51.8 m²)",
                             "Bloque 05 (160 Camas - 49.1 m²)",
                             "Bloque 06 (192 Camas - 48.6 m²)"
@@ -255,7 +307,7 @@ def render_pedido_module(db):
                         key="sel_bloque_dest"
                     )
                 elif modo_dim.startswith("🌐"):
-                    st.text_input("Asignación de Bloque:", value="🌐 Finca Consolidada (1,168 Camas)", disabled=True)
+                    st.text_input("Asignación de Bloque:", value="🌐 Finca Consolidada (1,120 Camas)", disabled=True)
                     sel_bloque = "FINCA"
                 else:
                     st.text_input("Asignación de Bloque:", value="📏 Estándar Fijo Anterior", disabled=True)
@@ -276,7 +328,7 @@ def render_pedido_module(db):
             with col_sub1:
                 base_area_sel = st.radio(
                     "Base de Área de Cama:",
-                    ["Área Productiva Normalizada (61,878 m² - Recomendado)", "Área Bruta de Planos (Planos sección.csv)"],
+                    ["Área Productiva Normalizada (62,212 m² - Recomendado)", "Área Bruta de Planos (Planos sección.csv)"],
                     horizontal=True,
                     key="radio_base_area"
                 )
@@ -499,23 +551,31 @@ def render_pedido_module(db):
                     hide_index=True
                 )
 
-            excel_firme_erp = exportar_matriz_estandar_erp(df_raw_f, col_semana='Semana_Pedido', col_valor='Esquejes')
+            excel_consolidado_completo = exportar_matriz_estandar_erp(
+                df_raw_f, col_semana='Semana_Pedido', col_valor='Esquejes', preservar_historico_master=True
+            )
 
             col_df1, col_df2 = st.columns(2)
             with col_df1:
                 st.download_button(
-                    label="📥 Descargar Pedido Consolidado (Formato Plataforma)",
-                    data=excel_firme_erp,
+                    label="📥 Descargar Pedido Consolidado (Histórico + Firme Calibrado)",
+                    data=excel_consolidado_completo,
                     file_name=f"PedidoConsolidado_{date.today()}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary",
                     width='stretch'
                 )
             with col_df2:
-                if st.button("💾 Guardar como PedidoConsolidado_master.xlsx (Actualiza ForeCast)", width='stretch'):
-                    with open("PedidoConsolidado_master.xlsx", "wb") as f:
-                        f.write(excel_firme_erp)
-                    st.success("✅ 'PedidoConsolidado_master.xlsx' actualizado. Los módulos de ForeCast ahora proyectarán con este archivo maestro.")
+                if st.button("💾 Guardar y Sincronizar PedidoConsolidado_master.xlsx", width='stretch'):
+                    with st.spinner("Sincronizando con archivo maestro y preservando histórico..."):
+                        from app.services.mva_service import sincronizar_pedido_consolidado_master
+                        res_sync_firme = sincronizar_pedido_consolidado_master(df_raw_f)
+                        if res_sync_firme.get("status") == "success":
+                            n_act = len(res_sync_firme['semanas_actualizadas'])
+                            n_hist = len(res_sync_firme['semanas_historicas_preservadas'])
+                            st.success(f"✅ 'PedidoConsolidado_master.xlsx' actualizado: {n_act} semanas firmes sincronizadas preservando intactas {n_hist} semanas históricas anteriores. Los módulos de ForeCast ahora proyectarán con este archivo maestro.")
+                        else:
+                            st.error(f"Error sincronizando archivo maestro: {res_sync_firme.get('message', 'Desconocido')}")
 
     # =========================================================================
     # TAB 2: PEDIDOS EXTEMPORÁNEOS REACTIVOS (< 24 SEMANAS)
@@ -526,7 +586,7 @@ def render_pedido_module(db):
         st.warning(f"""
         ⚠️ **VENTANA FIRME (< 24 SEMANAS) — SUJETO A APROBACIÓN DE PROPAGACIÓN**
         
-        * **Corte Cronológico de Capacidad:** En este momento el área de la finca es de **64,878 m²** (hasta Semana 2647). A partir de la **Semana 2648**, el área se reduce a **61,878 m²** ($-3,000 \\text{{ m}}^2$, $-4.62\\%$). Los análisis evalúan la capacidad real vigente de cada período.
+        * **Corte Cronológico de Capacidad:** En este momento el área de la finca es de **64,878 m²** (1,168 camas comerciales hasta Semana 2647). A partir de la **Semana 2648**, el área se reduce a **62,212 m²** (-48 camas en 6 naves: B01, B02, B03 con 2 naves c/u, -4.11%). Los análisis evalúan la capacidad real vigente de cada período.
         * **Regla de Negocio Grupo Color:** Si a nivel de `[Flor, Color]` el volumen proyectado cumple con la capacidad del Plan Aprobado, **no se adiciona material**. Se compensan variedades dentro del mismo color comercial (confirmación real de propagación).
         * **Ventana Ejecutable:** Solo se programan pedidos para semanas futuras ejecutables (desde **{sem_siguiente}** hasta **{sem_firme_default}**). No se muestran semanas pasadas ni se acumulan pedidos.
         * **Formato de Archivo:** El Excel descargado mantiene **estrictamente la estructura estándar del pedido** (`Flor | Color | Variedad | Semanas...`) sin comentarios adicionales.
@@ -795,7 +855,7 @@ def render_pedido_module(db):
             "Método de Determinación de Cancelación:",
             [
                 "⚡ Detección Automática con Compensación de Grupo Color (> 10% Límite Máximo / Mín. 1 Cama)",
-                "🔻 Ajuste Mandatorio por Reducción de Área (Semana 2648 en adelante — Techo 1,068 Camas)",
+                "🔻 Ajuste Mandatorio por Reducción de Área (Semana 2648 en adelante — Techo 1,120 Camas / -48 Camas en B01, B02, B03)",
                 "✍️ Solicitud de Cancelación Directa por Lote"
             ],
             horizontal=True,
@@ -927,6 +987,7 @@ def render_pedido_module(db):
                                             "Color": col,
                                             "Variedad": v,
                                             "Semana_Cosecha": f"S{sem_cos}",
+                                            "Semana_Siembra": get_iso_week_string(f_siem),
                                             "Semana_Cancelacion": sem_canc,
                                             "Tallos_Plan": int(round(r[col_capacidad])),
                                             "Plan_con_Colchon_10%": int(round(r[col_capacidad] * 1.10)),
@@ -957,9 +1018,14 @@ def render_pedido_module(db):
             st.markdown("##### 🔻 Ajuste Mandatorio por Reducción de Área Física (Semana 2648 en adelante)")
             with st.container(border=True):
                 st.markdown(f"""
-                * **Cronograma de Área:** En este momento el área productiva real de la finca es de **64,878 m²** (hasta Semana 2647). A partir de la **Semana 2648**, el área se reduce físicamente a **61,878 m²** ($-3,000 \\text{{ m}}^2$, $-4.624\\%$).
-                * **Impacto en Pedidos:** Las órdenes programadas para siembra a partir de la semana **202648** en la ventana ejecutable (< 24 semanas) fueron proyectadas para 64,878 m² y tienen un excedente de material vegetal que ya no cabe físicamente en las camas de la finca.
-                * **Acción:** Cuantifica y genera la lista oficial de cancelaciones para recortar el material sobrante (~404,549 esquejes) preservando la estructura del pedido.
+                * **Cronograma de Área:** En este momento el área productiva real de la finca es de **64,878 m²** (1,168 camas comerciales hasta Semana 2647). A partir de la **Semana 2648**, el área se reduce físicamente desmontando **6 naves en total (48 camas)**:
+                  - **Bloque 01:** $-2$ naves ($-16$ camas $\to$ capacidad pasa de 240 a 224 camas).
+                  - **Bloque 02:** $-2$ naves ($-16$ camas $\to$ capacidad pasa de 160 a 144 camas).
+                  - **Bloque 03:** $-2$ naves ($-16$ camas $\to$ capacidad pasa de 184 a 168 camas).
+                  - **Bloques 04, 05, 06 e INV:** Permanecen sin cambios.
+                  - **Total Finca:** Pasa de 1,168 a **1,120 camas comerciales** (62,212 m², $-4.11\\%$).
+                * **Impacto en Pedidos:** Las órdenes programadas para siembra a partir de la semana **202648** en la ventana ejecutable (< 24 semanas) fueron proyectadas para 1,168 camas y tienen un excedente de material vegetal que ya no cabe físicamente en las camas de la finca.
+                * **Acción:** Cuantifica y genera la lista oficial de cancelaciones para recortar el material sobrante preservando la estructura del pedido.
                 """)
 
                 col_red1, col_red2 = st.columns([2, 1])
@@ -1013,6 +1079,7 @@ def render_pedido_module(db):
                     if sem_canc_clean < sem_siguiente:
                         st.error(f"❌ La semana de cancelación debe ser igual o posterior a la semana siguiente ({sem_siguiente}). No es posible cancelar semanas pasadas.")
                     else:
+                        sem_siem_dir = sumar_semanas_iso(sem_canc_clean, 4)
                         aprov, dia_pico, metodo = resolver_curva_variedad(
                             var_sel_c, flor_sel_c, col_sel_c, dyn_lower, fc_stats, f_stats, global_stats
                         )
@@ -1024,6 +1091,7 @@ def render_pedido_module(db):
                             "Color": col_sel_c,
                             "Variedad": var_sel_c,
                             "Semana_Cosecha": "Directa",
+                            "Semana_Siembra": sem_siem_dir,
                             "Semana_Cancelacion": sem_canc_clean,
                             "Tallos_Plan": 0,
                             "Tallos_ForeCast": tallos_canc,
@@ -1065,6 +1133,7 @@ def render_pedido_module(db):
             * **Tolerancia del 10% Respetada:** El sistema tolera hasta un **+10% de producción sobre el Plan** (`Plan × 1.10`) para absorber eficiencias operativas. Solo se audita el exceso neto que sobrepase ese límite.
             * **Mínimo 1 Cama Completa:** Cada cancelación representa al menos **1 cama completa (5,200 esquejes)** en múltiplos enteros, evitando gestionar fracciones o volúmenes mínimos que se regulan en siembra.
             * **Surtido del Plan Intacto:** Tras la cancelación, la variedad **mantiene siempre al menos el 100% de su meta aprobada**, blindando el mix comercial por variedad y color.
+            * **🌱 Conexión con Plan de Enraizamiento:** Al pulsar el botón oficial de sincronización, las camas canceladas se descuentan de inmediato de `Plan_Aprobado_Detallado.csv`, disminuyendo automáticamente las bandejas de 112 y horas de labor en el módulo de Enraizamiento.
             * **🟢 Cancelaciones Seguras (Inmediatas):** Semanas donde la producción general de la finca cubre el 100% del Plan general.
             * **🟡 Cancelaciones Condicionadas a Propagación:** Semanas de alta tensión donde se requiere confirmación de material extemporáneo antes de liberar pedidos.
             """)
@@ -1126,17 +1195,27 @@ def render_pedido_module(db):
                     df_canc_mostrar, col_semana='Semana_Cancelacion', col_valor='Esquejes_a_Cancelar'
                 )
 
-                col_dc1, col_dc2 = st.columns([2, 1])
+                col_dc1, col_dc2, col_dc3 = st.columns([1.5, 1.8, 0.7])
                 with col_dc1:
                     st.download_button(
-                        label=f"📥 Descargar Archivo para Plataforma ({len(df_canc_mostrar)} casos - {m_tot_esq:,.0f} Esquejes - Formato ERP)",
+                        label=f"📥 Descargar para Plataforma ({len(df_canc_mostrar)} casos - {m_tot_esq:,.0f} Esq)",
                         data=excel_canc_erp,
                         file_name=f"Cancelacion_Material_Vegetal_{date.today()}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
+                        type="secondary",
                         width='stretch'
                     )
                 with col_dc2:
-                    if st.button("🗑️ Limpiar Lista de Cancelación", width='stretch'):
+                    if st.button("🔄 Aplicar Cancelaciones a Plan Maestro y Enraizamiento", type="primary", width='stretch'):
+                        with st.spinner("Descontando cancelaciones en Plan Detallado y Pedido Maestro..."):
+                            from app.services.ocupacion_service import aplicar_cancelaciones_a_planes_maestros
+                            res_app_canc = aplicar_cancelaciones_a_planes_maestros(df_canc_mostrar)
+                            if res_app_canc.get("status") == "success":
+                                st.success(f"✅ ¡Cancelaciones aplicadas! Se descontaron {res_app_canc['camas']} camas ({res_app_canc['esquejes']:,} esquejes).")
+                                st.info("🔄 **Sincronización:** 'Plan_Aprobado_Detallado.csv' y 'PedidoConsolidado_master.xlsx' fueron actualizados. El módulo de **Plan de Enraizamiento** ya refleja de inmediato la disminución de bandejas de 112, camas físicas y mano de obra.")
+                            else:
+                                st.error(f"Error aplicando cancelaciones: {res_app_canc.get('message', 'Desconocido')}")
+                with col_dc3:
+                    if st.button("🗑️ Limpiar", width='stretch'):
                         del st.session_state['df_cancelacion_raw']
                         st.rerun()

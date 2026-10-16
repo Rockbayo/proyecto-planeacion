@@ -57,10 +57,12 @@ def render_enraizamiento_module(db):
         
         def format_semana(opt):
             cam_txt = f" | {opt.get('Total_Camas', 0):.0f} cam." if opt.get('Total_Camas') else ""
+            tot_tll = opt.get('Total_Tallos', 0)
+            tll_txt = f" ➔ {tot_tll:,d} tallos" if tot_tll > 0 else ""
             return (
                 f"{opt['Semana_Enraizamiento_Label']} "
                 f"(Siembra {opt['Semana_Siembra_Label']} ➔ Cosecha {opt.get('Semana_Cosecha_Label', '')} | {opt['Temporada']}) — "
-                f"{opt['Total_Esquejes']:,d} esq. ({opt['Total_Bandejas_112']:,d} bandejas 112{cam_txt})"
+                f"{opt['Total_Esquejes']:,d} esq.{tll_txt} ({opt['Total_Bandejas_112']:,d} bandejas 112{cam_txt})"
             )
 
         col_sem, col_mod = st.columns([2.2, 1.0])
@@ -84,12 +86,14 @@ def render_enraizamiento_module(db):
 
         # Resumen Dinámico Adaptado a la Semana Seleccionada (sin textos defensivos)
         if semana_sel:
+            tot_tll_sel = semana_sel.get('Total_Tallos', 0)
+            tll_info = f" ➔ **{tot_tll_sel:,d} tallos esperados a cosecha**" if tot_tll_sel > 0 else ""
             st.info(
                 f"📋 **Programa Operativo Semana {semana_sel['Semana_Enraizamiento_Label']}:** "
                 f"Siembra en Campo: **{semana_sel['Semana_Siembra_Label']}** (Desfase: -{SEMANAS_ENRAIZAMIENTO} sem en banco) | "
                 f"Cosecha Estimada: **{semana_sel.get('Semana_Cosecha_Label', '')}** | "
                 f"Temporada: **{semana_sel['Temporada']}** | "
-                f"Volumen: **{semana_sel['Total_Esquejes']:,d} esquejes** ({semana_sel['Total_Camas']:.1f} camas, {semana_sel['Total_Bandejas_112']:,d} bandejas 112, {semana_sel['Num_Variedades']} variedades)."
+                f"Volumen Pedido: **{semana_sel['Total_Esquejes']:,d} esquejes**{tll_info} ({semana_sel['Total_Camas']:.1f} camas, {semana_sel['Total_Bandejas_112']:,d} bandejas 112, {semana_sel['Num_Variedades']} variedades)."
             )
 
     # Configuración de Mano de Obra y Rendimientos (Personalizable)
@@ -209,10 +213,11 @@ def render_enraizamiento_module(db):
             f"Asignados: {tot_op_fijos}",
             delta_color=bal_color
         )
+        aprov_prom = (kpis['tallos_esperados'] / kpis['total_esquejes'] * 100.0) if kpis['total_esquejes'] > 0 else 80.6
         k6.metric(
-            "Tallos a Cosecha", 
+            "Tallos Proyectados Cosecha", 
             f"{kpis['tallos_esperados']:,d}", 
-            f"Aprov. ponderado"
+            f"Aprov. ponderado: {aprov_prom:.1f}%"
         )
 
     # Pestañas de Trabajo
