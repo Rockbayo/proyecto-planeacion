@@ -1,34 +1,63 @@
+# ==============================================================================
+# CONFIGURACIÓN VISUAL EJECUTIVA S&OP (SAP IBP / KINAXIS RAPIDRESPONSE STYLE)
+# ==============================================================================
+
 [theme]
-base = "dark"
-primaryColor = "#2E8B57"
-backgroundColor = "#181A1F"
-secondaryBackgroundColor = "#282B30"
-textColor = "#FFFFFF"
-borderColor = "rgba(255, 255, 255, 0.15)"
+base = "light"
+primaryColor = "#1D4ED8"              # Corporate Sapphire Blue
+backgroundColor = "#F8FAFC"           # Slate-50 Clean Canvas
+secondaryBackgroundColor = "#FFFFFF"  # Crisp White for cards & containers
+textColor = "#0F172A"                 # Deep Slate Navy for crisp legibility
+borderColor = "#E2E8F0"               # Crisp subtle corporate border
 showWidgetBorder = true
 showSidebarBorder = true
-baseRadius = "10px"
-buttonRadius = "8px"
-font = "sans-serif"
-headingFontSizes = ["30px", "24px", "20px", "16px", "14px", "12px"]
-headingFontWeights = [700, 600, 600, 500, 500, 500]
+baseRadius = "6px"                    # Professional, executive subtle rounding
+buttonRadius = "6px"
+font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+baseFontSize = 14
+baseFontWeight = 400
+codeFontSize = "13px"
+headingFontSizes = ["26px", "20px", "16px", "14px", "13px", "12px"]
+headingFontWeights = [700, 600, 600, 600, 500, 500]
+linkUnderline = false
 
+# Colores Semánticos S&OP
+greenColor = "#059669"   # Oferta / ForeCast Saludable / Cumplimiento
+redColor = "#DC2626"     # Quiebre / Déficit Crítico / Sobrecupo
+yellowColor = "#D97706"  # Alerta / Cuello de Botella
+orangeColor = "#EA580C"  # Riesgo Operativo
+blueColor = "#1D4ED8"    # Plan de Producción / Comercial
+violetColor = "#7C3AED"  # Variedades Estratégicas
+grayColor = "#64748B"    # Metadata / Líneas Base
+
+# Paleta Oficial S&OP para Gráficas
 chartCategoricalColors = [
-    "#E03C8A",
-    "#FFD700",
-    "#8A2BE2",
-    "#2E8B57",
-    "#00E5FF",
-    "#FF8C00",
-    "#36B37E"
+    "#1D4ED8",  # 1. Plan de Producción / Demanda (Azul Zafiro Corporativo)
+    "#059669",  # 2. ForeCast / Oferta Cosecha (Verde Esmeralda Ejecutivo)
+    "#D97706",  # 3. Pedido Propagación / Enraizamiento (Ámbar Cálido)
+    "#7C3AED",  # 4. Fast Track / Especiales (Violeta)
+    "#0284C7",  # 5. Capacidad Ajustada (Celeste Ejecutivo)
+    "#DC2626",  # 6. Techo Físico / Alerta (Rojo Carmesí)
+    "#64748B"   # 7. Línea Base Histórica (Gris Pizarra)
 ]
 
+# Estilo de Tablas y DataFrames
+dataframeBorderColor = "#E2E8F0"
+dataframeHeaderBackgroundColor = "#F8FAFC"
+dataframeHeaderTextColor = "#1E293B"
+
+# Barra Lateral: Command Center Ejecutivo (Dark Slate Navy)
 [theme.sidebar]
-backgroundColor = "rgba(24, 26, 31, 0.95)"
-secondaryBackgroundColor = "rgba(40, 43, 48, 0.8)"
-textColor = "#FFFFFF"
-borderColor = "rgba(255, 255, 255, 0.15)"
-primaryColor = "#2E8B57"
+backgroundColor = "#0F172A"
+secondaryBackgroundColor = "#1E293B"
+codeBackgroundColor = "#1E293B"
+textColor = "#F8FAFC"
+borderColor = "#1E293B"
+primaryColor = "#3B82F6"
+dataframeHeaderBackgroundColor = "#1E293B"
+dataframeBorderColor = "#334155"
 
 [server]
 headless = true

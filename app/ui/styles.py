@@ -1,59 +1,64 @@
 """
-Tema Visual: Invernadero Industrial (Acero, Vidrio y Luces LED Agrícolas)
-Paleta Oficial:
-- Fondo Principal: #181A1F (Gris acero oscuro)
-- Paneles, Tarjetas y Navegación: rgba(40, 43, 48, 0.8) con glassmorphism (backdrop-filter: blur(12px)) y borde 1px solid rgba(255, 255, 255, 0.15)
-- Acción Principal / Saludable: #2E8B57 (Verde clorofila)
-- Series de Gráficas y Badges de Variedades: #E03C8A (Fucsia), #FFD700 (Amarillo), #8A2BE2 (Morado)
-- Alertas y Estados Críticos (Efecto Grow Light LED): box-shadow exterior e interior en magenta (#E03C8A) y naranja eléctrico (#FF8C00)
-- Tipografía: Principal blanca (#FFFFFF) y secundaria gris claro (#A6ACB3)
+Tema Visual: S&OP Ejecutivo Profesional (Estilo SAP IBP / Kinaxis RapidResponse / o9 Solutions)
+Arquitectura Visual:
+- Canvas Principal: #F8FAFC (Slate-50 de alta legibilidad y confort visual)
+- Superficies y Tarjetas: #FFFFFF (Blanco nítido con micro-borde #E2E8F0 y sombra sutil)
+- Command Center Sidebar: #0F172A (Navy Slate Corporativo con acentos en #3B82F6)
+- Tipografía: Inter / Segoe UI (Negro pizarra #0F172A para títulos, #334155 para lectura, #64748B para metadata)
+- Botones de Acción: #1D4ED8 (Azul Zafiro Corporativo, hover #1E40AF)
+- Paleta S&OP para Curvas:
+    * #1D4ED8 (Plan de Producción / Demanda Comercial)
+    * #059669 (ForeCast Biológico / Oferta de Cosecha)
+    * #D97706 (Pedido Propagación / Enraizamiento)
+    * #DC2626 (Capacidad Máxima / Restricciones / Sobrecupos)
+    * #94A3B8 (Línea Base Histórica)
+- Alertas y Semáforos: Cintas corporativas limpias (Verde #F0FDF4, Ámbar #FFFBEB, Rojo #FEF2F2, Azul #EFF6FF)
 """
 
 import streamlit as st
 import altair as alt
 
-# CSS Invernadero Industrial
-CSS_INVERNADERO_INDUSTRIAL = """
+CSS_SOP_PROFESIONAL = """
 <style>
 /* ====================================================================
-   TEMA VISUAL: INVERNADERO INDUSTRIAL (ACERO, VIDRIO Y LUCES GROW LED)
+   S&OP ENTERPRISE EXECUTIVE THEME (SAP IBP / KINAXIS STYLE)
    ==================================================================== */
 
-/* 1. Fondo Principal Acero Oscuro y Tipografía Global */
+/* 1. Fondo Global y Tipografía Corporativa */
 html, body, [data-testid="stAppViewContainer"], .main, .stApp {
-    background-color: #181A1F !important;
-    color: #FFFFFF !important;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    background-color: #F8FAFC !important;
+    color: #1E293B !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    -webkit-font-smoothing: antialiased !important;
 }
 
 header[data-testid="stHeader"] {
-    background-color: rgba(24, 26, 31, 0.85) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+    background-color: #FFFFFF !important;
+    border-bottom: 1px solid #E2E8F0 !important;
 }
 
-/* Encabezados y Textos */
+/* Encabezados y Jerarquía de Texto */
 h1, h2, h3, h4, h5, h6, .stHeading, [data-testid="stHeading"] {
-    color: #FFFFFF !important;
-    font-weight: 600 !important;
+    color: #0F172A !important;
+    font-weight: 700 !important;
     letter-spacing: -0.02em !important;
 }
 
 p, span, label, [data-testid="stMarkdownContainer"] p, [data-testid="stText"] {
-    color: #FFFFFF !important;
+    color: #334155 !important;
+    font-size: 0.925rem !important;
+    line-height: 1.5 !important;
 }
 
 .stCaption, small, [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p, [data-testid="stWidgetLabel"] small {
-    color: #A6ACB3 !important;
+    color: #64748B !important;
+    font-size: 0.825rem !important;
 }
 
-/* 2. Barra Lateral (Sidebar) Efecto Acero Pulido y Vidrio */
+/* 2. Barra Lateral: Command Center Ejecutivo (Navy Slate) */
 section[data-testid="stSidebar"] {
-    background-color: rgba(24, 26, 31, 0.95) !important;
-    backdrop-filter: blur(14px) !important;
-    -webkit-backdrop-filter: blur(14px) !important;
-    border-right: 1px solid rgba(255, 255, 255, 0.15) !important;
+    background-color: #0F172A !important;
+    border-right: 1px solid #1E293B !important;
 }
 
 section[data-testid="stSidebar"] > div:first-child {
@@ -61,333 +66,376 @@ section[data-testid="stSidebar"] > div:first-child {
 }
 
 section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
-    color: #2E8B57 !important;
-    text-shadow: 0 0 10px rgba(46, 139, 87, 0.3);
+    color: #FFFFFF !important;
+    font-size: 1.05rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.04em !important;
+    text-transform: uppercase !important;
+    border-bottom: 1px solid #1E293B !important;
+    padding-bottom: 8px !important;
+    margin-bottom: 16px !important;
 }
 
-/* 3. Tarjetas, Paneles y Contenedores con Efecto Glassmorphism */
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label {
+    color: #CBD5E1 !important;
+    padding: 7px 12px !important;
+    border-radius: 6px !important;
+    font-size: 0.88rem !important;
+    font-weight: 500 !important;
+    transition: all 0.15s ease !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:hover {
+    background-color: rgba(255, 255, 255, 0.07) !important;
+    color: #FFFFFF !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [aria-checked="true"] + div p {
+    color: #FFFFFF !important;
+    font-weight: 600 !important;
+}
+
+section[data-testid="stSidebar"] div[data-testid="stRadio"] label:has([aria-checked="true"]) {
+    background-color: #1E293B !important;
+    border-left: 3px solid #3B82F6 !important;
+}
+
+/* 3. Contenedores y Tarjetas de Alto Nivel */
 div[data-testid="stVerticalBlockBorderWrapper"] {
-    background: rgba(40, 43, 48, 0.8) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    border-radius: 12px !important;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35) !important;
+    background: #FFFFFF !important;
+    border: 1px solid #E2E8F0 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05) !important;
+    padding: 4px !important;
 }
 
 div[data-testid="stVerticalBlockBorderWrapper"] > div {
     background: transparent !important;
 }
 
-/* Tarjetas de Métricas / KPI Cards */
+/* Tarjetas de Métricas / KPI Cards Ejecutivas */
 div[data-testid="stMetric"] {
-    background: rgba(40, 43, 48, 0.8) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    border-radius: 12px !important;
+    background: #FFFFFF !important;
+    border: 1px solid #E2E8F0 !important;
+    border-radius: 8px !important;
     padding: 16px 20px !important;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3) !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05) !important;
+    transition: box-shadow 0.15s ease, border-color 0.15s ease !important;
+}
+
+div[data-testid="stMetric"]:hover {
+    border-color: #CBD5E1 !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07) !important;
 }
 
 div[data-testid="stMetricLabel"] p {
-    color: #A6ACB3 !important;
-    font-size: 0.85rem !important;
+    color: #64748B !important;
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
     text-transform: uppercase !important;
     letter-spacing: 0.06em !important;
 }
 
 div[data-testid="stMetricValue"] {
-    color: #FFFFFF !important;
+    color: #0F172A !important;
     font-weight: 700 !important;
-    font-size: 1.8rem !important;
+    font-size: 1.85rem !important;
+    letter-spacing: -0.02em !important;
 }
 
 /* Expanders */
 details[data-testid="stExpander"] {
-    background: rgba(40, 43, 48, 0.8) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    border-radius: 12px !important;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25) !important;
+    background: #FFFFFF !important;
+    border: 1px solid #E2E8F0 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
 }
 
 details[data-testid="stExpander"] summary {
-    color: #FFFFFF !important;
-    border-radius: 12px !important;
+    color: #0F172A !important;
     font-weight: 600 !important;
+    font-size: 0.92rem !important;
+    padding: 12px 16px !important;
 }
 
-/* Pestañas (Tabs) */
+/* Pestañas (Tabs) Estilo Ribbon Corporativo */
 div[data-testid="stTabs"] {
     background: transparent !important;
 }
 
 div[data-baseweb="tab-list"] {
-    background: rgba(40, 43, 48, 0.6) !important;
-    backdrop-filter: blur(8px) !important;
-    -webkit-backdrop-filter: blur(8px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.12) !important;
-    border-radius: 10px !important;
+    background: #F1F5F9 !important;
+    border-radius: 8px !important;
     padding: 4px !important;
-    gap: 6px !important;
+    border: 1px solid #E2E8F0 !important;
+    gap: 4px !important;
 }
 
 button[data-baseweb="tab"] {
-    border-radius: 8px !important;
-    color: #A6ACB3 !important;
+    border-radius: 6px !important;
+    color: #64748B !important;
     border: none !important;
     padding: 8px 16px !important;
     font-weight: 500 !important;
-    transition: all 0.2s ease !important;
+    font-size: 0.88rem !important;
+    transition: all 0.15s ease !important;
+}
+
+button[data-baseweb="tab"]:hover {
+    color: #0F172A !important;
+    background: rgba(255, 255, 255, 0.6) !important;
 }
 
 button[data-baseweb="tab"][aria-selected="true"] {
-    background: rgba(46, 139, 87, 0.25) !important;
-    color: #2E8B57 !important;
-    border: 1px solid rgba(46, 139, 87, 0.5) !important;
-    font-weight: 700 !important;
-    box-shadow: 0 0 10px rgba(46, 139, 87, 0.3) !important;
+    background: #FFFFFF !important;
+    color: #1D4ED8 !important;
+    font-weight: 600 !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1) !important;
 }
 
 div[data-baseweb="tab-highlight"] {
-    background-color: #2E8B57 !important;
+    display: none !important;
 }
 
-/* 4. Botones y Acciones (Verde Clorofila #2E8B57) */
+/* 4. Botones y Controles de Acción */
 button[kind="primary"], .stButton > button[kind="primary"] {
-    background-color: #2E8B57 !important;
+    background-color: #1D4ED8 !important;
     color: #FFFFFF !important;
-    border: 1px solid rgba(255, 255, 255, 0.25) !important;
-    border-radius: 8px !important;
+    border: 1px solid #1E40AF !important;
+    border-radius: 6px !important;
     font-weight: 600 !important;
-    box-shadow: 0 0 14px rgba(46, 139, 87, 0.5) !important;
-    transition: all 0.25s ease-in-out !important;
+    font-size: 0.9rem !important;
+    padding: 8px 18px !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease !important;
 }
 
 button[kind="primary"]:hover, .stButton > button[kind="primary"]:hover {
-    background-color: #38a169 !important;
-    box-shadow: 0 0 24px rgba(46, 139, 87, 0.8), 0 0 8px #2E8B57 !important;
-    transform: translateY(-1px) !important;
+    background-color: #1E40AF !important;
+    box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.12) !important;
 }
 
 button[kind="secondary"], .stButton > button:not([kind="primary"]) {
-    background: rgba(40, 43, 48, 0.85) !important;
-    color: #FFFFFF !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    border-radius: 8px !important;
-    backdrop-filter: blur(8px) !important;
-    -webkit-backdrop-filter: blur(8px) !important;
-    transition: all 0.25s ease !important;
+    background: #FFFFFF !important;
+    color: #334155 !important;
+    border: 1px solid #CBD5E1 !important;
+    border-radius: 6px !important;
+    font-weight: 500 !important;
+    font-size: 0.9rem !important;
+    padding: 8px 16px !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
+    transition: all 0.15s ease !important;
 }
 
 button[kind="secondary"]:hover, .stButton > button:not([kind="primary"]):hover {
-    border-color: #2E8B57 !important;
-    color: #2E8B57 !important;
-    box-shadow: 0 0 12px rgba(46, 139, 87, 0.35) !important;
+    background-color: #F8FAFC !important;
+    border-color: #94A3B8 !important;
+    color: #0F172A !important;
 }
 
-/* 5. Alertas y Estados Críticos (Efecto Grow Light LED Agrícola) */
-/* Error / Retrasos Críticos -> Grow Light LED Magenta (#E03C8A) */
+/* 5. Alertas S&OP de Alta Dirección (Cintas Corporativas sin Neón) */
+/* Alerta Error / Retraso Crítico */
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertErrorIcon"]),
 div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]),
 div[data-testid="stAlert"][kind="error"],
 .stAlert:has(svg[data-testid="stAlertErrorIcon"]),
 .stAlert:has([data-testid="stAlertContentError"]) {
-    background: rgba(35, 18, 30, 0.88) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid #E03C8A !important;
-    border-radius: 12px !important;
-    box-shadow: 0 0 28px rgba(224, 60, 138, 0.65), inset 0 0 14px rgba(224, 60, 138, 0.25) !important;
-    color: #FFD6EA !important;
+    background-color: #FEF2F2 !important;
+    border: 1px solid #FECACA !important;
+    border-left: 4px solid #DC2626 !important;
+    border-radius: 6px !important;
+    color: #991B1B !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertErrorIcon"]) *,
 div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) * {
-    color: #FFD6EA !important;
+    color: #991B1B !important;
 }
 
-div[data-testid="stAlert"]:has(svg[data-testid="stAlertErrorIcon"]) svg,
-div[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) svg {
-    fill: #E03C8A !important;
-    color: #E03C8A !important;
-    filter: drop-shadow(0 0 6px #E03C8A);
-}
-
-/* Advertencias Preventivas -> Grow Light LED Naranja Eléctrico (#FF8C00) */
+/* Alerta Warning / Atención Preventiva */
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertWarningIcon"]),
 div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]),
 div[data-testid="stAlert"][kind="warning"],
 .stAlert:has(svg[data-testid="stAlertWarningIcon"]),
 .stAlert:has([data-testid="stAlertContentWarning"]) {
-    background: rgba(40, 25, 12, 0.88) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid #FF8C00 !important;
-    border-radius: 12px !important;
-    box-shadow: 0 0 28px rgba(255, 140, 0, 0.65), inset 0 0 14px rgba(255, 140, 0, 0.25) !important;
-    color: #FFE6CC !important;
+    background-color: #FFFBEB !important;
+    border: 1px solid #FDE68A !important;
+    border-left: 4px solid #D97706 !important;
+    border-radius: 6px !important;
+    color: #92400E !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertWarningIcon"]) *,
 div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) * {
-    color: #FFE6CC !important;
+    color: #92400E !important;
 }
 
-div[data-testid="stAlert"]:has(svg[data-testid="stAlertWarningIcon"]) svg,
-div[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) svg {
-    fill: #FF8C00 !important;
-    color: #FF8C00 !important;
-    filter: drop-shadow(0 0 6px #FF8C00);
-}
-
-/* Éxito / Estado Saludable -> Grow Light LED Verde Clorofila (#2E8B57) */
+/* Alerta Success / Cumplimiento Óptimo */
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertSuccessIcon"]),
 div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]),
 div[data-testid="stAlert"][kind="success"],
 .stAlert:has(svg[data-testid="stAlertSuccessIcon"]),
 .stAlert:has([data-testid="stAlertContentSuccess"]) {
-    background: rgba(18, 35, 25, 0.88) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid #2E8B57 !important;
-    border-radius: 12px !important;
-    box-shadow: 0 0 28px rgba(46, 139, 87, 0.65), inset 0 0 14px rgba(46, 139, 87, 0.25) !important;
-    color: #D4EDDA !important;
+    background-color: #F0FDF4 !important;
+    border: 1px solid #BBF7D0 !important;
+    border-left: 4px solid #16A34A !important;
+    border-radius: 6px !important;
+    color: #166534 !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertSuccessIcon"]) *,
 div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) * {
-    color: #D4EDDA !important;
+    color: #166534 !important;
 }
 
-div[data-testid="stAlert"]:has(svg[data-testid="stAlertSuccessIcon"]) svg,
-div[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) svg {
-    fill: #2E8B57 !important;
-    color: #2E8B57 !important;
-    filter: drop-shadow(0 0 6px #2E8B57);
-}
-
-/* Info -> Acero y Azul Neón */
+/* Alerta Info / Informativo de Gobierno */
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertInfoIcon"]),
 div[data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]),
 div[data-testid="stAlert"][kind="info"],
 .stAlert:has(svg[data-testid="stAlertInfoIcon"]),
 .stAlert:has([data-testid="stAlertContentInfo"]) {
-    background: rgba(20, 30, 45, 0.88) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid rgba(0, 191, 255, 0.6) !important;
-    border-radius: 12px !important;
-    box-shadow: 0 0 28px rgba(0, 191, 255, 0.45), inset 0 0 14px rgba(0, 191, 255, 0.15) !important;
-    color: #D9F2FF !important;
+    background-color: #EFF6FF !important;
+    border: 1px solid #BFDBFE !important;
+    border-left: 4px solid #1D4ED8 !important;
+    border-radius: 6px !important;
+    color: #1E40AF !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
 div[data-testid="stAlert"]:has(svg[data-testid="stAlertInfoIcon"]) *,
 div[data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) * {
-    color: #D9F2FF !important;
+    color: #1E40AF !important;
 }
 
-/* 6. Tablas y DataFrames con Estilo Acero y Vidrio */
+/* 6. Tablas y DataFrames Ejecutivos */
 div[data-testid="stDataFrame"], div[data-testid="stTable"] {
-    background: rgba(40, 43, 48, 0.75) !important;
-    backdrop-filter: blur(8px) !important;
-    -webkit-backdrop-filter: blur(8px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    border-radius: 10px !important;
+    background: #FFFFFF !important;
+    border: 1px solid #E2E8F0 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
 /* 7. Inputs, Textareas, Selectboxes */
 div[data-baseweb="select"] > div, input, textarea {
-    background-color: rgba(30, 33, 38, 0.9) !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
-    color: #FFFFFF !important;
-    border-radius: 8px !important;
+    background-color: #FFFFFF !important;
+    border: 1px solid #CBD5E1 !important;
+    color: #0F172A !important;
+    border-radius: 6px !important;
+    font-size: 0.9rem !important;
 }
 
-div[data-baseweb="popover"], div[data-baseweb="menu"] {
-    background-color: #202328 !important;
-    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+div[data-baseweb="select"] > div:hover, input:hover, textarea:hover {
+    border-color: #94A3B8 !important;
 }
 
-/* Badges de Variedades de Flores de Alto Contraste */
-.badge-fucsia {
-    background-color: rgba(224, 60, 138, 0.22) !important;
-    color: #E03C8A !important;
-    border: 1px solid #E03C8A !important;
+div[data-baseweb="select"] > div:focus-within, input:focus, textarea:focus {
+    border-color: #1D4ED8 !important;
+    box-shadow: 0 0 0 1px #1D4ED8 !important;
+}
+
+/* 8. Badges Ejecutivos Corporativos */
+.badge-sop-blue {
+    background-color: #EFF6FF !important;
+    color: #1D4ED8 !important;
+    border: 1px solid #BFDBFE !important;
     padding: 3px 10px !important;
-    border-radius: 12px !important;
+    border-radius: 4px !important;
+    font-size: 0.78rem !important;
     font-weight: 600 !important;
-    box-shadow: 0 0 8px rgba(224, 60, 138, 0.4) !important;
     display: inline-block !important;
+    letter-spacing: 0.02em !important;
 }
 
-.badge-amarillo {
-    background-color: rgba(255, 215, 0, 0.22) !important;
-    color: #FFD700 !important;
-    border: 1px solid #FFD700 !important;
+.badge-sop-green {
+    background-color: #F0FDF4 !important;
+    color: #166534 !important;
+    border: 1px solid #BBF7D0 !important;
     padding: 3px 10px !important;
-    border-radius: 12px !important;
+    border-radius: 4px !important;
+    font-size: 0.78rem !important;
     font-weight: 600 !important;
-    box-shadow: 0 0 8px rgba(255, 215, 0, 0.4) !important;
     display: inline-block !important;
+    letter-spacing: 0.02em !important;
 }
 
-.badge-morado {
-    background-color: rgba(138, 43, 226, 0.22) !important;
-    color: #BA68C8 !important;
-    border: 1px solid #8A2BE2 !important;
+.badge-sop-amber {
+    background-color: #FFFBEB !important;
+    color: #92400E !important;
+    border: 1px solid #FDE68A !important;
     padding: 3px 10px !important;
-    border-radius: 12px !important;
+    border-radius: 4px !important;
+    font-size: 0.78rem !important;
     font-weight: 600 !important;
-    box-shadow: 0 0 8px rgba(138, 43, 226, 0.4) !important;
     display: inline-block !important;
+    letter-spacing: 0.02em !important;
 }
 
-.badge-verde {
-    background-color: rgba(46, 139, 87, 0.22) !important;
-    color: #2E8B57 !important;
-    border: 1px solid #2E8B57 !important;
+.badge-sop-red {
+    background-color: #FEF2F2 !important;
+    color: #991B1B !important;
+    border: 1px solid #FECACA !important;
     padding: 3px 10px !important;
-    border-radius: 12px !important;
+    border-radius: 4px !important;
+    font-size: 0.78rem !important;
     font-weight: 600 !important;
-    box-shadow: 0 0 8px rgba(46, 139, 87, 0.4) !important;
     display: inline-block !important;
+    letter-spacing: 0.02em !important;
+}
+
+.badge-sop-slate {
+    background-color: #F1F5F9 !important;
+    color: #475569 !important;
+    border: 1px solid #CBD5E1 !important;
+    padding: 3px 10px !important;
+    border-radius: 4px !important;
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
+    display: inline-block !important;
+    letter-spacing: 0.02em !important;
 }
 </style>
 """
 
-# Configurar Tema Invernadero Industrial en Altair
+# Configurar Tema Ejecutivo S&OP en Altair
 try:
-    @alt.theme.register('invernadero_industrial', enable=True)
-    def _tema_altair_invernadero():
+    @alt.theme.register('sop_ejecutivo', enable=True)
+    def _tema_altair_sop():
         return alt.theme.ThemeConfig({
             'config': {
-                'background': 'rgba(40, 43, 48, 0.8)',
+                'background': '#FFFFFF',
                 'view': {
                     'stroke': 'transparent',
-                    'fill': 'rgba(24, 26, 31, 0.6)'
+                    'fill': '#FFFFFF'
                 },
                 'title': {
-                    'color': '#FFFFFF',
+                    'color': '#0F172A',
                     'fontSize': 14,
                     'fontWeight': 600
                 },
                 'axis': {
-                    'domainColor': 'rgba(255, 255, 255, 0.18)',
-                    'gridColor': 'rgba(255, 255, 255, 0.08)',
-                    'labelColor': '#A6ACB3',
-                    'titleColor': '#FFFFFF',
-                    'tickColor': 'rgba(255, 255, 255, 0.18)'
+                    'domainColor': '#CBD5E1',
+                    'gridColor': '#F1F5F9',
+                    'labelColor': '#64748B',
+                    'titleColor': '#0F172A',
+                    'tickColor': '#CBD5E1'
                 },
                 'legend': {
-                    'labelColor': '#FFFFFF',
-                    'titleColor': '#FFFFFF'
+                    'labelColor': '#334155',
+                    'titleColor': '#0F172A'
                 },
                 'range': {
-                    'category': ['#E03C8A', '#FFD700', '#8A2BE2', '#2E8B57', '#00E5FF', '#FF8C00']
+                    'category': [
+                        '#1D4ED8',  # Demanda / Plan
+                        '#059669',  # Oferta / ForeCast
+                        '#D97706',  # Enraizamiento
+                        '#7C3AED',  # Especiales
+                        '#0284C7',  # Ajustado
+                        '#DC2626',  # Alerta
+                        '#64748B'   # Neutro
+                    ]
                 }
             }
         })
@@ -395,61 +443,78 @@ except Exception:
     pass
 
 def aplicar_tema_invernadero_industrial():
-    """Inyecta el tema Invernadero Industrial en la aplicación Streamlit."""
-    st.html(CSS_INVERNADERO_INDUSTRIAL)
+    """Inyecta el tema S&OP Ejecutivo Profesional en la aplicación Streamlit."""
+    st.html(CSS_SOP_PROFESIONAL)
+
+# Alias para compatibilidad
+aplicar_tema_sop_ejecutivo = aplicar_tema_invernadero_industrial
 
 def estilizar_figura_plotly(fig):
     """
-    Aplica el tema visual Invernadero Industrial (Acero, Vidrio, Alto Contraste)
-    a una figura de Plotly para integración perfecta con el tema oscuro.
+    Aplica el estándar visual corporativo S&OP a cualquier figura de Plotly:
+    lienzo blanco inmaculado, cuadrícula tenue, tipografía clara y paleta oficial.
     """
     fig.update_layout(
-        paper_bgcolor='rgba(40, 43, 48, 0.7)',
-        plot_bgcolor='rgba(24, 26, 31, 0.7)',
-        font=dict(color='#FFFFFF', family='-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'),
-        colorway=["#E03C8A", "#FFD700", "#8A2BE2", "#2E8B57", "#00E5FF", "#FF8C00"],
+        paper_bgcolor='#FFFFFF',
+        plot_bgcolor='#FFFFFF',
+        font=dict(color='#0F172A', family='Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'),
+        colorway=[
+            '#1D4ED8',  # Demanda / Plan Aprobado (Azul Zafiro)
+            '#059669',  # ForeCast / Cosecha Viva (Verde Esmeralda)
+            '#D97706',  # Proyección Enraizamiento (Ámbar)
+            '#7C3AED',  # Fast Track
+            '#0284C7',  # Capacidad
+            '#DC2626',  # Techo / Riesgo
+            '#64748B'   # Línea Base
+        ],
         xaxis=dict(
-            gridcolor='rgba(255, 255, 255, 0.10)',
-            zerolinecolor='rgba(255, 255, 255, 0.18)',
-            tickfont=dict(color='#A6ACB3'),
-            title_font=dict(color='#FFFFFF')
+            gridcolor='#F1F5F9',
+            zerolinecolor='#E2E8F0',
+            tickfont=dict(color='#64748B', size=11),
+            title_font=dict(color='#0F172A', size=12)
         ),
         yaxis=dict(
-            gridcolor='rgba(255, 255, 255, 0.10)',
-            zerolinecolor='rgba(255, 255, 255, 0.18)',
-            tickfont=dict(color='#A6ACB3'),
-            title_font=dict(color='#FFFFFF')
+            gridcolor='#F1F5F9',
+            zerolinecolor='#E2E8F0',
+            tickfont=dict(color='#64748B', size=11),
+            title_font=dict(color='#0F172A', size=12)
         ),
         legend=dict(
-            font=dict(color='#FFFFFF'),
-            bgcolor='rgba(30, 33, 38, 0.65)',
-            bordercolor='rgba(255, 255, 255, 0.15)'
+            font=dict(color='#334155', size=12),
+            bgcolor='rgba(255, 255, 255, 0.95)',
+            bordercolor='#E2E8F0',
+            borderwidth=1
         )
     )
     return fig
 
-# Paleta oficial Invernadero Industrial
+# Paleta oficial S&OP Profesional
 PALETA_INVERNADERO = {
-    "fondo_app": "#181A1F",
-    "fondo_panel": "rgba(40, 43, 48, 0.8)",
-    "borde_metalico": "rgba(255, 255, 255, 0.15)",
-    "verde_clorofila": "#2E8B57",
-    "fucsia": "#E03C8A",
-    "amarillo": "#FFD700",
-    "morado": "#8A2BE2",
-    "texto_blanco": "#FFFFFF",
-    "texto_gris": "#A6ACB3",
-    "grow_light_magenta": "rgba(224, 60, 138, 0.65)",
-    "grow_light_orange": "rgba(255, 140, 0, 0.65)"
+    "fondo_app": "#F8FAFC",
+    "fondo_panel": "#FFFFFF",
+    "borde_metalico": "#E2E8F0",
+    "plan_demanda": "#1D4ED8",
+    "forecast_oferta": "#059669",
+    "enraizamiento": "#D97706",
+    "alerta_techo": "#DC2626",
+    "neutro": "#64748B",
+    "texto_titulos": "#0F172A",
+    "texto_cuerpo": "#334155"
 }
 
-def badge_variedad(nombre: str, tipo_color: str = "fucsia") -> str:
-    """Genera HTML para un badge de variedad en la paleta de alto contraste."""
+PALETA_EJECUTIVA = PALETA_INVERNADERO
+
+def badge_variedad(nombre: str, tipo_color: str = "azul") -> str:
+    """Genera HTML para un badge corporativo S&OP."""
     clases = {
-        "fucsia": "badge-fucsia",
-        "amarillo": "badge-amarillo",
-        "morado": "badge-morado",
-        "verde": "badge-verde"
+        "azul": "badge-sop-blue",
+        "verde": "badge-sop-green",
+        "ambar": "badge-sop-amber",
+        "rojo": "badge-sop-red",
+        "gris": "badge-sop-slate",
+        "fucsia": "badge-sop-blue",
+        "amarillo": "badge-sop-amber",
+        "morado": "badge-sop-blue"
     }
-    cls = clases.get(tipo_color.lower(), "badge-fucsia")
+    cls = clases.get(tipo_color.lower(), "badge-sop-blue")
     return f'<span class="{cls}">{nombre}</span>'

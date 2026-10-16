@@ -408,7 +408,7 @@ def render_enraizamiento_module(db):
         
         with col_g1:
             st.markdown("###### 📊 Volumen de Esquejes por Día")
-            chart_esq = alt.Chart(df_res_dia).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color="#2E8B57").encode(
+            chart_esq = alt.Chart(df_res_dia).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color="#1D4ED8").encode(
                 x=alt.X('Día:N', sort=["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"], title="Día de la Semana"),
                 y=alt.Y('Esquejes:Q', title="Esquejes Programados"),
                 tooltip=['Día', 'Esquejes', 'Bandejas (112)', '% Semana']
@@ -433,7 +433,7 @@ def render_enraizamiento_module(db):
             chart_h = alt.Chart(df_melted).mark_bar(opacity=0.85).encode(
                 x=alt.X('Día:N', sort=["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"], title="Día"),
                 y=alt.Y('Horas:Q', title="Horas de Mano de Obra"),
-                color=alt.Color('Tipo:N', scale=alt.Scale(domain=['Horas Requeridas', 'Horas Disponibles'], range=['#E03C8A', '#FFD700'])),
+                color=alt.Color('Tipo:N', scale=alt.Scale(domain=['Horas Requeridas', 'Horas Disponibles'], range=['#DC2626', '#1D4ED8'])),
                 xOffset='Tipo:N',
                 tooltip=['Día', 'Tipo', alt.Tooltip('Horas:Q', format='.1f')]
             ).properties(height=300)
@@ -491,7 +491,7 @@ def render_enraizamiento_module(db):
             col_pc4.metric("Ventana de Corte", ventana_c, f"{res_plano['temporada']}")
 
             # Gráfico de Proyección de Cosecha Semanal
-            chart_proy_c = alt.Chart(df_proy_c).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color="#2E8B57").encode(
+            chart_proy_c = alt.Chart(df_proy_c).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color="#059669").encode(
                 x=alt.X('Semana_Cosecha_Label:N', sort=df_proy_c['Semana_Cosecha_Label'].tolist(), title="Semana de Cosecha"),
                 y=alt.Y('Tallos_Proyectados:Q', title="Tallos Proyectados a Cosecha"),
                 tooltip=['Semana_Cosecha_Label', 'Temporada', alt.Tooltip('Tallos_Proyectados:Q', format=',d'), alt.Tooltip('% del Total Lote:Q', format='.1f')]
@@ -580,7 +580,7 @@ def render_enraizamiento_module(db):
                 y=alt.Y('Tallos:Q', title="Tallos Semanales"),
                 color=alt.Color('Fuente:N', scale=alt.Scale(
                     domain=['Cosecha Proyectada Enraizamiento', 'Meta Plan Producción (ForeCast)'],
-                    range=['#2E8B57', '#FFD700']
+                    range=['#059669', '#1D4ED8']
                 )),
                 xOffset='Fuente:N',
                 tooltip=['Semana_Cosecha_Label', 'Fuente', alt.Tooltip('Tallos:Q', format=',d'), 'Temporada']
@@ -630,7 +630,7 @@ def render_enraizamiento_module(db):
             chart_comp = alt.Chart(df_melt_enr).mark_bar(opacity=0.85).encode(
                 x=alt.X('Semana_Enraizamiento_Label:N', title="Semana de Enraizamiento"),
                 y=alt.Y('Esquejes:Q', title="Esquejes a Enraizar"),
-                color=alt.Color('Fuente:N', scale=alt.Scale(domain=['Plataforma S&OP', 'Pedido Programado (Analítica)'], range=['#2E8B57', '#8A2BE2'])),
+                color=alt.Color('Fuente:N', scale=alt.Scale(domain=['Plataforma S&OP', 'Pedido Programado (Analítica)'], range=['#1D4ED8', '#D97706'])),
                 xOffset='Fuente:N',
                 tooltip=['Semana_Enraizamiento_Label', 'Fuente', alt.Tooltip('Esquejes:Q', format=',d'), 'Temporada']
             ).properties(height=320)
@@ -709,7 +709,7 @@ def render_enraizamiento_module(db):
                 y=alt.Y('Camas:Q', title="Camas Físicas Acumuladas"),
                 color=alt.Color('Concepto:N', scale=alt.Scale(
                     domain=['Liberación Estándar (7 días suelo)', 'Liberación Acelerada (3 días suelo)', 'Demanda de Camas Acumulada'],
-                    range=['#A6ACB3', '#2E8B57', '#E03C8A']
+                    range=['#64748B', '#059669', '#DC2626']
                 )),
                 strokeDash=alt.condition(
                     alt.datum.Concepto == 'Demanda de Camas Acumulada',

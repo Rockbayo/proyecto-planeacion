@@ -196,10 +196,10 @@ def render_ocupacion_module(db):
 
         orden_cronologico = list(df_plot['Semana_Label'].unique())
 
-        # 1. Techo Físico Instalado (Línea Magenta Grow-Light Discontinua)
+        # 1. Techo Físico Instalado (Línea Roja Corporativa Discontinua)
         df_rule_inst = pd.DataFrame([{'Techo_Instalado': techo_camas}])
         rule_techo_inst = alt.Chart(df_rule_inst).mark_rule(
-            color='#E03C8A', 
+            color='#DC2626', 
             strokeDash=[6, 4], 
             strokeWidth=2.2
         ).encode(
@@ -207,10 +207,10 @@ def render_ocupacion_module(db):
             tooltip=[alt.Tooltip('Techo_Instalado:Q', title=f'Capacidad Instalada ({int(techo_camas)} Camas)')]
         )
 
-        # 2. Techo Post-Reducción de Área (Línea Naranja Eléctrica Discontinua: ~100 camas descontadas)
+        # 2. Techo Post-Reducción de Área (Línea Naranja Corporativa Discontinua: ~100 camas descontadas)
         df_rule_red = pd.DataFrame([{'Techo_Reducido': techo_reducido}])
         rule_techo_red = alt.Chart(df_rule_red).mark_rule(
-            color='#FF8C00', 
+            color='#EA580C', 
             strokeDash=[4, 4], 
             strokeWidth=2
         ).encode(
@@ -218,12 +218,12 @@ def render_ocupacion_module(db):
             tooltip=[alt.Tooltip('Techo_Reducido:Q', title=f'Capacidad Post-Reducción ({techo_reducido:.1f} Camas, -100 Camas Finca)')]
         )
 
-        # 3. Franja Óptima (85% a 95% - Verde Clorofila)
+        # 3. Franja Óptima (85% a 95% - Verde Esmeralda S&OP)
         df_band = pd.DataFrame([{
             'min_opt': techo_camas * 0.85,
             'max_opt': techo_camas * 0.95
         }])
-        band_opt = alt.Chart(df_band).mark_rect(opacity=0.18, color='#2E8B57').encode(
+        band_opt = alt.Chart(df_band).mark_rect(opacity=0.15, color='#059669').encode(
             y='min_opt:Q',
             y2='max_opt:Q'
         )
@@ -233,7 +233,7 @@ def render_ocupacion_module(db):
         )
 
         if modo_vista == "Plan Operativo Vigente":
-            line_chart = base_chart.mark_line(point=True, color='#2E8B57', strokeWidth=2.8).encode(
+            line_chart = base_chart.mark_line(point=True, color='#1D4ED8', strokeWidth=2.8).encode(
                 y=alt.Y('Camas_Niveladas_OpB:Q', title='Camas Ocupadas', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
                 tooltip=[
                     'Semana_Label:N', 'Semana:N', 'Temporada:N',
@@ -247,7 +247,7 @@ def render_ocupacion_module(db):
             chart_final = band_opt + line_chart + rule_techo_inst + rule_techo_red
 
         elif modo_vista == "Plan Base (Referencia)":
-            line_chart = base_chart.mark_line(point=True, color='#A6ACB3', strokeWidth=2.5).encode(
+            line_chart = base_chart.mark_line(point=True, color='#94A3B8', strokeWidth=2.5).encode(
                 y=alt.Y('Camas_Plan_Original:Q', title='Camas Requeridas (Plan Base)', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
                 tooltip=[
                     'Semana_Label:N', 'Semana:N', 'Temporada:N',
@@ -262,21 +262,21 @@ def render_ocupacion_module(db):
             chart_final = band_opt + line_chart + rule_techo_inst + rule_techo_red
 
         else: # Comparativa de Planes
-            line_orig = base_chart.mark_line(point=False, color='#A6ACB3', strokeDash=[4, 3], strokeWidth=2.0).encode(
+            line_orig = base_chart.mark_line(point=False, color='#94A3B8', strokeDash=[4, 3], strokeWidth=2.0).encode(
                 y=alt.Y('Camas_Plan_Original:Q', title='Camas Requeridas', scale=alt.Scale(domain=[0, techo_camas * 1.15])),
                 tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Siembra:Q', title='Siembra (Camas)', format='.1f'), alt.Tooltip('Camas_Plan_Original:Q', title='Plan Base (Camas)', format='.1f'), alt.Tooltip('Ocupacion_Original_%:Q', title='Ocupación Base (%)', format='.1f')]
             )
-            line_adj = base_chart.mark_line(point=True, color='#2E8B57', strokeWidth=2.8).encode(
+            line_adj = base_chart.mark_line(point=True, color='#1D4ED8', strokeWidth=2.8).encode(
                 y='Camas_Niveladas_OpB:Q',
                 tooltip=['Semana_Label:N', 'Semana:N', 'Temporada:N', alt.Tooltip('Camas_Siembra:Q', title='Siembra (Camas)', format='.1f'), alt.Tooltip('Camas_Niveladas_OpB:Q', title='Plan Vigente (Camas)', format='.1f'), alt.Tooltip('Ocupacion_Nivelada_%:Q', title='Ocupación Vigente (%)', format='.1f')]
             )
-            titulo_grafico = f"Comparativa: Plan Base (Gris Discontinuo) vs. Plan Vigente (Verde Clorofila) [{bloque_subtitulo}]"
+            titulo_grafico = f"Comparativa: Plan Base (Gris Pizarra) vs. Plan Vigente (Azul Zafiro) [{bloque_subtitulo}]"
             chart_final = band_opt + line_orig + line_adj + rule_techo_inst + rule_techo_red
 
         chart_render = chart_final.properties(height=380, title=titulo_grafico)
         st.altair_chart(chart_render, width="stretch")
 
-        st.caption(f"🟣 **Línea Magenta Grow-Light:** Capacidad física instalada ({int(techo_camas)} camas). | 🟠 **Línea Naranja Eléctrica:** Capacidad post-reducción de área (~{int(techo_reducido)} camas / ~100 camas descontadas a partir de S{SEMANA_CORTE_REDUCCION_AREA}). | 🟢 **Franja Verde Clorofila:** Rango operativo óptimo (85% a 95%).")
+        st.caption(f"🔴 **Línea Roja Discontinua:** Capacidad física instalada ({int(techo_camas)} camas). | 🟠 **Línea Naranja Discontinua:** Capacidad post-reducción de área (~{int(techo_reducido)} camas / ~100 camas descontadas a partir de S{SEMANA_CORTE_REDUCCION_AREA}). | 🟢 **Franja Verde Esmeralda:** Rango operativo óptimo (85% a 95%).")
 
         st.info("""
         💡 **Distinción Clave entre Siembra y Cosecha (San Valentín 2027):**

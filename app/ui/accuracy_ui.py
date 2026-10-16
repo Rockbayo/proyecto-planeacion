@@ -292,7 +292,7 @@ def render_accuracy_module(db):
                     y=alt.Y('wape_%:Q', title='Error WAPE (%)', scale=alt.Scale(zero=False)),
                     color=alt.Color('Flor:N', title='Tipo de Flor', scale=alt.Scale(
                         domain=['Cushion', 'Daisy', 'Novelty', 'Global'],
-                        range=['#E03C8A', '#FFD700', '#8A2BE2', '#2E8B57']
+                        range=['#1D4ED8', '#059669', '#D97706', '#7C3AED']
                     )),
                     tooltip=['Flor', 'iteracion', 'alpha', 'num_ciclos', 'wape_%', 'bias_%', 'error_tallos']
                 ).properties(height=340, title=f"Búsqueda de Grilla: WAPE vs. Ponderación Alpha ({flor_chart_sel})")
@@ -336,7 +336,7 @@ def render_accuracy_module(db):
             chart_sem = alt.Chart(df_chart_sem).mark_bar().encode(
                 x=alt.X('Variedad:N', sort='-y', title='Variedad'),
                 y=alt.Y('Tallos:Q', title='Tallos'),
-                color=alt.Color('Tipo:N', scale=alt.Scale(domain=['Real_Recepcionado', 'Estimado_Proyectado'], range=['#2E8B57', '#FFD700'])),
+                color=alt.Color('Tipo:N', scale=alt.Scale(domain=['Real_Recepcionado', 'Estimado_Proyectado'], range=['#059669', '#1D4ED8'])),
                 xOffset='Tipo:N',
                 tooltip=['Variedad', 'Tipo', 'Tallos']
             ).properties(height=320, title=f"Top 15 Variedades Semana S{semana_activa}: Real Recepcionado vs. Estimado ForeCast")
@@ -351,7 +351,7 @@ def render_accuracy_module(db):
             df_trend['Semana_Num'] = df_trend['Semana'].astype(str)
             df_trend = df_trend.sort_values('Semana_Num')
 
-            chart_trend = alt.Chart(df_trend).mark_line(point=True, color='#2E8B57').encode(
+            chart_trend = alt.Chart(df_trend).mark_line(point=True, color='#1D4ED8').encode(
                 x=alt.X('Semana_Num:N', title='Semana Operativa', axis=alt.Axis(labelAngle=-45)),
                 y=alt.Y('Real_Recepcionado:Q', title='Tallos Recepcionados', scale=alt.Scale(zero=False)),
                 tooltip=['Semana_Num', 'Real_Recepcionado']
