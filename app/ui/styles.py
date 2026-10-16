@@ -51,8 +51,9 @@ p, span, label, [data-testid="stMarkdownContainer"] p, [data-testid="stText"] {
 }
 
 .stCaption, small, [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p, [data-testid="stWidgetLabel"] small {
-    color: #64748B !important;
-    font-size: 0.825rem !important;
+    color: #475569 !important;
+    font-size: 0.835rem !important;
+    font-weight: 500 !important;
 }
 
 /* 2. Barra Lateral: Command Center Ejecutivo (Navy Slate) */
@@ -217,20 +218,58 @@ button[kind="primary"]:hover, .stButton > button[kind="primary"]:hover {
 
 button[kind="secondary"], .stButton > button:not([kind="primary"]) {
     background: #FFFFFF !important;
-    color: #334155 !important;
-    border: 1px solid #CBD5E1 !important;
+    color: #1E293B !important;
+    border: 1.5px solid #94A3B8 !important;
     border-radius: 6px !important;
-    font-weight: 500 !important;
+    font-weight: 600 !important;
     font-size: 0.9rem !important;
     padding: 8px 16px !important;
-    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
     transition: all 0.15s ease !important;
 }
 
 button[kind="secondary"]:hover, .stButton > button:not([kind="primary"]):hover {
-    background-color: #F8FAFC !important;
-    border-color: #94A3B8 !important;
+    background-color: #F1F5F9 !important;
+    border-color: #475569 !important;
     color: #0F172A !important;
+}
+
+/* Botones de Descarga (stDownloadButton) - Alto Contraste y Cero Saturación */
+div[data-testid="stDownloadButton"] > button {
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+    border: 1.5px solid #475569 !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    padding: 8px 18px !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.06) !important;
+    transition: all 0.15s ease !important;
+}
+
+div[data-testid="stDownloadButton"] > button:hover {
+    background-color: #0F172A !important;
+    color: #FFFFFF !important;
+    border-color: #0F172A !important;
+    box-shadow: 0 2px 6px 0 rgba(0, 0, 0, 0.15) !important;
+}
+
+div[data-testid="stDownloadButton"] > button[kind="primary"] {
+    background-color: #0F172A !important;
+    color: #FFFFFF !important;
+    border: 1.5px solid #0F172A !important;
+}
+
+div[data-testid="stDownloadButton"] > button[kind="primary"]:hover {
+    background-color: #1E293B !important;
+    border-color: #1E293B !important;
+    color: #FFFFFF !important;
+}
+
+div[data-testid="stDownloadButton"] > button p,
+div[data-testid="stDownloadButton"] > button span {
+    color: inherit !important;
+    font-weight: 600 !important;
 }
 
 /* 5. Alertas S&OP de Alta Dirección (Cintas Corporativas sin Neón) */
@@ -318,22 +357,44 @@ div[data-testid="stDataFrame"], div[data-testid="stTable"] {
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04) !important;
 }
 
-/* 7. Inputs, Textareas, Selectboxes */
-div[data-baseweb="select"] > div, input, textarea {
+/* 7. Inputs, Textareas, Selectboxes y Checkboxes con Borde Nítido */
+div[data-baseweb="select"] > div, 
+div[data-testid="stTextInput"] input, 
+div[data-testid="stNumberInput"] input, 
+div[data-testid="stDateInput"] input,
+textarea {
     background-color: #FFFFFF !important;
-    border: 1px solid #CBD5E1 !important;
+    border: 1.5px solid #94A3B8 !important;
     color: #0F172A !important;
     border-radius: 6px !important;
     font-size: 0.9rem !important;
 }
 
-div[data-baseweb="select"] > div:hover, input:hover, textarea:hover {
-    border-color: #94A3B8 !important;
+div[data-baseweb="select"] > div:hover, 
+div[data-testid="stTextInput"] input:hover, 
+div[data-testid="stNumberInput"] input:hover,
+textarea:hover {
+    border-color: #475569 !important;
 }
 
-div[data-baseweb="select"] > div:focus-within, input:focus, textarea:focus {
+div[data-baseweb="select"] > div:focus-within, 
+div[data-testid="stTextInput"] input:focus, 
+div[data-testid="stNumberInput"] input:focus,
+textarea:focus {
     border-color: #1D4ED8 !important;
     box-shadow: 0 0 0 1px #1D4ED8 !important;
+}
+
+/* Casillas de Verificación (Checkboxes) con Contraste y Borde Definido */
+div[data-testid="stCheckbox"] label span[role="checkbox"],
+div[data-testid="stCheckbox"] [data-baseweb="checkbox"] span {
+    border: 1.5px solid #64748B !important;
+    border-radius: 4px !important;
+    background-color: #FFFFFF !important;
+}
+
+div[data-testid="stCheckbox"] label:hover span[role="checkbox"] {
+    border-color: #1D4ED8 !important;
 }
 
 /* 8. Badges Ejecutivos Corporativos */

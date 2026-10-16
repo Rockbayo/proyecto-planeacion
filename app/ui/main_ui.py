@@ -40,8 +40,7 @@ modulo = st.sidebar.radio("Módulos del Sistema:", [
     "Plan de Producción (MVA)", 
     "Ocupación de Área y Capacidad",
     "Pedido Material Vegetal", 
-    "Plan de Enraizamiento",
-    "Precisión y ML (Accuracy)"
+    "Plan de Enraizamiento"
 ])
 
 from app.ui.curvas_ui import render_curvas_module
@@ -192,57 +191,80 @@ elif modulo == "ForeCast y Exportación":
     st.header("📈 ForeCast y Exportación (S&OP)")
     st.markdown("Proyección de cosecha consolidada y exportación de plantillas (Webflowers / 52 Semanas).")
     
-    # Selector de horizonte
-    vista = st.radio(
-        "Selecciona el horizonte de proyección:", 
-        ["52 Semanas (Año Completo)", "San Valentín (S2701 - S2706)", "13 Semanas Móviles", "Madres (S2715 - S2719)"], 
-        horizontal=True,
-        key="fc_vista_horizonte"
-    )
+    # Selector de horizonte (Presets y Personalizado)
+    from datetime import date
+    from app.services.forecast_service import isocalendar_to_string
+    from app.services.enraizamiento_service import sumar_semanas_iso
+
+    semana_actual = isocalendar_to_string(date.today())
+    semanas_disponibles = [sumar_semanas_iso(semana_actual, i) for i in range(53)]
+
+    col_hzt1, col_hzt2 = st.columns([2, 2])
+    with col_hzt1:
+        vista = st.radio(
+            "Selecciona el horizonte de proyección:", 
+            ["13 Semanas Móviles (Actual + 13)", "52 Semanas (Año Completo)", "Personalizado"], 
+            horizontal=True,
+            key="fc_vista_horizonte"
+        )
     
-    # Alertas S&OP por horizonte
+    sem_desde = semana_actual
+    sem_hasta = sumar_semanas_iso(semana_actual, 13 if "13" in vista else 51)
+    
+    with col_hzt2:
+        if vista == "Personalizado":
+            col_p1, col_p2 = st.columns(2)
+            sem_desde = col_p1.selectbox("Semana Desde:", semanas_disponibles, index=0)
+            opciones_hasta = [s for s in semanas_disponibles if s >= sem_desde]
+            idx_default = min(13, len(opciones_hasta) - 1)
+            sem_hasta = col_p2.selectbox("Semana Hasta:", opciones_hasta, index=idx_default)
+    
+    # Alertas y Contexto S&OP por horizonte
     alertas_sop = obtener_alertas_sop()
-    if vista == "13 Semanas Móviles":
+    if "13" in vista:
         a13 = alertas_sop.get("regla_13wk", {})
         st.caption(f"{a13.get('icono', '⏰')} **Regla 1 S&OP (13 Semanas / Webflowers):** Cierre los Miércoles antes de las 12:00 m. {a13.get('mensaje', '')}")
-    elif "San Valentín" in vista:
-        st.caption("🌹 **Horizonte Focal San Valentín (S2701 a S2706):** Muestra el comportamiento del pico comercial (1,410,000 tallos) y su sincronización con propagación.")
-    elif "Madres" in vista:
-        st.caption("💐 **Horizonte Focal Madres (S2715 a S2719):** Muestra la ventana comercial de corte para temporada de Madres.")
-    else:
+    elif "52" in vista:
         a52 = alertas_sop.get("regla_52wk", {})
         st.caption(f"{a52.get('icono', '📅')} **Regla 2 S&OP (52 Semanas / Anual):** Carga los 4º Jueves de cada mes. {a52.get('mensaje', '')}")
+    else:
+        st.caption(f"🎯 **Horizonte Personalizado:** Visualizando rango operativo desde la semana **{sem_desde}** hasta la semana **{sem_hasta}**.")
     
-    # Parametros visuales con adopción de calibración ML
+    # Parámetros visuales de suavización y calibración (dentro de ForeCast, sin saturar la barra lateral)
     from app.services.calibracion_service import cargar_parametros_calibrados
     params_cal = cargar_parametros_calibrados()
     default_pond = int(params_cal.get('ponderacion_%', 100))
     default_ciclos = int(params_cal.get('num_ciclos', 9))
 
-    st.sidebar.markdown("### Parámetros de Suavización")
-    usar_calibrado_flor = True
-    if params_cal.get('fecha_calibracion'):
-        por_fl = params_cal.get('por_flor', {})
-        c_p = por_fl.get('Cushion', {})
-        d_p = por_fl.get('Daisy', {})
-        n_p = por_fl.get('Novelty', {})
-        st.sidebar.success(f"""🤖 **Calibrado por ML (Por Flor):**
-* 🌸 Cushion: {c_p.get('ponderacion_%', default_pond)}% ({c_p.get('num_ciclos', default_ciclos)} cic)
-* 🌼 Daisy: {d_p.get('ponderacion_%', default_pond)}% ({d_p.get('num_ciclos', default_ciclos)} cic)
-* 🌺 Novelty: {n_p.get('ponderacion_%', default_pond)}% ({n_p.get('num_ciclos', default_ciclos)} cic)
-*Última: {params_cal.get('fecha_calibracion')}*""")
-        usar_calibrado_flor = st.sidebar.checkbox("Aplicar Calibración Segmentada por Flor (ML)", value=True, help="Usa automáticamente la ponderación y ciclos óptimos de Cushion, Daisy y Novelty.")
+    with st.expander("⚙️ Calibración de Curvas y Parámetros de Suavización por Flor", expanded=False):
+        col_c1, col_c2 = st.columns([2, 1])
+        with col_c1:
+            if params_cal.get('fecha_calibracion'):
+                por_fl = params_cal.get('por_flor', {})
+                c_p = por_fl.get('Cushion', {})
+                d_p = por_fl.get('Daisy', {})
+                n_p = por_fl.get('Novelty', {})
+                st.markdown(f"""**Parámetros Óptimos Calibrados por Flor:**
+* 🌸 **Cushion:** {c_p.get('ponderacion_%', default_pond)}% ponderación ({c_p.get('num_ciclos', default_ciclos)} ciclos)
+* 🌼 **Daisy:** {d_p.get('ponderacion_%', default_pond)}% ponderación ({d_p.get('num_ciclos', default_ciclos)} ciclos)
+* 🌺 **Novelty:** {n_p.get('ponderacion_%', default_pond)}% ponderación ({n_p.get('num_ciclos', default_ciclos)} ciclos)
+*Última calibración: {params_cal.get('fecha_calibracion')}*""")
+                usar_calibrado_flor = st.checkbox("Aplicar Calibración Segmentada por Flor", value=True, help="Usa automáticamente la ponderación y ciclos óptimos de Cushion, Daisy y Novelty.")
+            else:
+                usar_calibrado_flor = False
+                st.info("ℹ️ Parámetros en valores base estándar (100% ponderación / 9 ciclos).")
 
-    if not usar_calibrado_flor:
-        ponderacion = st.sidebar.slider("Ponderación Global (%)", 0, 100, default_pond)
-        periodos = st.sidebar.number_input("Ciclos Globales (Periodos)", min_value=1, value=default_ciclos)
-        alpha_fc = ponderacion / 100.0
-        ciclos_fc = periodos
-        params_flor_fc = None
-    else:
-        alpha_fc = None
-        ciclos_fc = None
-        params_flor_fc = params_cal.get('por_flor')
+        with col_c2:
+            if not usar_calibrado_flor:
+                ponderacion = st.slider("Ponderación Global (%)", 0, 100, default_pond)
+                periodos = st.number_input("Ciclos Globales (Periodos)", min_value=1, value=default_ciclos)
+                alpha_fc = ponderacion / 100.0
+                ciclos_fc = periodos
+                params_flor_fc = None
+            else:
+                alpha_fc = None
+                ciclos_fc = None
+                params_flor_fc = params_cal.get('por_flor')
     
     with st.spinner(f"Generando matriz de pronóstico ({vista})..."):
         # 1. Proyección de Inventario Vivo (Cubre hasta 9 semanas) con parámetros segmentados
@@ -280,10 +302,9 @@ elif modulo == "ForeCast y Exportación":
             df_forecast = df_forecast_vivo
 
         st.info(
-            "💡 **Curvas en Gráfica:** "
-            "🟢 **ForeCast Biológico (Verde):** Proyección continua que une las siembras vivas actuales en campo con la proyección del pedido. | "
-            "🔵 **Plan de Producción (Azul):** Meta semanal aprobada por S&OP en el Plan Maestro de Producción. | "
-            "🟠 **Proyección Cosecha Enraizamiento (Naranja):** Cosecha biológica resultante del Plan de Enraizamiento / Pedido de Material Vegetal."
+            "💡 **Curvas S&OP:** "
+            "🟢 **ForeCast Biológico (Verde):** Proyección biológica factible. Las primeras **10 semanas** (Corto Plazo: actual + 9) provienen al 100% del **Inventario Vivo** en campo. A partir de la semana 11, se proyecta el **Plan Maestro Factible**. | "
+            "🔵 **Plan de Producción (Azul):** Meta semanal aprobada por S&OP en el Plan Maestro de Producción."
         )
         
     if df_forecast.empty:
@@ -292,16 +313,12 @@ elif modulo == "ForeCast y Exportación":
         semanas_cols = [col for col in df_forecast.columns if str(col).startswith('202')]
         semanas_cols = sorted(semanas_cols)
         
-        semana_actual = isocalendar_to_string(date.today())
-        
-        if "San Valentín" in vista:
-            semanas_futuras = [s for s in semanas_cols if any(s.startswith(w) for w in ['202701', '202702', '202703', '202704', '202705', '202706'])]
-        elif "Madres" in vista:
-            semanas_futuras = [s for s in semanas_cols if any(s.startswith(w) for w in ['202715', '202716', '202717', '202718', '202719'])]
-        elif vista == "13 Semanas Móviles":
+        if "13" in vista:
             semanas_futuras = [s for s in semanas_cols if s >= semana_actual][:14]
-        else:
+        elif "52" in vista:
             semanas_futuras = [s for s in semanas_cols if s >= semana_actual][:52]
+        else: # Personalizado
+            semanas_futuras = [s for s in semanas_cols if sem_desde <= s <= sem_hasta]
             
         # Resaltar la semana actual
         if semana_actual in df_forecast.columns:
@@ -315,10 +332,9 @@ elif modulo == "ForeCast y Exportación":
             # Clasificar semanas entre Plano de Siembras (Inventario Vivo) y Pedido de Material Vegetal
             cols_fc_vivo = sorted([c for c in df_forecast_vivo.columns if str(c).startswith('202')])
             semanas_viv_raw = set([s for s in cols_fc_vivo if s >= semana_actual][:10])
-            # Serie 1: ForeCast Continuo (Siembras Actuales unida a la Proyección del Pedido)
             y_fc = [fc_agrupado.get(s, 0) for s in semanas_futuras]
             
-            st.subheader("Proyección Semanal vs Plan Aprobado y Enraizamiento")
+            st.subheader(f"Proyección Semanal vs Plan de Producción Aprobado ({vista})")
             
             # Serie 2: Cargar el Plan de Producción Aprobado
             plan_aprobado_path = "Plan_Aprobado.csv"
@@ -347,41 +363,38 @@ elif modulo == "ForeCast y Exportación":
                                 if sem_clean in df_plan_grp_cap.index:
                                     plan_series_cap[sem_fut] = df_plan_grp_cap[sem_clean]
                                     
-                    st.success("✅ Comparando contra el Plan de Producción Aprobado y la Proyección de Enraizamiento.")
+                    st.success("✅ Comparando contra el Plan de Producción Aprobado.")
                 except Exception as e:
                     st.warning(f"No se pudo leer el Plan Aprobado: {e}")
             else:
                 st.info("💡 No hay un 'Plan Aprobado' guardado en el módulo MVA. Usa el módulo 'Plan de Producción' para procesar y consolidar un plan.")
-                col_plan1, col_plan2 = st.columns([1, 3])
-                plan_fallback = col_plan1.number_input("Meta del Plan (Fallback)", value=400000, step=10000)
-                plan_series_cap = pd.Series(plan_fallback, index=semanas_futuras)
+                plan_series_cap = pd.Series(0.0, index=semanas_futuras)
 
-            # Serie 3: Proyección Cosecha de Enraizamiento (Pedido Material Vegetal Oficial)
-            plan_enr_series = pd.Series(0.0, index=semanas_futuras)
-            has_enr_proj = False
-            if os.path.exists("Plan_Aprobado_Detallado.csv"):
-                try:
-                    df_det_enr = pd.read_csv("Plan_Aprobado_Detallado.csv")
-                    df_det_enr['Esquejes_Para_Siembra (Final)'] = df_det_enr['Esquejes']
-                    df_proj_enr = proyectar_cosecha_desde_mva(df_det_enr, db)
-                    cols_enr_c = [c for c in df_proj_enr.columns if str(c).startswith('202')]
-                    enr_sums = df_proj_enr[cols_enr_c].sum()
-                    for sem_fut in semanas_futuras:
-                        sem_clean = sem_fut.split(" ")[0]
-                        if sem_clean in enr_sums.index:
-                            plan_enr_series[sem_fut] = enr_sums[sem_clean]
-                    has_enr_proj = (plan_enr_series.sum() > 0)
-                except Exception:
-                    pass
-                
             fig_fc = go.Figure()
             
+            # Diferenciación visual: Zona de Inventario Vivo (Primeras 10 semanas de corto plazo)
+            idx_10w = min(9, len(semanas_futuras) - 1)
+            if idx_10w > 0:
+                fig_fc.add_vrect(
+                    x0=semanas_futuras[0],
+                    x1=semanas_futuras[idx_10w],
+                    fillcolor="#059669",
+                    opacity=0.08,
+                    line_width=1,
+                    line_dash="dot",
+                    line_color="#10B981",
+                    annotation_text="🌿 Corto Plazo: Inventario Vivo en Campo (10 Semanas)",
+                    annotation_position="top left",
+                    annotation_font_size=11,
+                    annotation_font_color="#047857"
+                )
+
             # 1. Trazo: ForeCast Biológico (Siembras Actuales unida a la Proyección del Pedido)
             fig_fc.add_trace(go.Scatter(
                 x=semanas_futuras,
                 y=y_fc,
                 mode='lines+markers',
-                name="ForeCast Biológico (Siembras + Pedido)",
+                name="ForeCast Biológico (Oferta Real Factible)",
                 line=dict(color='#059669', width=3.2),
                 marker=dict(size=6, symbol='circle'),
                 hovertemplate="<b>Semana %{x}</b><br>ForeCast Biológico: %{y:,.0f} tallos<extra></extra>"
@@ -392,26 +405,14 @@ elif modulo == "ForeCast y Exportación":
                 x=semanas_futuras,
                 y=plan_series_cap,
                 mode='lines+markers',
-                name="Plan de Producción (Aprobado)",
+                name="Plan de Producción (Demanda Aprobada)",
                 line=dict(color='#1D4ED8', width=2.8, dash='dash'),
                 marker=dict(size=6, symbol='square'),
                 hovertemplate="<b>Semana %{x}</b><br>Plan Producción: %{y:,.0f} tallos<extra></extra>"
             ))
 
-            # 3. Trazo: Proyección Cosecha Enraizamiento (Pedido Material Vegetal)
-            if has_enr_proj:
-                fig_fc.add_trace(go.Scatter(
-                    x=semanas_futuras,
-                    y=plan_enr_series,
-                    mode='lines+markers',
-                    name="Proyección Cosecha Enraizamiento (Pedido MV)",
-                    line=dict(color='#D97706', width=2.8),
-                    marker=dict(size=6, symbol='diamond'),
-                    hovertemplate="<b>Semana %{x}</b><br>Cosecha Enraizamiento: %{y:,.0f} tallos<extra></extra>"
-                ))
-                
             fig_fc.update_layout(
-                title=dict(text=f"Proyección Semanal vs Plan Aprobado y Enraizamiento ({vista})", font=dict(size=15, color="#0F172A", family="Inter, sans-serif")),
+                title=dict(text=f"Proyección Semanal vs Plan de Producción Aprobado ({vista})", font=dict(size=15, color="#0F172A", family="Inter, sans-serif")),
                 xaxis=dict(
                     type='category',
                     title="Semana Operativa",
@@ -431,23 +432,21 @@ elif modulo == "ForeCast y Exportación":
             
             st.plotly_chart(fig_fc, width='stretch', config={'scrollZoom': False, 'displayModeBar': False})
             
-            st.markdown("**Comparativo ForeCast vs Plan de Producción vs Cosecha Enraizamiento:**")
+            st.markdown("**Comparativo ForeCast vs Plan de Producción Aprobado:**")
             df_comp = pd.DataFrame(index=semanas_futuras)
-            df_comp['ForeCast (Siembras + Pedido)'] = fc_agrupado
+            df_comp['ForeCast Biológico'] = fc_agrupado
             df_comp['Plan de Producción'] = plan_series_cap
-            if has_enr_proj:
-                df_comp['Cosecha Enraizamiento (Pedido MV)'] = plan_enr_series
-                df_comp['Alineación Enraizamiento vs Plan %'] = df_comp.apply(
-                    lambda row: ((row['Cosecha Enraizamiento (Pedido MV)'] / row['Plan de Producción']) * 100) if row['Plan de Producción'] > 0 else 0,
-                    axis=1
-                )
+            df_comp['Brecha / Gap (Tallos)'] = df_comp['ForeCast Biológico'] - df_comp['Plan de Producción']
+            df_comp['Cumplimiento %'] = df_comp.apply(
+                lambda row: ((row['ForeCast Biológico'] / row['Plan de Producción']) * 100) if row['Plan de Producción'] > 0 else 0,
+                axis=1
+            )
             
             df_comp_display = df_comp.copy()
-            df_comp_display['ForeCast (Siembras + Pedido)'] = df_comp_display['ForeCast (Siembras + Pedido)'].apply(lambda x: f"{int(x):,}")
+            df_comp_display['ForeCast Biológico'] = df_comp_display['ForeCast Biológico'].apply(lambda x: f"{int(x):,}")
             df_comp_display['Plan de Producción'] = df_comp_display['Plan de Producción'].apply(lambda x: f"{int(x):,}")
-            if has_enr_proj:
-                df_comp_display['Cosecha Enraizamiento (Pedido MV)'] = df_comp_display['Cosecha Enraizamiento (Pedido MV)'].apply(lambda x: f"{int(x):,}")
-                df_comp_display['Alineación Enraizamiento vs Plan %'] = df_comp_display['Alineación Enraizamiento vs Plan %'].apply(lambda x: f"{x:.1f}%")
+            df_comp_display['Brecha / Gap (Tallos)'] = df_comp_display['Brecha / Gap (Tallos)'].apply(lambda x: f"{int(x):+,}")
+            df_comp_display['Cumplimiento %'] = df_comp_display['Cumplimiento %'].apply(lambda x: f"{x:.1f}%")
             
             st.dataframe(df_comp_display.T, width='stretch')
             
@@ -495,16 +494,16 @@ elif modulo == "ForeCast y Exportación":
         st.divider()
         
         # EXPORTACIONES
-        if vista == "13 Semanas Móviles":
+        if "13" in vista:
             st.subheader("📤 Exportación Webflowers (13 Semanas)")
-            st.markdown("Carga las plantillas vacías descargadas de la plataforma. El sistema inyectará **9 semanas** de proyecciones basadas en inventario vivo, y rellenará las **4 semanas** restantes con el Plan de Producción del Pedido Consolidado Maestro.")
+            st.markdown("Carga las plantillas vacías descargadas de la plataforma. El sistema inyectará **10 semanas** de proyecciones basadas en inventario vivo (Corto Plazo), y rellenará las **3 semanas** restantes con el Plan de Producción del Pedido Consolidado Maestro.")
             
             col_up1, col_up2 = st.columns(2)
             with col_up1:
                 uploaded_templates = st.file_uploader("📥 Subir Plantillas Webflowers Vacías (Excel)", type=["xlsx", "xls"], accept_multiple_files=True)
             
             with col_up2:
-                st.info("💡 **Automatización 13 Semanas:** Las primeras 9 semanas se llenan con la proyección real de campo. Las 4 semanas finales se rellenan usando el Pedido Consolidado MVA configurado en el Dashboard.")
+                st.info("💡 **Automatización 13 Semanas:** Las primeras 10 semanas se llenan con la proyección real de campo (Inventario Vivo). Las 3 semanas restantes se completan con el Pedido Consolidado MVA.")
             
             if uploaded_templates:
                 if st.button("Procesar y Llenar Plantillas 13 Wk"):
