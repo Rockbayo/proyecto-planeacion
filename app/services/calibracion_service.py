@@ -654,7 +654,7 @@ def ejecutar_iteraciones_segmentadas_por_flor(db: Session, df_wf: pd.DataFrame, 
         "semana_evaluada": str(semana_objetivo),
         "total_iteraciones": int(total_simulaciones_count),
         "simulaciones_por_flor": int(len(grid_alphas) * len(grid_ciclos)),
-        "origen": "Optimización Machine Learning Segmentada por Flor (2,000 Simulaciones)"
+        "origen": "Calibración Biológica Segmentada por Flor (2,000 Simulaciones)"
     }
 
     # Guardar en disco para adopción global por todos los módulos

@@ -777,40 +777,40 @@ def render_pedido_module(db):
                     st.rerun()
 
     # =========================================================================
-    # TAB 3: CANCELACIÓN DE MATERIAL VEGETAL (EXCEDENTES > 5%)
+    # TAB 3: CANCELACIÓN DE MATERIAL VEGETAL (EXCEDENTES > 10% Y MÍNIMO 1 CAMA)
     # =========================================================================
     with tab_cancelacion:
-        st.subheader("❌ Cancelación de Material Vegetal (Excedentes > 5%)")
+        st.subheader("❌ Cancelación de Material Vegetal (Excedentes > 10% / Mínimo 1 Cama)")
         
         st.markdown(f"""
-        Este módulo detecta proyecciones biológicas en campo que **superan la capacidad aprobada más el seguro del 5%** 
-        (`Tallos Proyectados > Plan × 1.05`), evaluando el balance a nivel de **Grupo Color**.
+        Este módulo audita las órdenes del pedido detectando proyecciones biológicas que **superan el límite máximo permitido (+10% sobre el Plan)** 
+        (`Tallos Proyectados > Plan × 1.10`), evaluando el balance neto a nivel de **Grupo Color** y asegurando que las cancelaciones sean operativamente viables.
         
-        * **Regla de Compensación Grupo Color:** Si una variedad tiene sobreproducción pero otra del mismo color está deficitaria, se compensan. Solo se cancela el **excedente neto del grupo color** que supere el 5% de holgura.
-        * **Distribución de Semanas:** Cada cancelación se asigna a su **semana de pedido respectiva** en el futuro (entre **{sem_siguiente}** y **{sem_firme_default}**). No se acumulan en una sola semana ni se cancelan semanas pasadas.
-        * **Formato de Archivo:** El Excel descargado mantiene **la estructura estándar requerida por el sistema** (`Flor | Color | Variedad | Semanas...`) sin comentarios adicionales.
+        * **Regla de Umbral Operativo (Mínimo 1 Cama):** Solo se generan cancelaciones en múltiplos de **1 cama completa (5,200 esquejes)**. Se descartan recortes marginales o fracciones (ej. 200 o 500 esquejes) que se gestionan directamente al sembrar.
+        * **Protección del Surtido al 100%:** Tras aplicar la cancelación, la proyección de la variedad **permanece siempre al 100% o más del Plan Aprobado**, protegiendo el mix comercial por variedad y color sin desabastecer.
+        * **Distribución Temporal:** Cada cancelación se asigna a su **semana de pedido respectiva** en la ventana ejecutable (< 24 semanas: entre **{sem_siguiente}** y **{sem_firme_default}**).
         """)
 
         modo_canc = st.radio(
             "Método de Determinación de Cancelación:",
             [
-                "⚡ Detección Automática con Compensación de Grupo Color (> 5% Seguro)",
-                "🔻 Ajuste Mandatorio por Reducción de Área (Semana 2648 en adelante — 64,878 m² → 61,878 m²)",
+                "⚡ Detección Automática con Compensación de Grupo Color (> 10% Límite Máximo / Mín. 1 Cama)",
+                "🔻 Ajuste Mandatorio por Reducción de Área (Semana 2648 en adelante — Techo 1,068 Camas)",
                 "✍️ Solicitud de Cancelación Directa por Lote"
             ],
             horizontal=True,
             key="radio_modo_canc"
         )
 
-        if modo_canc == "⚡ Detección Automática con Compensación de Grupo Color (> 5% Seguro)":
+        if modo_canc.startswith("⚡"):
             col_c1, col_c2 = st.columns([2, 1])
             with col_c1:
-                st.info(f"💡 Se evalúa la proyección consolidada contra el Plan más 5% de seguro por Grupo Color. Semanas de cancelación ejecutables: **{sem_siguiente}** a **{sem_firme_default}**.")
+                st.info(f"💡 Se evalúa la proyección consolidada contra el Plan más 10% de holgura por Grupo Color. Solo cancelaciones ≥ 1 cama completa entre **{sem_siguiente}** y **{sem_firme_default}**.")
             with col_c2:
                 filtro_flor_canc = st.selectbox("Filtrar por Flor", ["Todas"] + sorted(list(df_plan[col_flor].dropna().unique())), key="filtro_flor_canc")
 
             if st.button("Evaluar Excedentes y Generar Solicitud de Cancelación", type="primary", key="btn_eval_canc"):
-                with st.spinner("Consolidando ForeCast 52 semanas y detectando sobrecupos netos por Grupo Color..."):
+                with st.spinner("Consolidando ForeCast 52 semanas y detectando sobrecupos netos (> 10% Plan / Mínimo 1 Cama)..."):
                     try:
                         df_fc_completo = obtener_forecast_52w_completo(db)
                         semanas_fc_cols = [c for c in df_fc_completo.columns if str(c).startswith('202')]
@@ -851,20 +851,21 @@ def render_pedido_module(db):
                         var_m['Tallos_Forecast'] = var_m['Tallos_Forecast'].fillna(0)
                         var_m['Flor_Norm'] = var_m[col_flor].str.strip().str.lower()
                         var_m['Color_Norm'] = var_m['Color'].str.strip().str.lower()
-                        var_m['Raw_Surplus'] = (var_m['Tallos_Forecast'] - var_m[col_capacidad] * 1.05).clip(lower=0)
+                        # Límite máximo permitido: Plan * 1.10
+                        var_m['Raw_Surplus'] = (var_m['Tallos_Forecast'] - var_m[col_capacidad] * 1.10).clip(lower=0)
 
-                        # Balance a nivel de Grupo Color [Flor, Color, Semana]
+                        # Balance a nivel de Grupo Color [Flor, Color, Semana] con límite +10%
                         gc_plan = var_m.groupby(['Flor_Norm', 'Color_Norm', 'Semana_Clean'])[col_capacidad].sum().reset_index().rename(columns={col_capacidad: 'GC_Plan'})
                         gc_fc = var_m.groupby(['Flor_Norm', 'Color_Norm', 'Semana_Clean'])['Tallos_Forecast'].sum().reset_index().rename(columns={'Tallos_Forecast': 'GC_FC'})
                         gc_raw_sur = var_m.groupby(['Flor_Norm', 'Color_Norm', 'Semana_Clean'])['Raw_Surplus'].sum().reset_index().rename(columns={'Raw_Surplus': 'GC_Raw_Sur_Sum'})
 
                         gc_info = pd.merge(gc_plan, gc_fc, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'])
                         gc_info = pd.merge(gc_info, gc_raw_sur, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'])
-                        gc_info['GC_Net_Surplus'] = (gc_info['GC_FC'] - gc_info['GC_Plan'] * 1.05).clip(lower=0)
+                        gc_info['GC_Net_Surplus'] = (gc_info['GC_FC'] - gc_info['GC_Plan'] * 1.10).clip(lower=0)
 
                         df_eval = pd.merge(var_m, gc_info, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'], how='left')
 
-                        # Distribución proporcional solo si el grupo color supera el 5% neto
+                        # Distribución proporcional si el grupo color supera el 10% neto
                         df_eval['Net_Surplus_Var'] = 0.0
                         mask_sur = (df_eval['GC_Net_Surplus'] > 50) & (df_eval['GC_Raw_Sur_Sum'] > 0) & (df_eval['Raw_Surplus'] > 0)
                         df_eval.loc[mask_sur, 'Net_Surplus_Var'] = df_eval.loc[mask_sur, 'GC_Net_Surplus'] * (df_eval.loc[mask_sur, 'Raw_Surplus'] / df_eval.loc[mask_sur, 'GC_Raw_Sur_Sum'])
@@ -901,35 +902,46 @@ def render_pedido_module(db):
                             # Filtro estricto: Solo semanas cancelables futuras en su fecha respectiva
                             if sem_siguiente <= sem_canc < sem_firme_default:
                                 plantas_exc = net_surplus / aprov
-                                camas_canc = round(plantas_exc / 5200.0)
+                                # Regla de Gobernanza: Mínimo 1 cama completa (5,200) y respetar surtido del Plan al 100%
+                                camas_canc = int(plantas_exc // 5200.0)
                                 if camas_canc >= 1:
-                                    esquejes_canc = camas_canc * 5200
+                                    tallos_canc = camas_canc * 5200.0 * aprov
+                                    # Asegurar que tras cancelar no quede por debajo del 100% del Plan
+                                    if (r['Tallos_Forecast'] - tallos_canc) < r[col_capacidad]:
+                                        camas_canc = int(max(0, (r['Tallos_Forecast'] - r[col_capacidad]) // (5200.0 * aprov)))
+                                        tallos_canc = camas_canc * 5200.0 * aprov
 
-                                    # Evaluar seguridad para el plan general de la finca
-                                    f_margin = finca_margin.loc[sem_cos, 'Finca_Net_Margin'] if sem_cos in finca_margin.index else 0
-                                    f_cump = finca_margin.loc[sem_cos, 'Finca_Cumplimiento_%'] if sem_cos in finca_margin.index else 100.0
-                                    es_segura = bool(f_margin >= 0)
+                                    if camas_canc >= 1:
+                                        esquejes_canc = camas_canc * 5200
 
-                                    cancel_records.append({
-                                        "Flor": fl,
-                                        "Color": col,
-                                        "Variedad": v,
-                                        "Semana_Cosecha": f"S{sem_cos}",
-                                        "Semana_Cancelacion": sem_canc,
-                                        "Tallos_Plan": int(round(r[col_capacidad])),
-                                        "Plan_con_Colchon_5%": int(round(r[col_capacidad] * 1.05)),
-                                        "Tallos_ForeCast": int(round(r['Tallos_Forecast'])),
-                                        "Excedente_Color_Neto": f"Excedente Color: {int(round(r['GC_Net_Surplus'])):,} tll",
-                                        "Excedente_Tallos": int(round(net_surplus)),
-                                        "Aprovechamiento_%": round(aprov * 100.0, 1),
-                                        "Camas_a_Cancelar": camas_canc,
-                                        "Esquejes_a_Cancelar": esquejes_canc,
-                                        "Finca_Cumplimiento_%": round(f_cump, 1),
-                                        "Finca_Margen_Tallos": int(round(f_margin)),
-                                        "Gobernanza_Riesgo": "🟢 Segura (Superávit General Finca)" if es_segura else "🟡 Condicionada a Propagación",
-                                        "Es_Segura": es_segura,
-                                        "Motivo": "Excedente neto del Grupo Color supera seguro del 5%"
-                                    })
+                                        # Evaluar seguridad para el plan general de la finca
+                                        f_margin = finca_margin.loc[sem_cos, 'Finca_Net_Margin'] if sem_cos in finca_margin.index else 0
+                                        f_cump = finca_margin.loc[sem_cos, 'Finca_Cumplimiento_%'] if sem_cos in finca_margin.index else 100.0
+                                        es_segura = bool(f_margin >= 0)
+
+                                        restante_fc = r['Tallos_Forecast'] - tallos_canc
+                                        cump_restante_pct = round((restante_fc / r[col_capacidad]) * 100.0, 1) if r[col_capacidad] > 0 else 100.0
+
+                                        cancel_records.append({
+                                            "Flor": fl,
+                                            "Color": col,
+                                            "Variedad": v,
+                                            "Semana_Cosecha": f"S{sem_cos}",
+                                            "Semana_Cancelacion": sem_canc,
+                                            "Tallos_Plan": int(round(r[col_capacidad])),
+                                            "Plan_con_Colchon_10%": int(round(r[col_capacidad] * 1.10)),
+                                            "Tallos_ForeCast": int(round(r['Tallos_Forecast'])),
+                                            "Excedente_Color_Neto": f"Exceso Color >10%: {int(round(r['GC_Net_Surplus'])):,} tll",
+                                            "Excedente_Tallos": int(round(net_surplus)),
+                                            "Aprovechamiento_%": round(aprov * 100.0, 1),
+                                            "Camas_a_Cancelar": camas_canc,
+                                            "Esquejes_a_Cancelar": esquejes_canc,
+                                            "Finca_Cumplimiento_%": cump_restante_pct,
+                                            "Finca_Margen_Tallos": int(round(restante_fc - r[col_capacidad])),
+                                            "Gobernanza_Riesgo": "🟢 Segura (Mín. 1 Cama / Protege 100% Plan)" if es_segura else "🟡 Condicionada a Propagación",
+                                            "Es_Segura": es_segura,
+                                            "Motivo": f"Supera límite +10% sobre Plan. Libera {camas_canc} cama(s) y mantiene {cump_restante_pct}% de meta"
+                                        })
 
                         if not cancel_records:
                             st.success("🎉 No se detectaron sobrecupos netos por Grupo Color que superen el seguro del 5% en la ventana ejecutable.")
@@ -1049,10 +1061,12 @@ def render_pedido_module(db):
             st.markdown("### 📋 Resumen de Material Vegetal a Cancelar (Salidas para Planeación)")
 
             st.info("""
-            🛡️ **Protección del Colchón del 5% y Gobernanza S&OP:**
-            * **Colchón del 5% Garantizado:** El sistema calcula el excedente estrictamente como `Tallos Proyectados - (Plan × 1.05)`. Por lo tanto, tras cancelar las camas sobrantes, la proyección de la variedad **permanece exactamente en el 105% del Plan**, preservando intacto el colchón de seguridad del 5%.
-            * **🟢 Cancelaciones Seguras (Inmediatas):** Semanas donde la producción consolidada de la finca supera el 100% del Plan Aprobado. Cancelar este exceso elimina sobrecostos de esquejes **sin riesgo de incumplir la meta general de producción**.
-            * **🟡 Cancelaciones Condicionadas a Propagación:** Semanas críticas o de déficit general (ej: San Valentín). **No se deben cancelar en la plataforma** hasta que Propagación apruebe y garantice la entrega del material extemporáneo, evitando dejar la finca desabastecida.
+            🛡️ **Límite Máximo Permitido (+10%) y Protección del Surtido al 100%:**
+            * **Tolerancia del 10% Respetada:** El sistema tolera hasta un **+10% de producción sobre el Plan** (`Plan × 1.10`) para absorber eficiencias operativas. Solo se audita el exceso neto que sobrepase ese límite.
+            * **Mínimo 1 Cama Completa:** Cada cancelación representa al menos **1 cama completa (5,200 esquejes)** en múltiplos enteros, evitando gestionar fracciones o volúmenes mínimos que se regulan en siembra.
+            * **Surtido del Plan Intacto:** Tras la cancelación, la variedad **mantiene siempre al menos el 100% de su meta aprobada**, blindando el mix comercial por variedad y color.
+            * **🟢 Cancelaciones Seguras (Inmediatas):** Semanas donde la producción general de la finca cubre el 100% del Plan general.
+            * **🟡 Cancelaciones Condicionadas a Propagación:** Semanas de alta tensión donde se requiere confirmación de material extemporáneo antes de liberar pedidos.
             """)
 
             tot_esq_canc = df_canc['Esquejes_a_Cancelar'].sum()

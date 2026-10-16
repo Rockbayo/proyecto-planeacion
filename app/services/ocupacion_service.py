@@ -996,35 +996,94 @@ def calcular_cancelaciones_reduccion_area_s2648(archivo_pedido: str = "PedidoCon
         return pd.DataFrame()
 
     FACTOR_REDUCCION = AREA_PRODUCTIVA_REDUCIDA_M2 / AREA_PRODUCTIVA_ACTUAL_M2
-    records = []
-    for _, row in df_filt.iterrows():
-        esq_orig = int(row['Esquejes_Para_Siembra (Final)'])
-        esq_adj = int(round(esq_orig * FACTOR_REDUCCION))
-        esq_canc = esq_orig - esq_adj
-        if esq_canc <= 0:
-            continue
 
-        camas_canc = round(esq_canc / 5200.0, 2)
-        records.append({
-            "Flor": str(row.get('Flor', '')).strip(),
-            "Color": str(row.get('Color', '')).strip(),
-            "Variedad": str(row.get('Variedad', '')).strip(),
-            "Semana_Siembra": f"S{row['Sem_Siem_Clean']}",
-            "Semana_Cancelacion": row['Sem_Ped_Clean'],
-            "Tallos_Plan": esq_orig,
-            "Plan_con_Colchon_5%": int(round(esq_orig * 1.05)),
-            "Tallos_ForeCast": esq_orig,
-            "Excedente_Color_Neto": f"Exceso Área S{SEMANA_CORTE_REDUCCION_AREA}: {esq_canc:,} esq",
-            "Excedente_Tallos": esq_canc,
-            "Aprovechamiento_%": 100.0,
-            "Camas_a_Cancelar": camas_canc,
-            "Esquejes_a_Cancelar": esq_canc,
-            "Finca_Cumplimiento_%": 100.0,
-            "Finca_Margen_Tallos": 0,
-            "Gobernanza_Riesgo": "🟢 Mandatorio (Área Reducida a 61,878 m²)",
-            "Es_Segura": True,
-            "Motivo": f"Ajuste mandatorio por reducción de área física (-4.62% a partir de semana S{SEMANA_CORTE_REDUCCION_AREA})"
-        })
+    # Cargar Plan Detallado Aprobado para proteger el surtido al 100% y validar techo +10%
+    plan_map = {}
+    if os.path.exists("Plan_Aprobado_Detallado.csv"):
+        try:
+            df_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
+            df_det['Semana_Siembra'] = df_det['Semana_Siembra'].astype(str)
+            df_det['Var_Norm'] = df_det['Variedad'].astype(str).str.strip().str.lower()
+            plan_map = df_det.groupby(['Var_Norm', 'Semana_Siembra'])['Esquejes'].sum().to_dict()
+        except Exception:
+            plan_map = {}
+
+    # Agrupar pedidos consolidados por variedad y semana
+    df_agg = df_filt.groupby(['Flor', 'Color', 'Variedad', 'Sem_Siem_Clean', 'Sem_Ped_Clean'])['Esquejes_Para_Siembra (Final)'].sum().reset_index()
+
+    records = []
+    for _, row in df_agg.iterrows():
+        v = str(row['Variedad']).strip()
+        v_norm = v.lower()
+        sem_s = str(row['Sem_Siem_Clean'])
+        esq_ped = int(row['Esquejes_Para_Siembra (Final)'])
+        
+        plan_esq = plan_map.get((v_norm, sem_s), 0)
+        
+        if plan_esq > 0:
+            # Regla S&OP: Se permite hasta un +10% sobre el Plan Aprobado
+            max_permitido = int(round(plan_esq * 1.10))
+            if esq_ped > max_permitido:
+                exceso_esq = esq_ped - max_permitido
+                camas_canc = int(exceso_esq // 5200)
+                
+                # Regla de Gobernanza: Mínimo 1 cama completa y proteger 100% del Plan (surtido intacto)
+                if camas_canc >= 1:
+                    esq_canc = camas_canc * 5200
+                    esq_restante = esq_ped - esq_canc
+                    if esq_restante < plan_esq:
+                        camas_canc = int(max(0, (esq_ped - plan_esq) // 5200))
+                        esq_canc = camas_canc * 5200
+                        esq_restante = esq_ped - esq_canc
+                    
+                    if camas_canc >= 1:
+                        cump_pct = round((esq_restante / plan_esq) * 100.0, 1) if plan_esq > 0 else 100.0
+                        records.append({
+                            "Flor": str(row.get('Flor', '')).strip(),
+                            "Color": str(row.get('Color', '')).strip(),
+                            "Variedad": v,
+                            "Semana_Siembra": f"S{sem_s}",
+                            "Semana_Cancelacion": row['Sem_Ped_Clean'],
+                            "Tallos_Plan": plan_esq,
+                            "Plan_con_Colchon_10%": max_permitido,
+                            "Tallos_ForeCast": esq_ped,
+                            "Excedente_Color_Neto": f"Exceso >10% Plan: {exceso_esq:,} esq",
+                            "Excedente_Tallos": exceso_esq,
+                            "Aprovechamiento_%": 100.0,
+                            "Camas_a_Cancelar": camas_canc,
+                            "Esquejes_a_Cancelar": esq_canc,
+                            "Finca_Cumplimiento_%": cump_pct,
+                            "Finca_Margen_Tallos": esq_restante - plan_esq,
+                            "Gobernanza_Riesgo": "🟢 Segura (Mín. 1 Cama / Protege 100% Plan)",
+                            "Es_Segura": True,
+                            "Motivo": f"Excedente supera el límite máximo permitido (+10% sobre Plan) y libera {camas_canc} cama(s) completa(s)"
+                        })
+        else:
+            # Si no hay registro en Plan Detallado, evaluar reducción física de área (-4.62%)
+            exceso_area = esq_ped * (1.0 - FACTOR_REDUCCION)
+            camas_canc = int(exceso_area // 5200)
+            if camas_canc >= 1:
+                esq_canc = camas_canc * 5200
+                records.append({
+                    "Flor": str(row.get('Flor', '')).strip(),
+                    "Color": str(row.get('Color', '')).strip(),
+                    "Variedad": v,
+                    "Semana_Siembra": f"S{sem_s}",
+                    "Semana_Cancelacion": row['Sem_Ped_Clean'],
+                    "Tallos_Plan": esq_ped,
+                    "Plan_con_Colchon_10%": int(round(esq_ped * 1.10)),
+                    "Tallos_ForeCast": esq_ped,
+                    "Excedente_Color_Neto": f"Exceso Reducción Área: {esq_canc:,} esq",
+                    "Excedente_Tallos": int(round(exceso_area)),
+                    "Aprovechamiento_%": 100.0,
+                    "Camas_a_Cancelar": camas_canc,
+                    "Esquejes_a_Cancelar": esq_canc,
+                    "Finca_Cumplimiento_%": 100.0,
+                    "Finca_Margen_Tallos": 0,
+                    "Gobernanza_Riesgo": "🟢 Mandatorio (Área Reducida a 61,878 m²)",
+                    "Es_Segura": True,
+                    "Motivo": f"Ajuste por reducción física de área a partir de S{SEMANA_CORTE_REDUCCION_AREA} (libera {camas_canc} cama(s))"
+                })
 
     return pd.DataFrame(records)
 
