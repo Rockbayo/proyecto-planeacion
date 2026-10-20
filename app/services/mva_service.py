@@ -637,12 +637,11 @@ def sincronizar_pedido_consolidado_master(
 def sincronizar_plan_detallado_desde_pedido_master(
     master_filepath: str = "PedidoConsolidado_master.xlsx",
     detailed_filepath: str = "Plan_Aprobado_Detallado.csv",
-    db = None,
-    nivelar_techo_campo: bool = True
+    db = None
 ) -> pd.DataFrame:
     """
     Sincroniza dinámicamente 'Plan_Aprobado_Detallado.csv' a partir del archivo maestro 'PedidoConsolidado_master.xlsx'.
-    - Explota los esquejes del pedido en semanas de siembra y enraizamiento vía MVA aplicando nivelación de techo a 1,120 camas.
+    - Explota los esquejes del pedido en semanas de siembra y enraizamiento vía MVA preservando la integridad biológica y fenológica.
     - Proyecta los tallos comerciales esperados según la fenología y curvas dinámicas calibradas de cada variedad.
     - Preserva semanas históricas anteriores a la primera semana del archivo maestro si existen.
     - Garantiza que los módulos de Enraizamiento, Ocupación y ForeCast operen en tiempo real con cifras vivas sin desfases.
@@ -663,18 +662,7 @@ def sincronizar_plan_detallado_desde_pedido_master(
         close_db = True
 
     try:
-        df_mva = pd.DataFrame()
-        if nivelar_techo_campo:
-            try:
-                from app.services.ocupacion_service import aplicar_nivelacion_quirurgica_picos
-                res_op_b = aplicar_nivelacion_quirurgica_picos(db=db)
-                df_mva = res_op_b.get('df_pedido_nivelado', pd.DataFrame())
-            except Exception as e_niv:
-                print(f"Aviso nivelación MVA: {e_niv}")
-                df_mva = pd.DataFrame()
-
-        if df_mva.empty:
-            df_mva = generar_plan_mva(master_filepath, week_is="Pedido")
+        df_mva = generar_plan_mva(master_filepath, week_is="Pedido")
 
         if df_mva.empty or 'Semana_Siembra' not in df_mva.columns:
             return pd.DataFrame()
