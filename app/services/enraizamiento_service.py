@@ -703,6 +703,14 @@ def generar_plano_enraizamiento_semanal(
 
     # Sincronización dinámica con Ajustes de Inventario y Compensaciones (si existen)
     es_ajustado = False
+    if df_inventario_ajustado is None or df_inventario_ajustado.empty:
+        try:
+            df_inv_disco = cargar_inventario_recepcion(semana_enraizamiento)
+            if df_inv_disco is not None and not df_inv_disco.empty:
+                df_inventario_ajustado = df_inv_disco
+        except Exception:
+            pass
+
     if df_inventario_ajustado is not None and not df_inventario_ajustado.empty:
         df_inv_sem = df_inventario_ajustado.copy()
         if 'Semana_Enraizamiento' in df_inv_sem.columns:
