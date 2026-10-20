@@ -41,7 +41,8 @@ modulo = st.sidebar.radio("Módulos del Sistema:", [
     "Plan de Producción (MVA)", 
     "Ocupación de Área y Capacidad",
     "Pedido Material Vegetal", 
-    "Plan de Enraizamiento"
+    "Plan de Enraizamiento",
+    "Plan de Siembra"
 ])
 
 from app.ui.curvas_ui import render_curvas_module
@@ -1139,9 +1140,9 @@ elif modulo == "Programación Diaria y Temporadas":
             
         st.divider()
         st.subheader("Seguimiento de Temporadas")
-        st.markdown("Volumen total proyectado (Inventario Vivo + Pedido Consolidado MVA) para cada temporada.")
+        st.markdown("Comparativo de la **Demanda Comercial Aprobada (Plan Maestro)** y volumen biológico proyectado para cada temporada.")
         
-        with st.spinner("Analizando comportamiento de temporadas..."):
+        with st.spinner("Analizando comportamiento de temporadas y consolidando Plan Aprobado..."):
             df_forecast_vivo = generar_forecast_13wk(db)
             from app.services.mva_service import generar_plan_mva, proyectar_cosecha_desde_mva, combinar_proyecciones_52_semanas
             file_path = "PedidoConsolidado_master.xlsx"
@@ -1151,10 +1152,32 @@ elif modulo == "Programación Diaria y Temporadas":
                 df_52 = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proyeccion_mva)
             else:
                 df_52 = df_forecast_vivo
+
+            # Cargar Plan Aprobado (Demanda Comercial y Capacidad Aprobada)
+            df_plan_temp = pd.DataFrame()
+            plan_file = "Plan_Aprobado.csv"
+            col_plan = None
+            if os.path.exists(plan_file):
+                try:
+                    df_plan_temp = pd.read_csv(plan_file)
+                    df_plan_temp['Semana_Clean'] = pd.to_numeric(
+                        df_plan_temp['Semana'].astype(str).str.split('.').str[0], errors='coerce'
+                    ).fillna(0).astype(int)
+                    if 'Tallos Pedidos (Plan)' in df_plan_temp.columns:
+                        col_plan = 'Tallos Pedidos (Plan)'
+                    elif 'Tallos a Producir (Capacidad)' in df_plan_temp.columns:
+                        col_plan = 'Tallos a Producir (Capacidad)'
+                    elif 'Suma de Tallos' in df_plan_temp.columns:
+                        col_plan = 'Suma de Tallos'
+                except Exception:
+                    df_plan_temp = pd.DataFrame()
                 
             results = []
             cols = [c for c in df_52.columns if str(c).startswith('202')]
+            cols_clean = [int(str(c).split('.')[0].strip()) for c in cols if str(c).split('.')[0].strip().isdigit()]
+            df_plan_horizon = df_plan_temp[df_plan_temp['Semana_Clean'].isin(cols_clean)].copy() if not df_plan_temp.empty else pd.DataFrame()
             used_cols = set()
+            used_plan_sems = set()
             
             for _, s in df_seasons_edited.iterrows():
                 name = str(s.get("Temporada", ""))
@@ -1163,13 +1186,14 @@ elif modulo == "Programación Diaria y Temporadas":
                 try:
                     ini = int(float(s.get("Semana Inicio", 0)))
                     fin = int(float(s.get("Semana Fin", 0)))
-                except:
+                except Exception:
                     ini = 0
                     fin = 0
                 
                 w_ini = ini % 100 if ini > 100 else ini
                 w_fin = fin % 100 if fin > 100 else fin
                 
+                # Semanas proyectadas
                 valid_cols = []
                 for c in cols:
                     try:
@@ -1180,30 +1204,50 @@ elif modulo == "Programación Diaria y Temporadas":
                         else:
                             if w_c >= w_ini or w_c <= w_fin:
                                 valid_cols.append(c)
-                    except:
+                    except Exception:
                         pass
                 
                 used_cols.update(valid_cols)
-                
-                total_vol = df_52[valid_cols].sum().sum() if valid_cols else 0
+                total_proj = float(df_52[valid_cols].sum().sum()) if valid_cols else 0.0
+
+                # Volumen del Plan Aprobado para esta temporada (en las 52 semanas del horizonte)
+                vol_plan = 0.0
+                if not df_plan_horizon.empty and col_plan:
+                    if ini > 100 and fin > 100:
+                        sub_plan = df_plan_horizon[(df_plan_horizon['Semana_Clean'] >= ini) & (df_plan_horizon['Semana_Clean'] <= fin)]
+                    else:
+                        sub_plan = df_plan_horizon[(df_plan_horizon['Semana_Clean'] % 100 >= w_ini) & (df_plan_horizon['Semana_Clean'] % 100 <= w_fin)]
+                    vol_plan = float(sub_plan[col_plan].sum())
+                    used_plan_sems.update(sub_plan['Semana_Clean'].unique())
+
+                cob_pct = (total_proj / vol_plan * 100.0) if vol_plan > 0 else 0.0
                     
                 results.append({
                     "Temporada": name, 
                     "Rango": f"{start} - {end}", 
                     "Semanas Activas": len(valid_cols), 
-                    "Tallos Proyectados": total_vol,
+                    "Tallos Plan": vol_plan,
+                    "Tallos Proyectados": total_proj,
+                    "Cobertura_%": round(cob_pct, 1),
                     "_sort": start if start else "999999"
                 })
                 
-            # Calculamos Every Day con el restante
-            valid_cols = [c for c in cols if c not in used_cols]
-            total_vol = df_52[valid_cols].sum().sum() if valid_cols else 0
+            # Every Day con las semanas restantes dentro del horizonte de 52 semanas
+            valid_cols_ed = [c for c in cols if c not in used_cols]
+            total_proj_ed = float(df_52[valid_cols_ed].sum().sum()) if valid_cols_ed else 0.0
+            vol_plan_ed = 0.0
+            if not df_plan_horizon.empty and col_plan:
+                sub_plan_ed = df_plan_horizon[~df_plan_horizon['Semana_Clean'].isin(used_plan_sems)]
+                vol_plan_ed = float(sub_plan_ed[col_plan].sum())
+            cob_pct_ed = (total_proj_ed / vol_plan_ed * 100.0) if vol_plan_ed > 0 else 0.0
                 
             results.append({
                 "Temporada": "Every Day", 
                 "Rango": "Semanas restantes", 
-                "Semanas Activas": len(valid_cols), 
-                "Tallos Proyectados": total_vol,
+                "Semanas Activas": len(valid_cols_ed), 
+                "Tallos Plan": vol_plan_ed,
+                "Tallos Proyectados": total_proj_ed,
+                "Cobertura_%": round(cob_pct_ed, 1),
                 "_sort": "999999" # Every Day al final
             })
                 
@@ -1213,33 +1257,73 @@ elif modulo == "Programación Diaria y Temporadas":
                 
                 # Crear dataframe para visualización con fila de totales
                 df_res_seasons_display = df_res_seasons.copy()
-                total_semanas = df_res_seasons_display["Semanas Activas"].sum()
-                total_tallos = df_res_seasons_display["Tallos Proyectados"].sum()
+                total_semanas = int(df_res_seasons_display["Semanas Activas"].sum())
+                total_plan = float(df_res_seasons_display["Tallos Plan"].sum())
+                total_proj = float(df_res_seasons_display["Tallos Proyectados"].sum())
+                total_cob = (total_proj / total_plan * 100.0) if total_plan > 0 else 0.0
                 
                 total_row = pd.DataFrame([{
                     "Temporada": "TOTAL",
                     "Rango": "-",
                     "Semanas Activas": total_semanas,
-                    "Tallos Proyectados": total_tallos
+                    "Tallos Plan": total_plan,
+                    "Tallos Proyectados": total_proj,
+                    "Cobertura_%": round(total_cob, 1)
                 }])
                 df_res_seasons_display = pd.concat([df_res_seasons_display, total_row], ignore_index=True)
             else:
                 df_res_seasons_display = df_res_seasons.copy()
             
-            col_chart1, col_chart2 = st.columns([1, 2])
+            col_chart1, col_chart2 = st.columns([1.1, 1.9])
             with col_chart1:
-                st.dataframe(df_res_seasons_display.style.format({"Tallos Proyectados": "{:,.0f}"}), width='stretch')
+                st.dataframe(
+                    df_res_seasons_display.style.format({
+                        "Tallos Plan": "{:,.0f}",
+                        "Tallos Proyectados": "{:,.0f}",
+                        "Cobertura_%": "{:.1f}%"
+                    }), 
+                    width='stretch'
+                )
             with col_chart2:
-                if not df_res_seasons.empty and df_res_seasons["Tallos Proyectados"].sum() > 0:
+                if not df_res_seasons.empty and df_res_seasons["Tallos Plan"].sum() > 0:
                     import altair as alt
-                    chart = alt.Chart(df_res_seasons).mark_bar(color='#0070F2', cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                    chart = alt.Chart(df_res_seasons).mark_bar(
+                        color='#0070F2', 
+                        cornerRadiusTopLeft=4, 
+                        cornerRadiusTopRight=4
+                    ).encode(
                         x=alt.X('Temporada:N', sort=list(df_res_seasons['Temporada']), title='Temporada', axis=alt.Axis(labelAngle=-45)),
-                        y=alt.Y('Tallos Proyectados:Q', title='Tallos'),
+                        y=alt.Y('Tallos Plan:Q', title='Tallos Plan Aprobado'),
+                        tooltip=[
+                            alt.Tooltip('Temporada:N', title='Temporada'),
+                            alt.Tooltip('Tallos Plan:Q', title='Plan Aprobado', format=',.0f'),
+                            alt.Tooltip('Tallos Proyectados:Q', title='Tallos Proyectados', format=',.0f'),
+                            alt.Tooltip('Cobertura_%:Q', title='Cobertura (%)', format='.1f')
+                        ]
+                    ).properties(height=350, title="Demanda Comercial Aprobada por Temporada (Plan Maestro)")
+                    st.altair_chart(chart, width='stretch')
+                elif not df_res_seasons.empty and df_res_seasons["Tallos Proyectados"].sum() > 0:
+                    import altair as alt
+                    chart = alt.Chart(df_res_seasons).mark_bar(
+                        color='#059669', 
+                        cornerRadiusTopLeft=4, 
+                        cornerRadiusTopRight=4
+                    ).encode(
+                        x=alt.X('Temporada:N', sort=list(df_res_seasons['Temporada']), title='Temporada', axis=alt.Axis(labelAngle=-45)),
+                        y=alt.Y('Tallos Proyectados:Q', title='Tallos Proyectados'),
                         tooltip=['Temporada', 'Tallos Proyectados']
-                    ).properties(height=350)
+                    ).properties(height=350, title="Tallos Proyectados por Temporada")
                     st.altair_chart(chart, width='stretch')
                 else:
-                    st.info("Las proyecciones actuales no alcanzan las semanas de las temporadas configuradas.")
+                    st.info("No se dispone de datos de plan o proyecciones para las temporadas configuradas.")
+
+            if not df_plan_temp.empty and len(df_plan_temp['Semana_Clean'].unique()) > len(cols_clean):
+                tot_maestro = float(df_plan_temp[col_plan].sum()) if col_plan else 0.0
+                st.caption(
+                    f"ℹ️ **Horizonte de Evaluación:** Comparativo calculado sobre las **52 semanas operativas vigentes** (de S{cols[0]} a S{cols[-1]}: {total_plan:,.0f} tallos Plan vs {total_proj:,.0f} tallos Proyectados, cobertura {total_cob:.1f}%). "
+                    f"El archivo maestro completo (`Plan_Aprobado.csv`) contiene {df_plan_temp['Semana_Clean'].nunique()} semanas ({tot_maestro:,.0f} tallos acumulados), "
+                    f"incluyendo semanas históricas pasadas previas a S{cols[0]} y semanas posteriores al horizonte rodante de 52 semanas."
+                )
 
 elif modulo == "Plan de Producción (MVA)":
     st.header("📈 Plan de Producción (MVA y Reglas de Negocio)")
@@ -1458,5 +1542,9 @@ elif modulo == "Pedido Material Vegetal":
 elif modulo == "Plan de Enraizamiento":
     from app.ui.enraizamiento_ui import render_enraizamiento_module
     render_enraizamiento_module(db)
+
+elif modulo == "Plan de Siembra":
+    from app.ui.siembra_ui import render_siembra_module
+    render_siembra_module(db)
 
 

@@ -3312,39 +3312,75 @@ Semana,Flor,Color,Variedad,Real_Recepcionado,Estimado_Proyectado,Balance_%,Fuent
 202640,Novelty,Yellow,Ringer,19180.0,0.0,0.0,Historico_PER_Poscosecha,2026-10-08
 202640,Novelty,Lavender,Roselle,1807.0,0.0,0.0,Historico_PER_Poscosecha,2026-10-08
 202640,Novelty,Bronze,Roselle Bronze,16940.0,0.0,0.0,Historico_PER_Poscosecha,2026-10-08
-202641,Cushion,Lavender,Allstar,5349.0,4406.0,121.4,Webflowers_Upload,2026-10-14
-202641,Cushion,Light bronze,Avila,2191.0,2419.0,90.57,Webflowers_Upload,2026-10-14
-202641,Cushion,Yellow,Champagne Yellow,8388.0,12000.0,69.9,Webflowers_Upload,2026-10-14
-202641,Cushion,Red,Chianti,3601.0,4117.0,87.47,Webflowers_Upload,2026-10-14
-202641,Cushion,Bronze,Copper,20978.0,20910.0,100.33,Webflowers_Upload,2026-10-14
-202641,Cushion,Dark bronze,Dark Copper,10318.0,10937.0,94.34,Webflowers_Upload,2026-10-14
-202641,Cushion,Yellow,Hertz,1385.0,3157.0,43.87,Webflowers_Upload,2026-10-14
-202641,Cushion,Purple,Impulse,4279.0,4823.0,88.72,Webflowers_Upload,2026-10-14
-202641,Cushion,Red,Monza,7213.0,10066.0,71.66,Webflowers_Upload,2026-10-14
-202641,Cushion,White,Sherpa,2140.0,3969.0,53.92,Webflowers_Upload,2026-10-14
-202641,Cushion,White,Skylie,36533.0,36833.0,99.19,Webflowers_Upload,2026-10-14
-202641,Cushion,Yellow,Stronggold,5180.0,5500.0,94.18,Webflowers_Upload,2026-10-14
-202641,Cushion,Lavender,Veronica,5035.0,4005.0,125.72,Webflowers_Upload,2026-10-14
-202641,Cushion,Pink,Yolanda,3069.0,2300.0,133.43,Webflowers_Upload,2026-10-14
-202641,Daisy,White,Alma,3956.0,4248.0,93.13,Webflowers_Upload,2026-10-14
-202641,Daisy,Purple,Amor Fancy,10966.0,11727.0,93.51,Webflowers_Upload,2026-10-14
-202641,Daisy,Yellow,Celebrate,5042.0,6341.0,79.51,Webflowers_Upload,2026-10-14
-202641,Daisy,Bronze,Lina,41116.0,38133.0,107.82,Webflowers_Upload,2026-10-14
-202641,Daisy,Lavender,Melrose Dark,9464.0,7000.0,135.2,Webflowers_Upload,2026-10-14
-202641,Daisy,Darkpink,Plasma,2800.0,3250.0,86.15,Webflowers_Upload,2026-10-14
-202641,Daisy,Yellow,Rio,21208.0,24928.0,85.08,Webflowers_Upload,2026-10-14
-202641,Daisy,White,Spartak,11235.0,9716.0,115.63,Webflowers_Upload,2026-10-14
-202641,Daisy,Novelty purple,Theron,2743.0,3585.0,76.51,Webflowers_Upload,2026-10-14
-202641,Daisy,White,Top Dollar,9812.0,10769.0,91.11,Webflowers_Upload,2026-10-14
-202641,Daisy,Red,Valentino,24055.0,18649.0,128.99,Webflowers_Upload,2026-10-14
-202641,Daisy,Orange,Vitamin C,12664.0,12529.0,101.08,Webflowers_Upload,2026-10-14
-202641,Novelty,Green,Botani,22010.0,25277.0,87.08,Webflowers_Upload,2026-10-14
-202641,Novelty,Purple,Delirock,11010.0,9706.0,113.43,Webflowers_Upload,2026-10-14
-202641,Novelty,Lavender,Delirock Pink,2607.0,3429.0,76.03,Webflowers_Upload,2026-10-14
-202641,Novelty,Red,Hotrod,4729.0,3000.0,157.63,Webflowers_Upload,2026-10-14
-202641,Novelty,Bronze,Lexy,14100.0,16000.0,88.13,Webflowers_Upload,2026-10-14
-202641,Novelty,White,Nivea,16096.0,10761.0,149.58,Webflowers_Upload,2026-10-14
-202641,Novelty,Light bronze,Oyster,3340.0,2615.0,127.72,Webflowers_Upload,2026-10-14
-202641,Novelty,Yellow,Ringer,20095.0,20000.0,100.48,Webflowers_Upload,2026-10-14
-202641,Novelty,Lavender,Roselle,2380.0,4161.0,57.2,Webflowers_Upload,2026-10-14
-202641,Novelty,Bronze,Roselle Bronze,20782.0,16182.0,128.43,Webflowers_Upload,2026-10-14
+202641,Cushion,Lavender,Allstar,5349.0,4406.0,121.4,Webflowers_Upload,2026-10-19
+202641,Cushion,Light bronze,Avila,2191.0,2419.0,90.57,Webflowers_Upload,2026-10-19
+202641,Cushion,Yellow,Champagne Yellow,8388.0,12000.0,69.9,Webflowers_Upload,2026-10-19
+202641,Cushion,Red,Chianti,3601.0,4117.0,87.47,Webflowers_Upload,2026-10-19
+202641,Cushion,Bronze,Copper,20978.0,20910.0,100.33,Webflowers_Upload,2026-10-19
+202641,Cushion,Dark bronze,Dark Copper,10318.0,10937.0,94.34,Webflowers_Upload,2026-10-19
+202641,Cushion,Yellow,Hertz,1385.0,3157.0,43.87,Webflowers_Upload,2026-10-19
+202641,Cushion,Purple,Impulse,4279.0,4823.0,88.72,Webflowers_Upload,2026-10-19
+202641,Cushion,Red,Monza,7213.0,10066.0,71.66,Webflowers_Upload,2026-10-19
+202641,Cushion,White,Sherpa,2140.0,3969.0,53.92,Webflowers_Upload,2026-10-19
+202641,Cushion,White,Skylie,36533.0,36833.0,99.19,Webflowers_Upload,2026-10-19
+202641,Cushion,Yellow,Stronggold,5180.0,5500.0,94.18,Webflowers_Upload,2026-10-19
+202641,Cushion,Lavender,Veronica,5035.0,4005.0,125.72,Webflowers_Upload,2026-10-19
+202641,Cushion,Pink,Yolanda,3069.0,2300.0,133.43,Webflowers_Upload,2026-10-19
+202641,Daisy,White,Alma,3956.0,4248.0,93.13,Webflowers_Upload,2026-10-19
+202641,Daisy,Purple,Amor Fancy,10966.0,11727.0,93.51,Webflowers_Upload,2026-10-19
+202641,Daisy,Yellow,Celebrate,5042.0,6341.0,79.51,Webflowers_Upload,2026-10-19
+202641,Daisy,Bronze,Lina,41116.0,38133.0,107.82,Webflowers_Upload,2026-10-19
+202641,Daisy,Lavender,Melrose Dark,9464.0,7000.0,135.2,Webflowers_Upload,2026-10-19
+202641,Daisy,Darkpink,Plasma,2800.0,3250.0,86.15,Webflowers_Upload,2026-10-19
+202641,Daisy,Yellow,Rio,21208.0,24928.0,85.08,Webflowers_Upload,2026-10-19
+202641,Daisy,White,Spartak,11235.0,9716.0,115.63,Webflowers_Upload,2026-10-19
+202641,Daisy,Novelty purple,Theron,2743.0,3585.0,76.51,Webflowers_Upload,2026-10-19
+202641,Daisy,White,Top Dollar,9812.0,10769.0,91.11,Webflowers_Upload,2026-10-19
+202641,Daisy,Red,Valentino,24055.0,18649.0,128.99,Webflowers_Upload,2026-10-19
+202641,Daisy,Orange,Vitamin C,12664.0,12529.0,101.08,Webflowers_Upload,2026-10-19
+202641,Novelty,Green,Botani,22010.0,25277.0,87.08,Webflowers_Upload,2026-10-19
+202641,Novelty,Purple,Delirock,11010.0,9706.0,113.43,Webflowers_Upload,2026-10-19
+202641,Novelty,Lavender,Delirock Pink,2607.0,3429.0,76.03,Webflowers_Upload,2026-10-19
+202641,Novelty,Red,Hotrod,4729.0,3000.0,157.63,Webflowers_Upload,2026-10-19
+202641,Novelty,Bronze,Lexy,14100.0,16000.0,88.13,Webflowers_Upload,2026-10-19
+202641,Novelty,White,Nivea,16096.0,10761.0,149.58,Webflowers_Upload,2026-10-19
+202641,Novelty,Light bronze,Oyster,3340.0,2615.0,127.72,Webflowers_Upload,2026-10-19
+202641,Novelty,Yellow,Ringer,20095.0,20000.0,100.48,Webflowers_Upload,2026-10-19
+202641,Novelty,Lavender,Roselle,2380.0,4161.0,57.2,Webflowers_Upload,2026-10-19
+202641,Novelty,Bronze,Roselle Bronze,20782.0,16182.0,128.43,Webflowers_Upload,2026-10-19
+202642,Cushion,Lavender,Allstar,2288.0,3238.0,70.66,Webflowers_Upload,2026-10-19
+202642,Cushion,Light bronze,Avila,6465.0,7054.0,91.65,Webflowers_Upload,2026-10-19
+202642,Cushion,Yellow,Champagne Yellow,10562.0,8361.0,126.32,Webflowers_Upload,2026-10-19
+202642,Cushion,Red,Chianti,1250.0,1365.0,91.58,Webflowers_Upload,2026-10-19
+202642,Cushion,Bronze,Copper,22989.0,24050.0,95.59,Webflowers_Upload,2026-10-19
+202642,Cushion,Dark bronze,Dark Copper,7055.0,7540.0,93.57,Webflowers_Upload,2026-10-19
+202642,Cushion,Yellow,Hertz,5005.0,3347.0,149.54,Webflowers_Upload,2026-10-19
+202642,Cushion,Purple,Impulse,5835.0,3762.0,155.1,Webflowers_Upload,2026-10-19
+202642,Cushion,Red,Monza,20033.0,15668.0,127.86,Webflowers_Upload,2026-10-19
+202642,Cushion,White,Sherpa,4720.0,3458.0,136.5,Webflowers_Upload,2026-10-19
+202642,Cushion,White,Skylie,28913.0,26145.0,110.59,Webflowers_Upload,2026-10-19
+202642,Cushion,Yellow,Stronggold,3290.0,4181.0,78.69,Webflowers_Upload,2026-10-19
+202642,Cushion,Lavender,Veronica,3036.0,4203.0,72.23,Webflowers_Upload,2026-10-19
+202642,Cushion,Pink,Yolanda,3768.0,3808.0,98.95,Webflowers_Upload,2026-10-19
+202642,Daisy,White,Alma,2878.0,2879.0,99.97,Webflowers_Upload,2026-10-19
+202642,Daisy,Purple,Amor Fancy,13615.0,13475.0,101.04,Webflowers_Upload,2026-10-19
+202642,Daisy,Yellow,Celebrate,9562.0,8004.0,119.47,Webflowers_Upload,2026-10-19
+202642,Daisy,Bronze,Lina,29556.0,30236.0,97.75,Webflowers_Upload,2026-10-19
+202642,Daisy,Lavender,Melrose Dark,10366.0,7244.0,143.1,Webflowers_Upload,2026-10-19
+202642,Daisy,Darkpink,Plasma,4100.0,3749.0,109.36,Webflowers_Upload,2026-10-19
+202642,Daisy,Yellow,Rio,29425.0,29364.0,100.21,Webflowers_Upload,2026-10-19
+202642,Daisy,White,Spartak,6340.0,6255.0,101.36,Webflowers_Upload,2026-10-19
+202642,Daisy,Novelty purple,Theron,2917.0,4023.0,72.51,Webflowers_Upload,2026-10-19
+202642,Daisy,White,Top Dollar,8388.0,11733.0,71.49,Webflowers_Upload,2026-10-19
+202642,Daisy,Red,Valentino,25202.0,21352.0,118.03,Webflowers_Upload,2026-10-19
+202642,Daisy,Orange,Vitamin C,16901.0,18012.0,93.83,Webflowers_Upload,2026-10-19
+202642,Novelty,Green,Botani,20866.0,16233.0,128.54,Webflowers_Upload,2026-10-19
+202642,Novelty,Purple,Delirock,5925.0,8314.0,71.27,Webflowers_Upload,2026-10-19
+202642,Novelty,Lavender,Delirock Pink,1130.0,238.0,474.79,Webflowers_Upload,2026-10-19
+202642,Novelty,Red,Hotrod,3465.0,4581.0,75.64,Webflowers_Upload,2026-10-19
+202642,Novelty,Bronze,Lexy,20015.0,25387.0,78.84,Webflowers_Upload,2026-10-19
+202642,Novelty,White,Nivea,3084.0,9140.0,33.74,Webflowers_Upload,2026-10-19
+202642,Novelty,Light bronze,Oyster,3210.0,4091.0,78.46,Webflowers_Upload,2026-10-19
+202642,Novelty,Yellow,Ringer,25748.0,26710.0,96.4,Webflowers_Upload,2026-10-19
+202642,Novelty,Lavender,Roselle,1305.0,301.0,433.55,Webflowers_Upload,2026-10-19
+202642,Novelty,Bronze,Roselle Bronze,21054.0,17298.0,121.71,Webflowers_Upload,2026-10-19

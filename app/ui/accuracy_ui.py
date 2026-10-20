@@ -328,19 +328,92 @@ def render_accuracy_module(db):
         )
 
     # =========================================================================
-    # TAB 3: TENDENCIAS HISTÓRICAS MULTI-CICLO
+    # TAB 3: TENDENCIAS HISTÓRICAS MULTI-CICLO (COMPARATIVO ENTRE AÑOS)
     # =========================================================================
     with tab3:
-        st.subheader("Serie Temporal Completa del Data Lake (93 Semanas)")
-        st.markdown("Evolución de tallos recepcionados en poscosecha semana a semana:")
-        
-        df_trend = df_dl.groupby('Semana')['Real_Recepcionado'].sum().reset_index()
-        df_trend['Semana_Num'] = df_trend['Semana'].astype(str)
-        df_trend = df_trend.sort_values('Semana_Num')
+        st.subheader("📈 Tendencias Multi-Ciclo Comparativas entre Años")
+        st.markdown("""
+        Comparativo interanual de la recepción real de tallos semana a semana (semanas ISO 1 a 52). 
+        Permite contrastar el comportamiento estacional y picos de cosecha de cada año sobre la misma escala temporal.
+        """)
 
-        chart_trend = alt.Chart(df_trend).mark_line(point=True, color='#0070F2').encode(
-            x=alt.X('Semana_Num:N', title='Semana Operativa', axis=alt.Axis(labelAngle=-45)),
-            y=alt.Y('Real_Recepcionado:Q', title='Tallos Recepcionados', scale=alt.Scale(zero=False)),
-            tooltip=['Semana_Num', 'Real_Recepcionado']
-        ).properties(height=380, title="Histórico de Cosecha Total en Poscosecha (Data Lake)")
-        st.altair_chart(chart_trend, width='stretch')
+        # Preparación de datos interanuales desde el Data Lake actualizado
+        df_dl_trend = df_dl.copy()
+        df_dl_trend['Semana_Clean'] = df_dl_trend['Semana'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        df_dl_trend['Año'] = df_dl_trend['Semana_Clean'].str[:4]
+        df_dl_trend['Semana_Num'] = pd.to_numeric(df_dl_trend['Semana_Clean'].str[4:], errors='coerce')
+        df_dl_trend = df_dl_trend.dropna(subset=['Semana_Num', 'Año'])
+        df_dl_trend['Semana_Num'] = df_dl_trend['Semana_Num'].astype(int)
+        df_dl_trend = df_dl_trend[(df_dl_trend['Semana_Num'] >= 1) & (df_dl_trend['Semana_Num'] <= 53)]
+
+        anios_detectados = sorted(df_dl_trend['Año'].unique())
+
+        c_t1, c_t2 = st.columns([1.5, 1])
+        with c_t1:
+            flores_comp = ["Todas (Total Finca)"] + sorted(list(df_dl_trend['Flor'].dropna().unique()))
+            flor_sel_comp = st.selectbox("Filtrar Comparativo por Tipo de Flor:", flores_comp, key="sel_flor_comp_tab3")
+        with c_t2:
+            st.caption(f"📁 **Data Lake Activo:** {len(df_dl):,} registros históricos sincronizados.")
+            st.caption(f"📅 **Años en Base:** {', '.join(anios_detectados)} | Última semana: **S{ult_sem}**")
+
+        if flor_sel_comp != "Todas (Total Finca)":
+            df_dl_trend = df_dl_trend[df_dl_trend['Flor'] == flor_sel_comp]
+
+        df_trend_comp = df_dl_trend.groupby(['Año', 'Semana_Num'])['Real_Recepcionado'].sum().reset_index()
+        df_trend_comp = df_trend_comp.sort_values(by=['Año', 'Semana_Num'])
+        df_trend_comp['Semana_Label'] = df_trend_comp['Semana_Num'].apply(lambda w: f"S{w:02d}")
+
+        if not df_trend_comp.empty:
+            # Gráfico Multi-Línea Interanual con Altair
+            paleta_anios = ['#0070F2', '#E23232', '#059669', '#FF9800', '#9C27B0']
+            chart_trend = alt.Chart(df_trend_comp).mark_line(point=True).encode(
+                x=alt.X(
+                    'Semana_Num:Q', 
+                    title='Semana del Año (1 a 52)',
+                    scale=alt.Scale(domain=[1, 52]),
+                    axis=alt.Axis(tickCount=26, format='d')
+                ),
+                y=alt.Y(
+                    'Real_Recepcionado:Q', 
+                    title='Tallos Recepcionados en Poscosecha', 
+                    scale=alt.Scale(zero=False)
+                ),
+                color=alt.Color(
+                    'Año:N', 
+                    title='Año', 
+                    scale=alt.Scale(range=paleta_anios[:len(anios_detectados)])
+                ),
+                tooltip=[
+                    alt.Tooltip('Año:N', title='Año'),
+                    alt.Tooltip('Semana_Label:N', title='Semana'),
+                    alt.Tooltip('Real_Recepcionado:Q', title='Tallos Recepcionados', format=',.0f')
+                ]
+            ).properties(
+                height=420,
+                title=f"Comparativo de Recepción Real por Año: {', '.join(anios_detectados)} ({flor_sel_comp})"
+            ).interactive()
+
+            st.altair_chart(chart_trend, width='stretch')
+
+            # Matriz Comparativa Detallada Semana a Semana
+            with st.expander("📋 Ver Matriz Comparativa y Variaciones Interanuales Semana a Semana", expanded=False):
+                df_pivot_comp = df_trend_comp.pivot(index='Semana_Num', columns='Año', values='Real_Recepcionado').fillna(0)
+                
+                # Calcular variación si existen al menos 2 años
+                if len(anios_detectados) >= 2:
+                    a_ult = anios_detectados[-1]
+                    a_ant = anios_detectados[-2]
+                    df_pivot_comp[f'Dif_{a_ult}_vs_{a_ant}'] = df_pivot_comp[a_ult] - df_pivot_comp[a_ant]
+                    df_pivot_comp[f'Var_%_{a_ult}_vs_{a_ant}'] = (
+                        (df_pivot_comp[a_ult] - df_pivot_comp[a_ant]) / df_pivot_comp[a_ant].replace(0, pd.NA) * 100
+                    ).fillna(0).round(1)
+
+                df_pivot_comp.index = [f"Semana {w:02d}" for w in df_pivot_comp.index]
+                formato_cols = {col: "{:,.0f}" for col in df_pivot_comp.columns if not col.startswith('Var_%')}
+                for col in df_pivot_comp.columns:
+                    if col.startswith('Var_%'):
+                        formato_cols[col] = "{:+.1f}%"
+
+                st.dataframe(df_pivot_comp.style.format(formato_cols), width='stretch')
+        else:
+            st.info("No se encontraron registros de recepciones en el Data Lake para los filtros seleccionados.")

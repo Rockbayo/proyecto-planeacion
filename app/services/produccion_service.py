@@ -21,9 +21,6 @@ def process_plan_produccion(plan_bytes: bytes, db):
     df_plan_original = pd.read_excel(io.BytesIO(plan_bytes))
     df_plan = df_plan_original.copy()
     
-    with open("debug_error.txt", "w") as f:
-        f.write(f"Iniciando proceso. Filas originales: {len(df_plan)}\n")
-        
     # Normalizar columnas esperadas
     cols_necesarias = ['Flower', 'Color', 'Variedad', 'Semana', 'Suma de Tallos']
     for c in cols_necesarias:
@@ -163,7 +160,7 @@ def process_plan_produccion(plan_bytes: bytes, db):
     
     # Generar curvas de distribución mediante el modelo determinístico dinámico
     from app.services.forecast_service import calcular_curvas_dinamicas
-    dyn_curves = calcular_curvas_dinamicas(alpha=1.0, num_ciclos=9)
+    dyn_curves = calcular_curvas_dinamicas()
     var_dict = {k.strip().lower(): v for k, v in dyn_curves.items()}
     
     # Agrupar por Flor, Color, Semana para distribuir camas sin acumular errores

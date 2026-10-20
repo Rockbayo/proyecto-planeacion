@@ -89,11 +89,25 @@ def render_ocupacion_module(db):
         La ocupación de camas físicas tiene un **tope estricto del 100%**, diferenciando entre camas físicas únicas y lotes sembrados (camas multivariedad).
         """)
 
+        # Identificar bloques comerciales con camas libres en tiempo real
+        bloques_con_libres = df_comercial[df_comercial['Camas_Libres_Hoy'] > 0]
+        if not bloques_con_libres.empty:
+            desglose_k4 = "En " + ", ".join([f"B{r['Bloque']}" for _, r in bloques_con_libres.iterrows()])
+            desglose_tooltip = ", ".join([f"Bloque {r['Bloque']} ({int(r['Camas_Libres_Hoy'])} camas libres)" for _, r in bloques_con_libres.iterrows()])
+        else:
+            desglose_k4 = "0 bloques libres"
+            desglose_tooltip = "Todos los bloques comerciales al 100% de ocupación"
+
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Camas Físicas Ocupadas", f"{camas_com_occ:,} camas", f"{pct_com_occ:.1f}% Ocupación Global")
         k2.metric("Camas Libres Disponibles", f"{camas_com_lib:,} camas", f"{(camas_com_lib/camas_com_tot*100):.1f}% Capacidad Libre Inmediata")
         k3.metric("Lotes Sembrados en Campo", f"{lotes_com_tot:,} lotes", f"{camas_compartidas_tot} camas multivariedad")
-        k4.metric("Área Disponible Inmediata", f"{area_com_lib:,.0f} m²", "En Bloques 03 y 04")
+        k4.metric(
+            "Área Disponible Inmediata", 
+            f"{area_com_lib:,.0f} m²", 
+            desglose_k4,
+            help=f"Disponibilidad Inmediata: {camas_com_lib:,} camas libres distribuidas en {desglose_tooltip}"
+        )
 
         st.divider()
         st.markdown("#### 📋 Desglose Físico por Bloque (Planos Sección vs. Inventario Vivo)")
@@ -127,12 +141,23 @@ def render_ocupacion_module(db):
             hide_index=True
         )
 
-        st.info("""
+        # Diagnóstico físico dinámico
+        bloques_llenos = df_comercial[df_comercial['Ocupacion_%'] >= 99.0]['Bloque'].tolist()
+        b_llenos_str = f"Los bloques **{', '.join(bloques_llenos)}** se encuentran al 100% de ocupación en suelo." if bloques_llenos else "Ningún bloque al 100% de ocupación."
+        
+        m2_min = df_comercial['m2_Por_Cama_Planos'].min()
+        m2_max = df_comercial['m2_Por_Cama_Planos'].max()
+        idx_min = df_comercial['m2_Por_Cama_Planos'].idxmin()
+        idx_max = df_comercial['m2_Por_Cama_Planos'].idxmax()
+        b_min = df_comercial.loc[idx_min, 'Bloque'] if pd.notna(idx_min) else "06"
+        b_max = df_comercial.loc[idx_max, 'Bloque'] if pd.notna(idx_max) else "03"
+
+        st.info(f"""
         💡 **Capacidad Física y Disponibilidad Operativa:**
-        1. **Distribución de Ocupación por Bloque:** Los bloques **01, 02 y 05** se encuentran al 100% de ocupación en suelo, y el **Bloque 06** al 99% (190 de 192 camas).
-        2. **Camas Multivariedad:** Existen **82 camas** compartidas que albergan 2 o más variedades simultáneas optimizando el área productiva.
-        3. **Variabilidad de Eras:** El área promedio de cama varía entre **51.57 m²** (Bloque 06) y **60.62 m²** (Bloque 03) según los planos oficiales de la finca.
-        4. **Disponibilidad Inmediata:** La finca cuenta hoy con **249 camas libres** disponibles para programación de siembras, concentradas en el **Bloque 03 (134 camas)** y **Bloque 04 (113 camas)**.
+        1. **Distribución de Ocupación por Bloque:** {b_llenos_str}
+        2. **Camas Multivariedad:** Existen **{camas_compartidas_tot} camas** compartidas que albergan 2 o más variedades simultáneas optimizando el área productiva.
+        3. **Variabilidad de Eras:** El área promedio de cama varía entre **{m2_min:.2f} m²** (Bloque {b_min}) y **{m2_max:.2f} m²** (Bloque {b_max}) según los planos oficiales de la finca.
+        4. **Disponibilidad Inmediata:** La finca cuenta hoy con **{camas_com_lib:,} camas libres** ({area_com_lib:,.0f} m²) disponibles para programación de siembras, concentradas en: **{desglose_tooltip}**.
         """)
 
     # =========================================================================

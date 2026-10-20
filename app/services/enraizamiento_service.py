@@ -14,7 +14,8 @@ from app.services.mva_service import (
 from app.services.ocupacion_service import (
     resolver_bloque_tentativo, 
     calcular_ocupacion_semanal_52w,
-    CAMAS_COMERCIALES_TOTALES
+    CAMAS_COMERCIALES_TOTALES,
+    obtener_dimensiones_camas_bloques
 )
 
 def asegurar_sincronizacion_pedido_y_plan_detallado(db: Session = None, archivo_pedido: str = "PedidoConsolidado_master.xlsx") -> None:
@@ -49,6 +50,20 @@ def asegurar_sincronizacion_pedido_y_plan_detallado(db: Session = None, archivo_
 CAVIDADES_POR_BANDEJA = 112             # Bandeja estándar de propagación (112 alvéolos)
 DIAS_PERMANENCIA_BANCO = 21            # 3 semanas exactas bajo cámara de nebulización
 SEMANAS_ENRAIZAMIENTO = 3              # Desfase temporal hacia atrás: Sem_Siembra - 3
+ARCHIVO_INVENTARIO_RECEPCION = "Recepcion_Inventario_Esquejes.csv"
+ARCHIVO_INVENTARIO_LUNES = "Inventario_Esquejes_Lunes.csv"
+ARCHIVO_EJECUCION_REAL = "Ejecucion_Real_Enraizamiento.csv"
+ARCHIVO_CIERRE_ENRAIZAMIENTO = "Cierre_Semanal_Enraizamiento.csv"
+
+def calcular_bandejas_redondeadas(esquejes: float) -> int:
+    """
+    Calcula el número de bandejas de 112 cavidades redondeando al entero más cercano (round).
+    Ejemplo de negocio: 46.4 bandejas -> 46 bandejas (no 47).
+    Si esquejes <= 0, retorna 0. Si esquejes > 0, garantiza al menos 1 bandeja.
+    """
+    if not esquejes or float(esquejes) <= 0:
+        return 0
+    return max(1, int(round(float(esquejes) / CAVIDADES_POR_BANDEJA)))
 
 # Jornadas Laborales Efectivas (con deducción de 30 min de almuerzo Lunes a Viernes)
 HORAS_JORNADA = {
@@ -153,7 +168,7 @@ def aplicar_corrimiento_fenologico_a_plan(df_det: pd.DataFrame, db: Session = No
     if db is not None:
         try:
             vars_db = {v.nombre.strip().lower(): v for v in db.query(Variedad).all()}
-            curvas_dyn = calcular_curvas_dinamicas(alpha=1.0, num_ciclos=9, db=db)
+            curvas_dyn = calcular_curvas_dinamicas(db=db)
         except Exception:
             pass
 
@@ -184,7 +199,7 @@ def aplicar_corrimiento_fenologico_a_plan(df_det: pd.DataFrame, db: Session = No
         sem_c = sumar_semanas_iso(sem_s, int(round(dp / 7.0)))
 
         camas = round(esq / 5200.0, 1)
-        bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
+        bandejas = calcular_bandejas_redondeadas(esq)
         tallos_esp = int(round(esq * aprov))
         dia_tentativo = calcular_dia_tentativo_enraizamiento(dp)
 
@@ -251,7 +266,7 @@ def obtener_semanas_enraizamiento_disponibles(
                     esq = int(round(base_esq * factor_expansion))
                     base_tallos = int(row.get('total_tallos', esq * 0.835))
                     tallos = int(round(base_tallos * factor_expansion))
-                    bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
+                    bandejas = calcular_bandejas_redondeadas(esq)
                     camas = round(esq / 5200.0, 1)
                     temp = clasificar_temporada_semana(int(sem_c) if str(sem_c).isdigit() else 202704)
 
@@ -287,7 +302,7 @@ def obtener_semanas_enraizamiento_disponibles(
                     esq = int(round(base_esq * factor_expansion))
                     base_tallos = int(row.get('total_tallos', esq * 0.835))
                     tallos = int(round(base_tallos * factor_expansion))
-                    bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
+                    bandejas = calcular_bandejas_redondeadas(esq)
                     camas = round(esq / 5200.0, 1)
 
                     sem_c = sumar_semanas_iso(sem_s, 11)
@@ -337,7 +352,7 @@ def obtener_semanas_enraizamiento_disponibles(
             sem_s = str(row['Semana_Siembra'])
             sem_e = restar_semanas_iso(sem_s, SEMANAS_ENRAIZAMIENTO)
             esq = int(round(row['total_esquejes']))
-            bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
+            bandejas = calcular_bandejas_redondeadas(esq)
             camas = round(esq / 5200.0, 1)
 
             sem_c = sumar_semanas_iso(sem_s, 11)
@@ -471,7 +486,7 @@ def calcular_mano_obra_enraizamiento(esquejes_por_dia: dict, config_cuadrilla: d
     for d in dias:
         esq_d = esquejes_por_dia.get(d, 0)
         h_jornada = HORAS_JORNADA.get(d, 7.5)
-        bandejas_por_dia[d] = int(math.ceil(esq_d / CAVIDADES_POR_BANDEJA))
+        bandejas_por_dia[d] = calcular_bandejas_redondeadas(esq_d)
 
         h_req = round(esq_d / rendimiento_ponderado, 2) if rendimiento_ponderado > 0 else 0.0
         horas_requeridas_por_dia[d] = h_req
@@ -523,18 +538,20 @@ def generar_plano_enraizamiento_semanal(
     config_cuadrilla: dict = None,
     modo_plan: str = "aprobado",
     factor_expansion: float = 1.0,
-    correr_variedades: bool = True
+    correr_variedades: bool = True,
+    base_capacidad: str = "bloque",
+    df_inventario_ajustado: pd.DataFrame = None
 ) -> dict:
     """
     Genera el Plano Operativo de Enraizamiento para la semana especificada:
     - Cruza el Pedido Aprobado (desfasado fenológicamente a siembra y cosecha jueves).
-    - Desagrega por Variedad, Color, Flor y Bandejas de 112 cavidades.
+    - Desagrega por Variedad, Color, Flor y Bandejas de 112 cavidades (redondeadas al entero más cercano).
+    - Si se pasa df_inventario_ajustado (o existe inventario/compensación registrada), sincroniza los
+      esquejes efectivos a clavar, compensaciones de volumen, reprogramaciones y variedades extemporáneas,
+      asegurando que el plano físico y el PDF descargado reflejen la realidad operativa ajustada.
     - Asigna día tentativo (pico jueves) y nivela la jornada semanal (Lunes a Sábado).
     - Asigna bloque de campo estimado de destino (01 a 06).
     - Modela el cálculo de mano de obra y horas-hombre requeridas.
-    Soporta los modos:
-    - 'aprobado': Lee desde Plan_Aprobado_Detallado.csv con o sin corrimiento biológico dinámico.
-    - 'plataforma_base': Lee desde PedidoConsolidado_master.xlsx.
     """
     sem_siembra = sumar_semanas_iso(semana_enraizamiento, SEMANAS_ENRAIZAMIENTO)
     asegurar_sincronizacion_pedido_y_plan_detallado(db=db, archivo_pedido=archivo_pedido)
@@ -580,6 +597,12 @@ def generar_plano_enraizamiento_semanal(
     # Cargar catálogo de variedades desde la base de datos
     variedades_db = {v.nombre.lower().strip(): v for v in db.query(Variedad).all()}
     
+    # Cargar dimensionamiento físico de camas por bloque
+    try:
+        dict_dimensiones = obtener_dimensiones_camas_bloques(db=db)
+    except Exception:
+        dict_dimensiones = {}
+
     # Cargar proyección de bloques para asignación espacial tentativa
     try:
         _, df_bloques_52w = calcular_ocupacion_semanal_52w(db)
@@ -597,23 +620,14 @@ def generar_plano_enraizamiento_semanal(
         
         flor = row.get('Flor') or (v_obj.flor if v_obj else 'Desconocida')
         color = row.get('Color') or (v_obj.color if v_obj else 'N/A')
-        esq = int(round(row['Esquejes_Para_Siembra (Final)']))
+        
+        # Pedido comercial base (5,200 esquejes / cama estándar aprobada)
+        esq_pedido = int(round(row['Esquejes_Para_Siembra (Final)']))
+        camas_campo = round(esq_pedido / 5200.0, 1)
         
         dia_inicio = int(row.get('Dia_Inicio') or (v_obj.dia_inicio if (v_obj and v_obj.dia_inicio) else 84))
         dia_pico = int(row.get('Dia_Pico') or (v_obj.dia_pico if (v_obj and v_obj.dia_pico) else 77))
         aprov_pp = float(row.get('Aprov_PP') or (v_obj.aprov_pp if (v_obj and v_obj.aprov_pp and v_obj.aprov_pp > 0) else 0.806))
-
-        # Día tentativo fenológico (Pico Jueves)
-        dia_tentativo = calcular_dia_tentativo_enraizamiento(dia_pico)
-        
-        # Bandejas estándar 112 cavidades
-        bandejas = int(math.ceil(esq / CAVIDADES_POR_BANDEJA))
-
-        # Camas de campo equivalentes (a razón estándar de 5,200 plantas/cama real)
-        camas_campo = round(esq / 5200.0, 1)
-
-        # Proyección de tallos esperados a cosecha
-        tallos_esperados = int(round(esq * aprov_pp))
 
         # Semanas de siembra y cosecha específicas del lote
         sem_siembra_row = str(row.get('Semana_Siembra') or sem_siembra)
@@ -621,21 +635,56 @@ def generar_plano_enraizamiento_semanal(
         temp_cosecha_var = clasificar_temporada_semana(int(sem_cosecha_var) if sem_cosecha_var.isdigit() else 202704)
 
         # Bloque de destino tentativo en campo
-        bloque_dest_res = resolver_bloque_tentativo(sem_siembra_row, df_bloques_52w=df_bloques_52w)
+        bloque_dest_res = resolver_bloque_tentativo(sem_siembra_row, df_bloques_52w=df_bloques_52w, dict_dimensiones=dict_dimensiones)
         if isinstance(bloque_dest_res, tuple):
             b_code = str(bloque_dest_res[0])
+            b_info = bloque_dest_res[1]
         else:
             b_code = str(bloque_dest_res)
+            b_info = dict_dimensiones.get(b_code, {})
+
         bloque_dest = f"Bloque {b_code}" if not b_code.startswith("Bloque") else b_code
+
+        # Determinar capacidad física instalada de la cama según base_capacidad
+        if base_capacidad == "bloque" and b_info:
+            esq_cama_instalada = int(b_info.get('esquejes_cama', 5200))
+            m2_cama = float(b_info.get('m2_cama', 52.98))
+        elif base_capacidad == "finca":
+            finca_info = dict_dimensiones.get('FINCA', {})
+            esq_cama_instalada = int(finca_info.get('esquejes_cama', 4867))
+            m2_cama = float(finca_info.get('m2_cama', 52.98))
+        else: # std_5200
+            esq_cama_instalada = 5200
+            m2_cama = 56.71
+
+        # Requerimiento de esquejes para enraizamiento basado en la capacidad física real de las camas
+        if esq_cama_instalada > 0 and camas_campo > 0:
+            esq_enraizamiento = int(round(camas_campo * esq_cama_instalada))
+        else:
+            esq_enraizamiento = esq_pedido
+
+        # Bandejas estándar 112 cavidades redondeadas al entero más cercano (ej. 46.4 -> 46)
+        bandejas = calcular_bandejas_redondeadas(esq_enraizamiento)
+        esq_bandejas = bandejas * CAVIDADES_POR_BANDEJA
+
+        # Proyección de tallos esperados a cosecha
+        tallos_esperados = int(round(esq_enraizamiento * aprov_pp))
+
+        # Día tentativo fenológico (Pico Jueves)
+        dia_tentativo = calcular_dia_tentativo_enraizamiento(dia_pico)
 
         lotes_raw.append({
             "Flor": flor,
             "Color": color,
             "Variedad": v_nom,
-            "Esquejes": esq,
+            "Esquejes_Pedido": esq_pedido,
+            "Esquejes": esq_enraizamiento,
             "Bandejas_112": bandejas,
+            "Esquejes_Bandejas": esq_bandejas,
             "Camas_Campo": camas_campo,
             "Bloque_Destino": bloque_dest,
+            "Capacidad_Cama_Bloque": esq_cama_instalada,
+            "M2_Cama_Bloque": m2_cama,
             "Dia_Tentativo": dia_tentativo,
             "Dia_Inicio": dia_inicio,
             "Dia_Pico": dia_pico,
@@ -644,8 +693,101 @@ def generar_plano_enraizamiento_semanal(
             "Semana_Siembra": sem_siembra_row,
             "Semana_Enraizamiento": semana_enraizamiento,
             "Semana_Cosecha": sem_cosecha_var,
-            "Temporada": temp_cosecha_var
+            "Temporada": temp_cosecha_var,
+            "Es_Extemporaneo": False,
+            "Observaciones": ""
         })
+
+    # Sincronización dinámica con Ajustes de Inventario y Compensaciones (si existen)
+    es_ajustado = False
+    if df_inventario_ajustado is not None and not df_inventario_ajustado.empty:
+        df_inv_sem = df_inventario_ajustado.copy()
+        if 'Semana_Enraizamiento' in df_inv_sem.columns:
+            df_match = df_inv_sem[df_inv_sem['Semana_Enraizamiento'].astype(str) == str(semana_enraizamiento)]
+            if not df_match.empty:
+                df_inv_sem = df_match
+
+        if not df_inv_sem.empty and 'Variedad' in df_inv_sem.columns:
+            mapa_inv = {str(r['Variedad']).strip().lower(): r for _, r in df_inv_sem.iterrows()}
+            variedades_procesadas = set()
+
+            for lote in lotes_raw:
+                v_low = lote['Variedad'].strip().lower()
+                if v_low in mapa_inv:
+                    r_inv = mapa_inv[v_low]
+                    variedades_procesadas.add(v_low)
+                    esq_efect = int(pd.to_numeric(r_inv.get('Esquejes_Efectivos_Clavar', lote['Esquejes']), errors='coerce') or 0)
+                    comp = int(pd.to_numeric(r_inv.get('Compensacion_Volumen', 0), errors='coerce') or 0)
+                    reprog = int(pd.to_numeric(r_inv.get('Reprogramado_Siguiente_Semana', 0), errors='coerce') or 0)
+
+                    hubo_cambio = (comp != 0) or (reprog != 0) or (esq_efect != lote['Esquejes'])
+                    lote['Esquejes_Originales'] = lote['Esquejes']
+                    lote['Esquejes'] = esq_efect
+                    lote['Bandejas_112'] = calcular_bandejas_redondeadas(esq_efect)
+                    lote['Esquejes_Bandejas'] = lote['Bandejas_112'] * CAVIDADES_POR_BANDEJA
+                    lote['Camas_Campo'] = round(esq_efect / 5200.0, 1)
+                    lote['Tallos_Esperados'] = int(round(esq_efect * lote['Aprov_PP']))
+                    lote['Compensacion_Volumen'] = comp
+                    lote['Reprogramado_Siguiente_Semana'] = reprog
+                    lote['Estado_Disponibilidad'] = str(r_inv.get('Estado_Disponibilidad', ''))
+                    lote['Es_Ajustado_Inventario'] = hubo_cambio
+                    lote['Es_Extemporaneo'] = False
+                    lote['Observaciones'] = ""
+                    
+                    if hubo_cambio:
+                        es_ajustado = True
+
+            # Incorporar variedades extemporáneas con volumen efectivo > 0
+            for v_low, r_inv in mapa_inv.items():
+                if v_low not in variedades_procesadas:
+                    esq_efect = int(pd.to_numeric(r_inv.get('Esquejes_Efectivos_Clavar', 0), errors='coerce') or 0)
+                    if esq_efect <= 0:
+                        # Si no se calculó previamente, los extemporáneos clavan su total disponible físico
+                        esq_efect = int(pd.to_numeric(r_inv.get('Total_Disponible', 0), errors='coerce') or 0)
+
+                    if esq_efect > 0:
+                        v_obj = variedades_db.get(v_low)
+                        dp = int(v_obj.dia_pico if (v_obj and v_obj.dia_pico) else 77)
+                        di = int(v_obj.dia_inicio if (v_obj and v_obj.dia_inicio) else 70)
+                        aprov = float(v_obj.aprov_pp if (v_obj and v_obj.aprov_pp) else 0.806)
+                        band = calcular_bandejas_redondeadas(esq_efect)
+                        bloque_dest_ext = resolver_bloque_tentativo(sem_siembra, df_bloques_52w=df_bloques_52w, dict_dimensiones=dict_dimensiones)
+                        b_code_ext = str(bloque_dest_ext[0] if isinstance(bloque_dest_ext, tuple) else bloque_dest_ext)
+                        b_str_ext = f"Bloque {b_code_ext}" if not b_code_ext.startswith("Bloque") else b_code_ext
+
+                        nom_real = str(r_inv.get('Variedad') or (v_obj.nombre if v_obj else v_low.capitalize())).strip()
+                        comp_ext = int(pd.to_numeric(r_inv.get('Compensacion_Volumen', 0), errors='coerce') or 0)
+
+                        lotes_raw.append({
+                            "Flor": str(r_inv.get('Flor') or (v_obj.flor if v_obj else 'Estándar')),
+                            "Color": str(r_inv.get('Color') or (v_obj.color if v_obj else 'Mix')),
+                            "Variedad": nom_real,
+                            "Esquejes_Pedido": 0,
+                            "Esquejes_Originales": 0,
+                            "Esquejes": esq_efect,
+                            "Bandejas_112": band,
+                            "Esquejes_Bandejas": band * CAVIDADES_POR_BANDEJA,
+                            "Camas_Campo": round(esq_efect / 5200.0, 1),
+                            "Bloque_Destino": b_str_ext,
+                            "Capacidad_Cama_Bloque": 5200,
+                            "M2_Cama_Bloque": 56.71,
+                            "Dia_Tentativo": calcular_dia_tentativo_enraizamiento(dp),
+                            "Dia_Inicio": di,
+                            "Dia_Pico": dp,
+                            "Aprov_PP": aprov,
+                            "Tallos_Esperados": int(round(esq_efect * aprov)),
+                            "Semana_Siembra": sem_siembra,
+                            "Semana_Enraizamiento": semana_enraizamiento,
+                            "Semana_Cosecha": sem_c_global,
+                            "Temporada": temporada_cosecha,
+                            "Compensacion_Volumen": comp_ext,
+                            "Reprogramado_Siguiente_Semana": 0,
+                            "Estado_Disponibilidad": str(r_inv.get('Estado_Disponibilidad', f"🟣 Extemporáneo ({esq_efect:,d} a clavar)")),
+                            "Es_Ajustado_Inventario": True,
+                            "Es_Extemporaneo": True,
+                            "Observaciones": ""
+                        })
+                        es_ajustado = True
 
     # Nivelar distribución a lo largo de la semana (Lunes a Sábado)
     lotes_nivelados = nivelar_distribucion_diaria(lotes_raw)
@@ -684,7 +826,7 @@ def generar_plano_enraizamiento_semanal(
 
     # Proyección Biológica de Cosecha Semanal a partir de este plano
     try:
-        curvas_dyn = calcular_curvas_dinamicas(alpha=1.0, num_ciclos=9, db=db)
+        curvas_dyn = calcular_curvas_dinamicas(db=db)
     except Exception:
         curvas_dyn = {}
 
@@ -747,6 +889,15 @@ def generar_plano_enraizamiento_semanal(
         key=lambda x: (dia_order_map.get(x['Dia_Programado'], 9), x['Flor'], x['Variedad'])
     )
     df_plano_detallado = pd.DataFrame(lotes_nivelados)
+    if not df_plano_detallado.empty:
+        if 'Es_Extemporaneo' in df_plano_detallado.columns:
+            df_plano_detallado['Es_Extemporaneo'] = df_plano_detallado['Es_Extemporaneo'].fillna(False).astype(bool)
+        else:
+            df_plano_detallado['Es_Extemporaneo'] = False
+        if 'Observaciones' in df_plano_detallado.columns:
+            df_plano_detallado['Observaciones'] = df_plano_detallado['Observaciones'].fillna("").astype(str)
+        else:
+            df_plano_detallado['Observaciones'] = ""
 
     return {
         "semana_enraizamiento": semana_enraizamiento,
@@ -762,14 +913,17 @@ def generar_plano_enraizamiento_semanal(
         "resumen_mano_obra": res_mano_obra,
         "kpis": {
             "total_esquejes": tot_esq_sem,
+            "total_esquejes_pedido": sum(l.get('Esquejes_Pedido', l['Esquejes']) for l in lotes_nivelados),
             "total_bandejas": res_mano_obra['total_bandejas'],
-            "total_camas": round(tot_esq_sem / 5200.0, 1),
+            "total_camas": round(sum(l['Camas_Campo'] for l in lotes_nivelados), 1),
             "num_lotes": len(lotes_nivelados),
             "horas_requeridas": res_mano_obra['total_horas_requeridas'],
             "operarios_promedio": res_mano_obra['promedio_operarios_requeridos'],
             "rendimiento_ponderado": res_mano_obra['rendimiento_ponderado'],
-            "tallos_esperados": sum(l['Tallos_Esperados'] for l in lotes_nivelados)
-        }
+            "tallos_esperados": sum(l['Tallos_Esperados'] for l in lotes_nivelados),
+            "base_capacidad": base_capacidad
+        },
+        "es_ajustado_inventario": es_ajustado
     }
 
 def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
@@ -893,10 +1047,11 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
     today_str = date.today().strftime('%d/%m/%Y')
 
     # 1. Encabezado Institucional Compacto
+    es_ajust = res_plano.get("es_ajustado_inventario", False)
     header_data = [
         [
-            Paragraph("<b>JARDINES DE CHÍA S.A.S. — PLANO OPERATIVO DE ENRAIZAMIENTO</b>", title_style),
-            Paragraph(f"<b>EMISIÓN S&OP</b> | Fecha: {today_str}", subtitle_style)
+            Paragraph("<b>JARDINES DE CHÍA S.A.S. — PLANO OPERATIVO DE ENRAIZAMIENTO (AJUSTADO)</b>" if es_ajust else "<b>JARDINES DE CHÍA S.A.S. — PLANO OPERATIVO DE ENRAIZAMIENTO</b>", title_style),
+            Paragraph(f"<b>EMISIÓN OPERATIVA AJUSTADA</b> | Fecha: {today_str}" if es_ajust else f"<b>EMISIÓN S&OP</b> | Fecha: {today_str}", subtitle_style)
         ],
         [
             Paragraph(
@@ -955,13 +1110,13 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
     elements.append(t_labor)
     elements.append(Spacer(1, 3))
 
-    # 3. Plano Detallado de Enraizamiento (Depurado: Sin Pico Cosecha ni Firma/Obs)
+    # 3. Plano Detallado de Enraizamiento con Columna de Observaciones
     df_det = res_plano.get("df_plano_detallado", pd.DataFrame())
     if not df_det.empty:
         det_cols = [
             "Día Prog.", "Flor", "Color", "Variedad", 
             "Esquejes", "Bandejas (112)", "Bloque Campo", 
-            "Sem. Siembra", "Ejecutado Real"
+            "Sem. Siembra", "Ejecutado Real", "Observaciones"
         ]
         table_data = [[Paragraph(f"<b>{c}</b>", th_style) for c in det_cols]]
 
@@ -970,16 +1125,47 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
             if r.get('Es_Nivelado', False):
                 dia_txt += " *"
 
+            esq_val = int(r['Esquejes'])
+            ban_val = int(r['Bandejas_112'])
+
+            if esq_val == 0:
+                est_raw = str(r.get('Estado_Disponibilidad', 'REPROGRAMADO')).replace('🔴 ', '').replace('🟢 ', '').replace('🟡 ', '')
+                if 'REPROG' in est_raw.upper():
+                    ejec_box = Paragraph("<font color='#c62828'><b>REPROG. +1W</b></font>", tc_center)
+                else:
+                    ejec_box = Paragraph("<font color='#2e7d32'><b>COMPENSADO</b></font>", tc_center)
+            else:
+                ejec_box = Paragraph("", tc_center)
+
+            var_txt = str(r['Variedad'])
+            comp_val = int(pd.to_numeric(r.get('Compensacion_Volumen', 0), errors='coerce') or 0)
+            es_ext = r.get('Es_Extemporaneo', False)
+            is_extemporaneo = (
+                pd.notnull(es_ext)
+                and (es_ext is True or es_ext == 1 or str(es_ext).strip().lower() == 'true')
+                and int(pd.to_numeric(r.get('Esquejes_Pedido', 1), errors='coerce') or 0) == 0
+            )
+            if is_extemporaneo:
+                var_txt += " <i>(Extemp.)</i>"
+            elif comp_val > 0:
+                var_txt += f" <i>(+{comp_val:,d} comp.)</i>"
+            elif esq_val == 0:
+                var_txt += " <i>(Reprog. +1w)</i>"
+
+            # Celda de Observaciones limpia para diligenciamiento manual de novedades en campo
+            obs_cell = Paragraph("", tc_style)
+
             table_data.append([
                 Paragraph(dia_txt, tc_style),
                 Paragraph(str(r['Flor']), tc_style),
                 Paragraph(str(r['Color']), tc_style),
-                Paragraph(f"<b>{r['Variedad']}</b>", tc_bold),
-                Paragraph(f"{r['Esquejes']:,d}", tc_center),
-                Paragraph(f"{r['Bandejas_112']:,d}", tc_center),
+                Paragraph(f"<b>{var_txt}</b>", tc_bold),
+                Paragraph(f"{esq_val:,d}", tc_center),
+                Paragraph(f"{ban_val:,d}", tc_center),
                 Paragraph(str(r.get('Bloque_Destino', 'Bloque 01')), tc_center),
                 Paragraph(f"S{str(r['Semana_Siembra'])[2:]}", tc_center),
-                Paragraph("[ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ]", tc_center),
+                ejec_box,
+                obs_cell,
             ])
 
         # Fila de Totales
@@ -994,10 +1180,11 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
             Paragraph(f"<b>{tot_ban_det:,d}</b>", tc_center_bold),
             Paragraph("-", tc_center),
             Paragraph("-", tc_center),
-            Paragraph("[ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ]", tc_center),
+            Paragraph("", tc_center),
+            Paragraph("", tc_center),
         ])
 
-        t_det = Table(table_data, colWidths=[65, 60, 60, 195, 70, 75, 75, 72, 80], repeatRows=1)
+        t_det = Table(table_data, colWidths=[50, 46, 46, 138, 54, 52, 58, 50, 74, 184], repeatRows=1)
         t_det.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1b5e20')),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cfd8dc')),
@@ -1009,6 +1196,25 @@ def generar_pdf_plano_enraizamiento(res_plano: dict) -> bytes:
         ]))
         elements.append(t_det)
         elements.append(Spacer(1, 3))
+
+    # Nota Operativa si el plano fue ajustado con inventario
+    if es_ajust:
+        nota_style = ParagraphStyle(
+            'NotaAjust',
+            parent=meta_style,
+            fontName='Helvetica-Oblique',
+            fontSize=6.5,
+            leading=8.0,
+            textColor=colors.HexColor('#1b5e20')
+        )
+        nota_ajust = Paragraph(
+            "<b>* NOTA OPERATIVA:</b> Este plano incorpora los ajustes de inventario de cuarto frío, compensaciones por flor-color "
+            "(regla agronómica >= 0.5 camas) y extemporáneos. Los lotes marcados como <b>REPROG. +1W</b> corresponden a faltantes no cubiertos "
+            "que se reprograman al plan de la siguiente semana.",
+            nota_style
+        )
+        elements.append(nota_ajust)
+        elements.append(Spacer(1, 2))
 
     # 4. Pie de Control y Firmas de Aprobación Compacto
     sig_data = [
@@ -1223,3 +1429,860 @@ def obtener_datos_comparativos_enraizamiento_y_camas(
         "df_liberacion_camas": df_liberacion_camas,
         "df_cosecha_vs_plan": df_cosecha_vs_plan
     }
+
+
+# ==============================================================================
+# MÓDULOS DE PERSISTENCIA: RECEPCIÓN, INVENTARIO Y EJECUCIÓN REAL DE ENRAIZAMIENTO
+# ==============================================================================
+
+# Constantes agronómicas y umbrales de negocio (esquejes y camas)
+ESQUEJES_POR_CAMA_ESTANDAR = 5200
+BANDEJAS_POR_CAMA_ESTANDAR = 46       # 46 bandejas de 112 cavidades = 5,152 esquejes
+BANDEJAS_POR_MEDIA_CAMA = 23         # 23 bandejas de 112 cavidades = 2,576 esquejes
+ESQUEJES_MEDIA_CAMA = 2600           # Media cama agronómica estándar (5,200 / 2)
+MINIMO_COMPENSACION_ESQUEJES = 2500  # Umbral mínimo agronómico (≥0.5 camas) para viabilizar compensación
+UMBRAL_DIFERENCIA_DESPRECIABLE = 500 # Diferencias ≤ 500 esquejes son despreciables (absorbidas en campo)
+
+def calcular_transferencia_compensacion(needed: int, surplus_val: int) -> int:
+    """
+    Calcula el volumen exacto de esquejes a transferir respetando las reglas agronómicas:
+    1. Umbral mínimo de media cama (≥0.5 camas / ≥2,500 esquejes / ≥23 bandejas):
+       Tanto el déficit como el excedente disponible deben ser al menos media cama.
+       Si es menor, NO se compensa para evitar fraccionar camas con micro-lotes ("llenar camas de mil variedades").
+    2. Respeto estricto de capacidad de camas y cantidades reales de siembra:
+       La transferencia se modula en múltiplos de media cama (0.5 camas = 2,600 esquejes)
+       o cama completa (1.0 cama = 5,200 esquejes), sin sobrepasar el déficit necesario
+       ni el excedente del donante.
+    """
+    if needed < MINIMO_COMPENSACION_ESQUEJES or surplus_val < MINIMO_COMPENSACION_ESQUEJES:
+        return 0
+    
+    max_posible = min(needed, surplus_val)
+    if max_posible < MINIMO_COMPENSACION_ESQUEJES:
+        return 0
+    
+    # Modular en medias camas (2,600 esquejes = 23 bandejas de 112 cavidades)
+    num_medias_camas = int(max_posible / ESQUEJES_MEDIA_CAMA)
+    
+    # Si max_posible está entre 2,500 y 2,599 esquejes, equivale a 1 media cama agronómica
+    if num_medias_camas == 0 and max_posible >= MINIMO_COMPENSACION_ESQUEJES:
+        return max_posible
+    
+    volumen_modulado = num_medias_camas * ESQUEJES_MEDIA_CAMA
+    if volumen_modulado > max_posible:
+        volumen_modulado = (num_medias_camas - 1) * ESQUEJES_MEDIA_CAMA
+    
+    if volumen_modulado < MINIMO_COMPENSACION_ESQUEJES and max_posible >= MINIMO_COMPENSACION_ESQUEJES:
+        return max_posible
+        
+    return volumen_modulado
+
+def calcular_esquejes_efectivos_clavar(row: dict | pd.Series) -> int:
+    """
+    Calcula los esquejes efectivos a clavar en banco:
+    - Para variedades del plano maestro (Esquejes_Requeridos > 0):
+      Requerido + Compensacion_Volumen - Reprogramado_Siguiente_Semana.
+    - Para variedades extemporáneas (Esquejes_Requeridos == 0):
+      Si asumió compensación (Compensacion_Volumen > 0): clava al menos ese volumen compensado.
+      Si no compensó a nadie (Compensacion_Volumen == 0): clava el Total_Disponible físico que llegó/existe.
+    """
+    req = int(pd.to_numeric(row.get('Esquejes_Requeridos', 0), errors='coerce') or 0)
+    comp = int(pd.to_numeric(row.get('Compensacion_Volumen', 0), errors='coerce') or 0)
+    rep = int(pd.to_numeric(row.get('Reprogramado_Siguiente_Semana', 0), errors='coerce') or 0)
+    disp = int(pd.to_numeric(row.get('Total_Disponible', 0), errors='coerce') or 0)
+
+    if req > 0:
+        return max(0, req + comp - rep)
+    else:
+        # Variedad Extemporánea
+        if comp > 0:
+            return max(0, min(disp, comp)) if disp > 0 else max(0, comp)
+        else:
+            return max(0, disp)
+
+def calcular_estado_disponibilidad(row: dict | pd.Series) -> str:
+    """
+    Clasifica el estado del inventario aplicando la regla de negocio:
+    - Si la variedad es extemporánea (Esquejes_Requeridos == 0): distintivo morado 🟣 con volumen a clavar o aportado.
+    - Diferencias de volumen <= 500 esquejes son DESPRECIABLES y se consideran en tolerancia 🟢.
+    - Solo se alertan como faltante crítico 🔴 si el déficit supera los 500 esquejes.
+    """
+    rep = int(pd.to_numeric(row.get('Reprogramado_Siguiente_Semana', 0), errors='coerce') or 0)
+    comp = int(pd.to_numeric(row.get('Compensacion_Volumen', 0), errors='coerce') or 0)
+    dif = int(pd.to_numeric(row.get('Diferencia_Saldo', 0), errors='coerce') or 0)
+    req = int(pd.to_numeric(row.get('Esquejes_Requeridos', 0), errors='coerce') or 0)
+    clavar = int(pd.to_numeric(row.get('Esquejes_Efectivos_Clavar', 0), errors='coerce') or 0)
+
+    # Variedad extemporánea (no estaba en el plano maestro semanal, req == 0)
+    if req == 0:
+        if comp > 0:
+            return f"🟣 Extemporáneo (Compensó {comp:,d})"
+        elif clavar > 0:
+            return f"🟣 Extemporáneo ({clavar:,d} a clavar)"
+        elif dif > 0:
+            return f"🟣 Extemporáneo (+{dif:,d} en frío)"
+        else:
+            return "🟣 Extemporáneo (0)"
+
+    if rep > UMBRAL_DIFERENCIA_DESPRECIABLE:
+        return f"🔴 Reprog. Sig. Sem. (-{rep:,d})"
+    elif comp > 0:
+        return f"🟡 Asume Compensación (+{comp:,d})"
+    elif comp < 0:
+        return f"🟢 Déficit Cubierto ({comp:,d})"
+    elif abs(dif) <= UMBRAL_DIFERENCIA_DESPRECIABLE:
+        if dif == 0:
+            return "🟢 Completo (100%)"
+        elif dif > 0:
+            return f"🟢 En Tolerancia (+{dif:,d})"
+        else:
+            return f"🟢 En Tolerancia ({dif:,d})"
+    elif dif > UMBRAL_DIFERENCIA_DESPRECIABLE:
+        if dif < MINIMO_COMPENSACION_ESQUEJES:
+            return f"🔵 Remanente Frío (<0.5 cam, +{dif:,d})"
+        else:
+            return f"🔵 Excedente Viable (≥0.5 cam, +{dif:,d})"
+    else: # dif < -500
+        if abs(dif) < MINIMO_COMPENSACION_ESQUEJES:
+            return f"🔴 Faltante (<0.5 cam, {dif:,d})"
+        else:
+            return f"🔴 Faltante Crítico ({dif:,d})"
+
+def cargar_inventario_recepcion(semana_enraizamiento: str = None) -> pd.DataFrame:
+    """
+    Carga el inventario de esquejes disponible (Cuarto Frío + Recepción de la semana previa - Bajas)
+    desde Recepcion_Inventario_Esquejes.csv (o Inventario_Esquejes_Lunes.csv por retrocompatibilidad).
+    Si se especifica semana_enraizamiento, filtra por esa semana y sanea tipos de datos.
+    Si la semana no existe, arrastra el remanente de cuarto frío de la semana anterior.
+    """
+    cols_str = ["Semana_Enraizamiento", "Fecha_Ingreso", "Flor", "Color", "Variedad", "Estado_Disponibilidad", "Estado_Aprobacion", "Observaciones"]
+    cols_int = [
+        "Stock_Cuarto_Frio", "Esquejes_Recepcion", "Esquejes_Recibidos", "Bajas_Descartes",
+        "Total_Disponible", "Esquejes_Requeridos", "Diferencia_Recepcion", "Compensacion_Volumen",
+        "Reprogramado_Siguiente_Semana", "Esquejes_Efectivos_Clavar", "Diferencia_Saldo",
+        "Bandejas_112_Disponibles", "Esquejes_Clavados_Reales", "Remanente_Final"
+    ]
+
+    archivo_fuente = ARCHIVO_INVENTARIO_RECEPCION if os.path.exists(ARCHIVO_INVENTARIO_RECEPCION) else ARCHIVO_INVENTARIO_LUNES
+
+    if os.path.exists(archivo_fuente):
+        try:
+            df = pd.read_csv(archivo_fuente)
+            if df is not None and not df.empty:
+                df['Semana_Enraizamiento'] = df['Semana_Enraizamiento'].astype(str)
+                if semana_enraizamiento:
+                    df = df[df['Semana_Enraizamiento'] == str(semana_enraizamiento)].copy()
+
+                if not df.empty:
+                    # Sincronización de nombres Recepción / Recibidos
+                    if 'Esquejes_Recepcion' not in df.columns and 'Esquejes_Recibidos' in df.columns:
+                        df['Esquejes_Recepcion'] = df['Esquejes_Recibidos']
+                    elif 'Esquejes_Recibidos' not in df.columns and 'Esquejes_Recepcion' in df.columns:
+                        df['Esquejes_Recibidos'] = df['Esquejes_Recepcion']
+                    elif 'Esquejes_Recepcion' not in df.columns and 'Esquejes_Recibidos' not in df.columns:
+                        df['Esquejes_Recepcion'] = 0
+                        df['Esquejes_Recibidos'] = 0
+
+                    # Retrocompatibilidad de columnas
+                    if 'Stock_Cuarto_Frio' not in df.columns:
+                        df['Stock_Cuarto_Frio'] = 0
+                    if 'Bajas_Descartes' not in df.columns:
+                        df['Bajas_Descartes'] = 0
+                    if 'Compensacion_Volumen' not in df.columns:
+                        df['Compensacion_Volumen'] = 0
+                    if 'Reprogramado_Siguiente_Semana' not in df.columns:
+                        df['Reprogramado_Siguiente_Semana'] = 0
+                    if 'Esquejes_Clavados_Reales' not in df.columns:
+                        df['Esquejes_Clavados_Reales'] = 0
+                    if 'Estado_Aprobacion' not in df.columns:
+                        df['Estado_Aprobacion'] = "Pendiente Aprobación"
+
+                    for c in cols_int:
+                        if c not in df.columns:
+                            df[c] = 0
+                        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
+
+                    # Cálculos automáticos de diferencias y totales
+                    df['Esquejes_Recibidos'] = df['Esquejes_Recepcion']
+                    df['Total_Disponible'] = df['Stock_Cuarto_Frio'] + df['Esquejes_Recepcion'] - df['Bajas_Descartes']
+                    df['Diferencia_Recepcion'] = df['Esquejes_Recepcion'] - df['Esquejes_Requeridos']
+                    df['Esquejes_Efectivos_Clavar'] = df.apply(calcular_esquejes_efectivos_clavar, axis=1)
+                    df['Diferencia_Saldo'] = df['Total_Disponible'] - df['Esquejes_Efectivos_Clavar']
+                    df['Remanente_Final'] = df['Diferencia_Saldo'].apply(lambda x: max(0, x))
+                    df['Bandejas_112_Disponibles'] = df['Esquejes_Efectivos_Clavar'].apply(calcular_bandejas_redondeadas)
+                    df['Estado_Disponibilidad'] = df.apply(calcular_estado_disponibilidad, axis=1)
+
+                    for c in cols_str:
+                        if c in df.columns:
+                            df[c] = df[c].fillna("").astype(str)
+
+                    cols_order = [
+                        "Semana_Enraizamiento", "Fecha_Ingreso", "Flor", "Color", "Variedad",
+                        "Stock_Cuarto_Frio", "Esquejes_Recepcion", "Bajas_Descartes",
+                        "Total_Disponible", "Esquejes_Requeridos", "Diferencia_Recepcion",
+                        "Compensacion_Volumen", "Reprogramado_Siguiente_Semana", "Esquejes_Efectivos_Clavar",
+                        "Diferencia_Saldo", "Bandejas_112_Disponibles", "Remanente_Final",
+                        "Estado_Disponibilidad", "Estado_Aprobacion", "Observaciones"
+                    ]
+                    cols_final = [c for c in cols_order if c in df.columns]
+                    return df[cols_final]
+        except Exception:
+            pass
+
+    return pd.DataFrame(columns=[
+        "Semana_Enraizamiento", "Fecha_Ingreso", "Flor", "Color", "Variedad",
+        "Stock_Cuarto_Frio", "Esquejes_Recepcion", "Bajas_Descartes",
+        "Total_Disponible", "Esquejes_Requeridos", "Diferencia_Recepcion",
+        "Compensacion_Volumen", "Reprogramado_Siguiente_Semana", "Esquejes_Efectivos_Clavar",
+        "Diferencia_Saldo", "Bandejas_112_Disponibles", "Remanente_Final",
+        "Estado_Disponibilidad", "Estado_Aprobacion", "Observaciones"
+    ])
+
+# Alias para compatibilidad con código existente
+cargar_inventario_lunes = cargar_inventario_recepcion
+
+
+def guardar_inventario_recepcion(df_inventario_semana: pd.DataFrame, semana_enraizamiento: str = None) -> bool:
+    """
+    Guarda o actualiza los registros de inventario (Cuarto Frío + Recepción - Bajas + Compensación)
+    en Recepcion_Inventario_Esquejes.csv y sincroniza Inventario_Esquejes_Lunes.csv.
+    """
+    if df_inventario_semana is None or df_inventario_semana.empty:
+        return False
+    try:
+        df_copy = df_inventario_semana.copy()
+        sem = str(semana_enraizamiento) if semana_enraizamiento else str(df_copy['Semana_Enraizamiento'].iloc[0])
+        df_copy['Semana_Enraizamiento'] = sem
+
+        # Normalizar nombres Recepción / Recibidos
+        if 'Esquejes_Recepcion' not in df_copy.columns and 'Esquejes_Recibidos' in df_copy.columns:
+            df_copy['Esquejes_Recepcion'] = df_copy['Esquejes_Recibidos']
+        elif 'Esquejes_Recibidos' not in df_copy.columns and 'Esquejes_Recepcion' in df_copy.columns:
+            df_copy['Esquejes_Recibidos'] = df_copy['Esquejes_Recepcion']
+        
+        # Conversión y recálculo de campos numéricos
+        cols_num = [
+            "Stock_Cuarto_Frio", "Esquejes_Recepcion", "Esquejes_Recibidos", "Bajas_Descartes",
+            "Total_Disponible", "Esquejes_Requeridos", "Diferencia_Recepcion", "Compensacion_Volumen",
+            "Reprogramado_Siguiente_Semana", "Esquejes_Efectivos_Clavar", "Diferencia_Saldo",
+            "Bandejas_112_Disponibles", "Esquejes_Clavados_Reales", "Remanente_Final"
+        ]
+        for cn in cols_num:
+            if cn not in df_copy.columns:
+                df_copy[cn] = 0
+            df_copy[cn] = pd.to_numeric(df_copy[cn], errors='coerce').fillna(0).astype(int)
+
+        df_copy['Esquejes_Recibidos'] = df_copy['Esquejes_Recepcion']
+        df_copy['Total_Disponible'] = df_copy['Stock_Cuarto_Frio'] + df_copy['Esquejes_Recepcion'] - df_copy['Bajas_Descartes']
+        df_copy['Diferencia_Recepcion'] = df_copy['Esquejes_Recepcion'] - df_copy['Esquejes_Requeridos']
+        df_copy['Esquejes_Efectivos_Clavar'] = df_copy.apply(calcular_esquejes_efectivos_clavar, axis=1)
+        df_copy['Diferencia_Saldo'] = df_copy['Total_Disponible'] - df_copy['Esquejes_Efectivos_Clavar']
+        df_copy['Remanente_Final'] = df_copy['Diferencia_Saldo'].apply(lambda x: max(0, x))
+        df_copy['Bandejas_112_Disponibles'] = df_copy['Esquejes_Efectivos_Clavar'].apply(calcular_bandejas_redondeadas)
+        df_copy['Estado_Disponibilidad'] = df_copy.apply(calcular_estado_disponibilidad, axis=1)
+
+        cols_str = ["Semana_Enraizamiento", "Fecha_Ingreso", "Flor", "Color", "Variedad", "Estado_Disponibilidad", "Estado_Aprobacion", "Observaciones"]
+        for c in cols_str:
+            if c in df_copy.columns:
+                df_copy[c] = df_copy[c].fillna("").astype(str)
+
+        cols_order = [
+            "Semana_Enraizamiento", "Fecha_Ingreso", "Flor", "Color", "Variedad",
+            "Stock_Cuarto_Frio", "Esquejes_Recepcion", "Bajas_Descartes",
+            "Total_Disponible", "Esquejes_Requeridos", "Diferencia_Recepcion",
+            "Compensacion_Volumen", "Reprogramado_Siguiente_Semana", "Esquejes_Efectivos_Clavar",
+            "Diferencia_Saldo", "Bandejas_112_Disponibles", "Remanente_Final",
+            "Estado_Disponibilidad", "Estado_Aprobacion", "Observaciones"
+        ]
+        cols_final = [c for c in cols_order if c in df_copy.columns]
+        df_to_save = df_copy[cols_final]
+
+        for arch in [ARCHIVO_INVENTARIO_RECEPCION, ARCHIVO_INVENTARIO_LUNES]:
+            if os.path.exists(arch):
+                try:
+                    df_existente = pd.read_csv(arch)
+                    df_existente['Semana_Enraizamiento'] = df_existente['Semana_Enraizamiento'].astype(str)
+                    df_otras = df_existente[df_existente['Semana_Enraizamiento'] != sem]
+                    df_final = pd.concat([df_otras, df_to_save], ignore_index=True)
+                except Exception:
+                    df_final = df_to_save
+            else:
+                df_final = df_to_save
+            df_final.to_csv(arch, index=False, encoding='utf-8')
+
+        return True
+    except Exception as e:
+        print(f"Error al guardar inventario recepción: {e}")
+        return False
+
+# Alias para compatibilidad con código existente
+guardar_inventario_lunes = guardar_inventario_recepcion
+
+
+def precargar_inventario_desde_plano(res_plano: dict) -> pd.DataFrame:
+    """
+    Genera la plantilla base de inventario disponible (Cuarto Frío + Recepción - Bajas),
+    a partir de las variedades y requerimientos calculados en el plano operativo de la semana.
+    Arrastra automáticamente el saldo remanente de cuarto frío de la semana anterior si existe,
+    e incorpora faltantes que hayan sido reprogramados de semanas anteriores.
+    """
+    df_det = res_plano.get('df_plano_detallado', pd.DataFrame())
+    if df_det.empty:
+        return pd.DataFrame()
+    
+    sem_e = str(res_plano.get('semana_enraizamiento', '202643'))
+    today_str = date.today().strftime('%Y-%m-%d')
+
+    grp = df_det.groupby(['Flor', 'Color', 'Variedad']).agg(
+        Esquejes_Requeridos=('Esquejes', 'sum')
+    ).reset_index()
+
+    grp['Semana_Enraizamiento'] = sem_e
+    grp['Fecha_Ingreso'] = today_str
+
+    # Arrastrar remanente de la semana previa automáticamente
+    sem_ant = restar_semanas_iso(sem_e, 1)
+    remanentes_previos = {}
+    reprogramados_previos = {}
+    for arch in [ARCHIVO_INVENTARIO_RECEPCION, ARCHIVO_CIERRE_ENRAIZAMIENTO, ARCHIVO_INVENTARIO_LUNES]:
+        if os.path.exists(arch):
+            try:
+                df_hist = pd.read_csv(arch)
+                df_ant = df_hist[df_hist['Semana_Enraizamiento'].astype(str) == str(sem_ant)]
+                if not df_ant.empty:
+                    for _, r_a in df_ant.iterrows():
+                        v = str(r_a.get('Variedad', '')).strip()
+                        rem = int(pd.to_numeric(r_a.get('Remanente_Final', r_a.get('Diferencia_Saldo', 0)), errors='coerce') or 0)
+                        rep = int(pd.to_numeric(r_a.get('Reprogramado_Siguiente_Semana', 0), errors='coerce') or 0)
+                        if rem > 0:
+                            remanentes_previos[v] = max(remanentes_previos.get(v, 0), rem)
+                        if rep > 0:
+                            reprogramados_previos[v] = max(reprogramados_previos.get(v, 0), rep)
+                    break
+            except Exception:
+                pass
+
+    grp['Stock_Cuarto_Frio'] = grp['Variedad'].apply(lambda v: remanentes_previos.get(str(v).strip(), 0))
+    # Incorporar reprogramaciones de la semana anterior a la demanda
+    reprog_prev = grp['Variedad'].apply(lambda v: reprogramados_previos.get(str(v).strip(), 0))
+    grp['Esquejes_Requeridos'] = grp['Esquejes_Requeridos'] + reprog_prev
+
+    grp['Esquejes_Recepcion'] = grp['Esquejes_Requeridos']
+    grp['Esquejes_Recibidos'] = grp['Esquejes_Recepcion']
+    grp['Bajas_Descartes'] = 0
+    grp['Total_Disponible'] = grp['Stock_Cuarto_Frio'] + grp['Esquejes_Recepcion'] - grp['Bajas_Descartes']
+    grp['Diferencia_Recepcion'] = 0
+    grp['Compensacion_Volumen'] = 0
+    grp['Reprogramado_Siguiente_Semana'] = 0
+    grp['Esquejes_Efectivos_Clavar'] = grp['Esquejes_Requeridos']
+    grp['Diferencia_Saldo'] = grp['Total_Disponible'] - grp['Esquejes_Efectivos_Clavar']
+    grp['Remanente_Final'] = grp['Diferencia_Saldo'].apply(lambda x: max(0, x))
+    grp['Bandejas_112_Disponibles'] = grp['Esquejes_Efectivos_Clavar'].apply(calcular_bandejas_redondeadas)
+    grp['Esquejes_Clavados_Reales'] = 0
+    grp['Estado_Disponibilidad'] = "🟢 Completo (100%)"
+    grp['Estado_Aprobacion'] = "Pendiente Aprobación"
+    grp['Observaciones'] = "Ingreso lote estándar"
+
+    cols_order = [
+        "Semana_Enraizamiento", "Fecha_Ingreso", "Flor", "Color", "Variedad",
+        "Stock_Cuarto_Frio", "Esquejes_Recepcion", "Bajas_Descartes",
+        "Total_Disponible", "Esquejes_Requeridos", "Diferencia_Recepcion",
+        "Compensacion_Volumen", "Reprogramado_Siguiente_Semana", "Esquejes_Efectivos_Clavar",
+        "Diferencia_Saldo", "Bandejas_112_Disponibles", "Remanente_Final",
+        "Estado_Disponibilidad", "Estado_Aprobacion", "Observaciones"
+    ]
+    return grp[cols_order]
+
+
+def ejecutar_compensacion_inventario(df_inventario: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
+    """
+    Aplica la regla de compensación jerárquica agronómica de la empresa:
+    1. Regla Agronómica de Mínimo Media Cama (≥0.5 camas / ≥2,500 esquejes / ≥23 bandejas):
+       - Si la compensación entre dos variedades no es de al menos media cama (≥2,500 esquejes), NO SE COMPENSA.
+       - No se permite fraccionar camas con micro-lotes ("llenar las camas de mil variedades").
+       - El volumen transferido se modula en múltiplos de media cama (0.5 camas = 2,600 esquejes) o cama completa (1.0 cama = 5,200),
+         evitando sobrepasar la capacidad de las camas o generar cantidades irreales de siembra en campo.
+    2. Jerarquía de compensación:
+       - Nivel 1 (Flor-Color): Buscar variedades donantes con excedente ≥ media cama que compartan MISMO TIPO DE FLOR y MISMO COLOR.
+       - Nivel 2 (Color): Si aún queda déficit ≥ media cama, buscar variedades donantes con excedente ≥ media cama que compartan
+         MISMO COLOR (independiente de la flor).
+       - Nivel 3 (Reprogramación):
+         * Si déficit > 500 esquejes pero < 2,500 esquejes: No alcanza media cama; se reprograma para el plan de la siguiente semana (+1w)
+           sin partir camas.
+         * Si déficit ≥ 2,500 esquejes y no hubo donante viable: Se reprograma para el plan de la siguiente semana (+1w).
+         * Si déficit ≤ 500 esquejes: Es despreciable (absorbido por variación de densidad en campo y buffer).
+    Retorna el DataFrame con compensaciones calculadas y una lista estructurada de advertencias operativas.
+    """
+    if df_inventario is None or df_inventario.empty:
+        return df_inventario, []
+
+    df = df_inventario.copy()
+
+    # Asegurar tipos numéricos
+    cols_num = ["Stock_Cuarto_Frio", "Esquejes_Recepcion", "Bajas_Descartes", "Esquejes_Requeridos"]
+    for c in cols_num:
+        if c not in df.columns:
+            df[c] = 0
+        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
+
+    df['Total_Disponible'] = df['Stock_Cuarto_Frio'] + df['Esquejes_Recepcion'] - df['Bajas_Descartes']
+    df['Saldo_Preliminar'] = df['Total_Disponible'] - df['Esquejes_Requeridos']
+    df['Compensacion_Volumen'] = 0
+    df['Reprogramado_Siguiente_Semana'] = 0
+
+    # Variedades con excedente disponible (incluye variedades programadas y extemporáneas con saldo > 0)
+    surplus = {idx: int(val) for idx, val in df[df['Saldo_Preliminar'] > 0]['Saldo_Preliminar'].items()}
+    # Variedades con déficit (Saldo_Preliminar < 0)
+    deficits = {idx: abs(int(val)) for idx, val in df[df['Saldo_Preliminar'] < 0]['Saldo_Preliminar'].items()}
+
+    advertencias = []
+
+    # Nivel 1: Mismo Flor y Mismo Color (Solo si needed >= MINIMO_COMPENSACION_ESQUEJES)
+    for d_idx, needed in list(deficits.items()):
+        if needed < MINIMO_COMPENSACION_ESQUEJES:
+            continue
+        f_d = str(df.loc[d_idx, 'Flor']).strip()
+        c_d = str(df.loc[d_idx, 'Color']).strip()
+        var_d = str(df.loc[d_idx, 'Variedad']).strip()
+
+        for s_idx, sur_val in list(surplus.items()):
+            if sur_val < MINIMO_COMPENSACION_ESQUEJES or s_idx == d_idx:
+                continue
+            f_s = str(df.loc[s_idx, 'Flor']).strip()
+            c_s = str(df.loc[s_idx, 'Color']).strip()
+
+            if f_s.lower() == f_d.lower() and c_s.lower() == c_d.lower():
+                var_s = str(df.loc[s_idx, 'Variedad']).strip()
+                transfer = calcular_transferencia_compensacion(needed, sur_val)
+                if transfer < MINIMO_COMPENSACION_ESQUEJES:
+                    continue
+
+                surplus[s_idx] -= transfer
+                needed -= transfer
+                df.loc[d_idx, 'Compensacion_Volumen'] -= transfer
+                df.loc[s_idx, 'Compensacion_Volumen'] += transfer
+
+                es_extemp = int(df.loc[s_idx, 'Esquejes_Requeridos']) == 0
+                tag_extemp = " (Variedad Extemporánea / No Programada)" if es_extemp else ""
+                camas_eq = transfer / float(ESQUEJES_POR_CAMA_ESTANDAR)
+                ban_eq = calcular_bandejas_redondeadas(transfer)
+
+                advertencias.append({
+                    'Nivel': '🟢 Flor-Color',
+                    'Tipo': 'success',
+                    'Mensaje': (
+                        f"Déficit de {transfer:,d} esquejes ({camas_eq:.1f} camas / {ban_eq:,d} bandejas) en [{var_d}] "
+                        f"compensado aumentando volumen de [{var_s}]{tag_extemp} ({f_d} - {c_d}). "
+                        f"Cumple regla de mínimo media cama."
+                    )
+                })
+                if needed < MINIMO_COMPENSACION_ESQUEJES:
+                    break
+        deficits[d_idx] = needed
+
+    # Nivel 2: Mismo Color (diferente flor si aún queda déficit >= MINIMO_COMPENSACION_ESQUEJES)
+    for d_idx, needed in list(deficits.items()):
+        if needed < MINIMO_COMPENSACION_ESQUEJES:
+            continue
+        c_d = str(df.loc[d_idx, 'Color']).strip()
+        var_d = str(df.loc[d_idx, 'Variedad']).strip()
+
+        for s_idx, sur_val in list(surplus.items()):
+            if sur_val < MINIMO_COMPENSACION_ESQUEJES or s_idx == d_idx:
+                continue
+            c_s = str(df.loc[s_idx, 'Color']).strip()
+
+            if c_s.lower() == c_d.lower():
+                var_s = str(df.loc[s_idx, 'Variedad']).strip()
+                f_s = str(df.loc[s_idx, 'Flor']).strip()
+                transfer = calcular_transferencia_compensacion(needed, sur_val)
+                if transfer < MINIMO_COMPENSACION_ESQUEJES:
+                    continue
+
+                surplus[s_idx] -= transfer
+                needed -= transfer
+                df.loc[d_idx, 'Compensacion_Volumen'] -= transfer
+                df.loc[s_idx, 'Compensacion_Volumen'] += transfer
+
+                es_extemp = int(df.loc[s_idx, 'Esquejes_Requeridos']) == 0
+                tag_extemp = " (Variedad Extemporánea / Suple Color)" if es_extemp else ""
+                camas_eq = transfer / float(ESQUEJES_POR_CAMA_ESTANDAR)
+                ban_eq = calcular_bandejas_redondeadas(transfer)
+
+                advertencias.append({
+                    'Nivel': '🟡 Mismo Color',
+                    'Tipo': 'warning',
+                    'Mensaje': (
+                        f"Déficit de {transfer:,d} esquejes ({camas_eq:.1f} camas / {ban_eq:,d} bandejas) en [{var_d}] "
+                        f"compensado aumentando volumen de [{var_s}]{tag_extemp} (Mismo Color: {c_d}, Flor: {f_s}). "
+                        f"Cumple regla de mínimo media cama."
+                    )
+                })
+                if needed < MINIMO_COMPENSACION_ESQUEJES:
+                    break
+        deficits[d_idx] = needed
+
+    # Nivel 3: Reprogramación para la siguiente semana (+1w) y Tratamiento de Diferencias Menores
+    # REGLAS DEL NEGOCIO:
+    # 1. Si needed > UMBRAL_DIFERENCIA_DESPRECIABLE (500):
+    #    - Si needed < MINIMO_COMPENSACION_ESQUEJES (2,500): No alcanza media cama; no se fracciona cama y pasa a siguiente semana.
+    #    - Si needed >= MINIMO_COMPENSACION_ESQUEJES (2,500): Déficit crítico no compensado; pasa a siguiente semana.
+    # 2. Si 0 < needed <= 500: Es despreciable (absorbido por margen de densidad).
+    for d_idx, needed in list(deficits.items()):
+        var_d = str(df.loc[d_idx, 'Variedad']).strip()
+        if needed > UMBRAL_DIFERENCIA_DESPRECIABLE:
+            df.loc[d_idx, 'Reprogramado_Siguiente_Semana'] = needed
+            camas_reprog = needed / float(ESQUEJES_POR_CAMA_ESTANDAR)
+            ban_reprog = calcular_bandejas_redondeadas(needed)
+
+            if needed < MINIMO_COMPENSACION_ESQUEJES:
+                advertencias.append({
+                    'Nivel': '🔴 Reprogramado (+1w)',
+                    'Tipo': 'error',
+                    'Mensaje': (
+                        f"Faltante de {needed:,d} esquejes ({camas_reprog:.2f} camas / {ban_reprog:,d} bandejas) en [{var_d}] "
+                        f"no alcanza el mínimo agronómico de media cama (≥2,500 esquejes). No se compensa para evitar fraccionar "
+                        f"camas con micro-lotes ('llenar las camas de mil variedades'); se reprograma para el plan de la siguiente semana."
+                    )
+                })
+            else:
+                advertencias.append({
+                    'Nivel': '🔴 Reprogramado (+1w)',
+                    'Tipo': 'error',
+                    'Mensaje': (
+                        f"Faltante crítico de {needed:,d} esquejes ({camas_reprog:.1f} camas / {ban_reprog:,d} bandejas) en [{var_d}] "
+                        f"(≥media cama) no encontró excedentes compatibles viables (≥2,500 esquejes). Se reprograma para el plan de la siguiente semana."
+                    )
+                })
+        elif needed > 0:
+            advertencias.append({
+                'Nivel': '⚪ En Tolerancia (≤500)',
+                'Tipo': 'info',
+                'Mensaje': (
+                    f"Diferencia de {needed:,d} esquejes en [{var_d}] (≤500 esquejes) es despreciable "
+                    f"y se absorbe por el margen de densidad de siembra en campo."
+                )
+            })
+
+    # Recalcular valores finales
+    df['Esquejes_Efectivos_Clavar'] = df.apply(calcular_esquejes_efectivos_clavar, axis=1)
+    df['Diferencia_Saldo'] = df['Total_Disponible'] - df['Esquejes_Efectivos_Clavar']
+    df['Remanente_Final'] = df['Diferencia_Saldo'].apply(lambda x: max(0, x))
+    df['Bandejas_112_Disponibles'] = df['Esquejes_Efectivos_Clavar'].apply(calcular_bandejas_redondeadas)
+    df['Estado_Disponibilidad'] = df.apply(calcular_estado_disponibilidad, axis=1)
+
+    return df, advertencias
+
+
+def generar_resumen_excedentes_flor_color(df_inventario: pd.DataFrame) -> pd.DataFrame:
+    """
+    Genera el cuadro resumen consolidado de excedentes agrupado por Flor y Color.
+    Aplica la regla agronómica de media cama (≥ 2,500 esquejes / 23 bandejas de 112):
+    - Excedentes ≥ 2,500 esquejes (≥0.5 camas): Viables para compensar faltantes o sembrar en campo.
+    - Excedentes < 2,500 esquejes (<0.5 camas): Remanente que permanece resguardado en cuarto frío
+      para evitar fraccionar camas con micro-lotes ("no podemos llenar las camas de mil variedades").
+    """
+    if df_inventario is None or df_inventario.empty:
+        return pd.DataFrame()
+
+    df = df_inventario.copy()
+
+    # Asegurar columnas numéricas
+    for c in ["Total_Disponible", "Esquejes_Requeridos", "Compensacion_Volumen", "Reprogramado_Siguiente_Semana", "Remanente_Final", "Diferencia_Saldo"]:
+        if c not in df.columns:
+            df[c] = 0
+        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
+
+    # Identificar excedente físico por fila y donaciones
+    df['Excedente_Fisico'] = (df['Total_Disponible'] - df['Esquejes_Requeridos']).apply(lambda x: max(0, x))
+    df['Donado_Compensacion'] = df['Compensacion_Volumen'].apply(lambda x: max(0, x))
+
+    # Filtrar únicamente filas que tengan algún excedente físico, donación o remanente
+    df_exc = df[(df['Excedente_Fisico'] > 0) | (df['Donado_Compensacion'] > 0) | (df['Remanente_Final'] > 0)].copy()
+    if df_exc.empty:
+        return pd.DataFrame(columns=[
+            "Flor", "Color", "Flor_Color", "Num_Variedades", "Variedades_Aportantes",
+            "Esquejes_Requeridos", "Total_Disponible", "Excedente_Total",
+            "Bandejas_112_Excedente", "Camas_Eq_Excedente",
+            "Compensado_Donado", "Remanente_Cuarto_Frio", "Bandejas_112_Remanente", "Camas_Eq_Remanente",
+            "Clasificacion_Agronomica", "Accion_Sugerida"
+        ])
+
+    rows = []
+    for (flor, color), g in df_exc.groupby(['Flor', 'Color']):
+        flor_str = str(flor).strip()
+        color_str = str(color).strip()
+        flor_color_label = f"{flor_str} - {color_str}"
+
+        req_tot = int(g['Esquejes_Requeridos'].sum())
+        disp_tot = int(g['Total_Disponible'].sum())
+        exc_tot = int(g['Excedente_Fisico'].sum())
+        comp_tot = int(g['Donado_Compensacion'].sum())
+        rem_tot = int(g['Remanente_Final'].sum())
+
+        ban_exc = calcular_bandejas_redondeadas(exc_tot)
+        cam_exc = round(exc_tot / float(ESQUEJES_POR_CAMA_ESTANDAR), 1)
+
+        ban_rem = calcular_bandejas_redondeadas(rem_tot)
+        cam_rem = round(rem_tot / float(ESQUEJES_POR_CAMA_ESTANDAR), 1)
+
+        # Variedades aportantes formateadas con su volumen
+        vars_info = []
+        for _, r in g.iterrows():
+            v_name = str(r['Variedad']).strip()
+            v_exc = int(r['Excedente_Fisico'])
+            v_rem = int(r['Remanente_Final'])
+            v_comp = int(r['Donado_Compensacion'])
+            if v_rem > 0:
+                vars_info.append(f"{v_name} (Saldo: +{v_rem:,d})")
+            elif v_comp > 0:
+                vars_info.append(f"{v_name} (Aportó: {v_comp:,d})")
+            elif v_exc > 0:
+                vars_info.append(f"{v_name} (+{v_exc:,d})")
+
+        var_desc = ", ".join(vars_info) if vars_info else str(len(g))
+
+        # Clasificación agronómica según regla de media cama
+        if rem_tot >= MINIMO_COMPENSACION_ESQUEJES:
+            clasif = "🟢 Excedente Viable (≥0.5 cam)"
+            accion = "Disponible para compensar faltantes de color o programar cama adicional"
+        elif rem_tot > UMBRAL_DIFERENCIA_DESPRECIABLE:
+            clasif = "🔵 Remanente Frío (<0.5 cam)"
+            accion = "Resguardar en cuarto frío como inventario (no parte camas)"
+        elif rem_tot > 0:
+            clasif = "⚪ En Tolerancia (≤500)"
+            accion = "Absorbido por variación de densidad en campo"
+        elif comp_tot > 0:
+            clasif = "🟡 100% Compensado"
+            accion = "Volumen donado para compensar faltantes compatibles"
+        else:
+            clasif = "🟢 Nivelado (100%)"
+            accion = "Volumen en equilibrio"
+
+        rows.append({
+            "Flor": flor_str,
+            "Color": color_str,
+            "Flor_Color": flor_color_label,
+            "Num_Variedades": len(g),
+            "Variedades_Aportantes": var_desc,
+            "Esquejes_Requeridos": req_tot,
+            "Total_Disponible": disp_tot,
+            "Excedente_Total": exc_tot,
+            "Bandejas_112_Excedente": ban_exc,
+            "Camas_Eq_Excedente": cam_exc,
+            "Compensado_Donado": comp_tot,
+            "Remanente_Cuarto_Frio": rem_tot,
+            "Bandejas_112_Remanente": ban_rem,
+            "Camas_Eq_Remanente": cam_rem,
+            "Clasificacion_Agronomica": clasif,
+            "Accion_Sugerida": accion
+        })
+
+    df_resumen = pd.DataFrame(rows)
+    if not df_resumen.empty:
+        df_resumen = df_resumen.sort_values(by=["Remanente_Cuarto_Frio", "Excedente_Total"], ascending=False).reset_index(drop=True)
+    return df_resumen
+
+
+def aprobar_ejecucion_y_descontar_inventario(
+    semana_enraizamiento: str,
+    df_ejecucion_semana: pd.DataFrame,
+    df_inventario_semana: pd.DataFrame
+) -> dict:
+    """
+    Aprueba la ejecución real de clavado y descuenta automáticamente los esquejes reales
+    del inventario disponible de la semana. Guarda el Remanente_Final y lo transfiere
+    automáticamente como Stock_Cuarto_Frio de la siguiente semana (+1w).
+    """
+    if df_inventario_semana is None or df_inventario_semana.empty:
+        return {"exito": False, "mensaje": "Inventario vacío"}
+    
+    try:
+        sem = str(semana_enraizamiento)
+        sem_sig = sumar_semanas_iso(sem, 1)
+
+        df_inv = df_inventario_semana.copy()
+        df_ej = df_ejecucion_semana.copy() if df_ejecucion_semana is not None else pd.DataFrame()
+
+        # Calcular esquejes reales clavados por variedad
+        ejec_por_var = {}
+        if not df_ej.empty and 'Variedad' in df_ej.columns and 'Esquejes_Reales' in df_ej.columns:
+            ejec_por_var = df_ej.groupby('Variedad')['Esquejes_Reales'].sum().to_dict()
+
+        for idx in df_inv.index:
+            var = str(df_inv.loc[idx, 'Variedad']).strip()
+            clavados = int(ejec_por_var.get(var, df_inv.loc[idx, 'Esquejes_Efectivos_Clavar']))
+            tot_disp = int(df_inv.loc[idx, 'Total_Disponible'])
+            rem_final = max(0, tot_disp - clavados)
+            df_inv.loc[idx, 'Esquejes_Clavados_Reales'] = clavados
+            df_inv.loc[idx, 'Remanente_Final'] = rem_final
+            df_inv.loc[idx, 'Estado_Aprobacion'] = "✅ Aprobado y Descontado"
+
+        # Guardar en archivo de inventario y cierre
+        guardar_inventario_recepcion(df_inv, semana_enraizamiento=sem)
+        
+        # Guardar en Cierre_Semanal_Enraizamiento.csv
+        if os.path.exists(ARCHIVO_CIERRE_ENRAIZAMIENTO):
+            try:
+                df_cierre = pd.read_csv(ARCHIVO_CIERRE_ENRAIZAMIENTO)
+                df_cierre['Semana_Enraizamiento'] = df_cierre['Semana_Enraizamiento'].astype(str)
+                df_otras = df_cierre[df_cierre['Semana_Enraizamiento'] != sem]
+                df_cierre_final = pd.concat([df_otras, df_inv], ignore_index=True)
+            except Exception:
+                df_cierre_final = df_inv
+        else:
+            df_cierre_final = df_inv
+        df_cierre_final.to_csv(ARCHIVO_CIERRE_ENRAIZAMIENTO, index=False, encoding='utf-8')
+
+        # Rollover a la siguiente semana: Si ya existe en Recepcion_Inventario_Esquejes.csv, actualizar Stock_Cuarto_Frio
+        if os.path.exists(ARCHIVO_INVENTARIO_RECEPCION):
+            try:
+                df_rec = pd.read_csv(ARCHIVO_INVENTARIO_RECEPCION)
+                df_rec['Semana_Enraizamiento'] = df_rec['Semana_Enraizamiento'].astype(str)
+                mask_sig = df_rec['Semana_Enraizamiento'] == str(sem_sig)
+                if mask_sig.any():
+                    remanentes_dict = df_inv.set_index('Variedad')['Remanente_Final'].to_dict()
+                    for idx_r in df_rec[mask_sig].index:
+                        v = str(df_rec.loc[idx_r, 'Variedad']).strip()
+                        if v in remanentes_dict:
+                            df_rec.loc[idx_r, 'Stock_Cuarto_Frio'] = remanentes_dict[v]
+                            df_rec.loc[idx_r, 'Total_Disponible'] = df_rec.loc[idx_r, 'Stock_Cuarto_Frio'] + df_rec.loc[idx_r, 'Esquejes_Recepcion'] - df_rec.loc[idx_r, 'Bajas_Descartes']
+                    df_rec.to_csv(ARCHIVO_INVENTARIO_RECEPCION, index=False, encoding='utf-8')
+            except Exception:
+                pass
+
+        tot_clav = int(df_inv['Esquejes_Clavados_Reales'].sum())
+        tot_rem = int(df_inv['Remanente_Final'].sum())
+        return {
+            "exito": True,
+            "total_clavado": tot_clav,
+            "total_remanente": tot_rem,
+            "semana_siguiente": sem_sig,
+            "df_inv_actualizado": df_inv
+        }
+    except Exception as e:
+        return {"exito": False, "mensaje": str(e)}
+
+
+def cargar_ejecucion_real(semana_enraizamiento: str = None) -> pd.DataFrame:
+    """
+    Carga los registros de ejecución real de clavado/enraizamiento desde Ejecucion_Real_Enraizamiento.csv.
+    Si se especifica semana_enraizamiento, filtra por esa semana y sanea tipos de datos.
+    """
+    cols_str = ["Semana_Enraizamiento", "Dia_Clavado", "Fecha_Clavado", "Flor", "Color", "Variedad", "Bloque_Destino", "Semana_Siembra_Proyectada", "Estado", "Observaciones"]
+    cols_int = ["Bandejas_Programadas", "Esquejes_Programados", "Bandejas_Reales", "Esquejes_Reales"]
+    cols_float = ["Camas_Reales", "Cumplimiento_Pct"]
+
+    if os.path.exists(ARCHIVO_EJECUCION_REAL):
+        try:
+            df = pd.read_csv(ARCHIVO_EJECUCION_REAL)
+            if df is not None and not df.empty:
+                df['Semana_Enraizamiento'] = df['Semana_Enraizamiento'].astype(str)
+                if semana_enraizamiento:
+                    df = df[df['Semana_Enraizamiento'] == str(semana_enraizamiento)].copy()
+                for c in cols_str:
+                    if c in df.columns:
+                        df[c] = df[c].fillna("").astype(str)
+                for c in cols_int:
+                    if c in df.columns:
+                        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
+                for c in cols_float:
+                    if c in df.columns:
+                        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0).astype(float)
+                return df
+        except Exception:
+            pass
+    return pd.DataFrame(columns=[
+        "Semana_Enraizamiento", "Dia_Clavado", "Fecha_Clavado", "Flor", "Color",
+        "Variedad", "Bloque_Destino", "Bandejas_Programadas", "Esquejes_Programados",
+        "Bandejas_Reales", "Esquejes_Reales", "Camas_Reales",
+        "Cumplimiento_Pct", "Semana_Siembra_Proyectada", "Estado", "Observaciones"
+    ])
+
+
+def guardar_ejecucion_real(df_ejecucion_semana: pd.DataFrame, semana_enraizamiento: str = None) -> bool:
+    """
+    Guarda o actualiza la ejecución real de enraizamiento en Ejecucion_Real_Enraizamiento.csv.
+    Mantiene intactos los registros de las demás semanas.
+    """
+    if df_ejecucion_semana is None or df_ejecucion_semana.empty:
+        return False
+    try:
+        df_copy = df_ejecucion_semana.copy()
+        sem = str(semana_enraizamiento) if semana_enraizamiento else str(df_copy['Semana_Enraizamiento'].iloc[0])
+        df_copy['Semana_Enraizamiento'] = sem
+        
+        if 'Bandejas_Reales' in df_copy.columns:
+            df_copy['Bandejas_Reales'] = pd.to_numeric(df_copy['Bandejas_Reales'], errors='coerce').fillna(0).astype(int)
+            df_copy['Esquejes_Reales'] = df_copy['Bandejas_Reales'] * CAVIDADES_POR_BANDEJA
+            
+        if 'Bandejas_Programadas' in df_copy.columns:
+            df_copy['Bandejas_Programadas'] = pd.to_numeric(df_copy['Bandejas_Programadas'], errors='coerce').fillna(0).astype(int)
+
+        if 'Esquejes_Programados' in df_copy.columns and 'Esquejes_Reales' in df_copy.columns:
+            df_copy['Esquejes_Programados'] = pd.to_numeric(df_copy['Esquejes_Programados'], errors='coerce').fillna(0).astype(int)
+            def calc_cumpl(row):
+                prog = row.get('Esquejes_Programados', 0)
+                real = row.get('Esquejes_Reales', 0)
+                return round((real / prog * 100.0), 1) if prog > 0 else 100.0
+            df_copy['Cumplimiento_Pct'] = df_copy.apply(calc_cumpl, axis=1)
+
+        if 'Semana_Siembra_Proyectada' not in df_copy.columns or df_copy['Semana_Siembra_Proyectada'].isna().any():
+            df_copy['Semana_Siembra_Proyectada'] = sumar_semanas_iso(sem, SEMANAS_ENRAIZAMIENTO)
+
+        if os.path.exists(ARCHIVO_EJECUCION_REAL):
+            try:
+                df_existente = pd.read_csv(ARCHIVO_EJECUCION_REAL)
+                df_existente['Semana_Enraizamiento'] = df_existente['Semana_Enraizamiento'].astype(str)
+                df_otras = df_existente[df_existente['Semana_Enraizamiento'] != sem]
+                df_final = pd.concat([df_otras, df_copy], ignore_index=True)
+            except Exception:
+                df_final = df_copy
+        else:
+            df_final = df_copy
+            
+        df_final.to_csv(ARCHIVO_EJECUCION_REAL, index=False, encoding='utf-8')
+        return True
+    except Exception as e:
+        print(f"Error al guardar ejecucion real: {e}")
+        return False
+
+
+def precargar_ejecucion_desde_plano(res_plano: dict) -> pd.DataFrame:
+    """
+    Genera la planilla base para captura del ejecutado real,
+    precargando los lotes programados desde el plano operativo semanal.
+    """
+    df_det = res_plano.get('df_plano_detallado', pd.DataFrame())
+    if df_det.empty:
+        return pd.DataFrame()
+
+    sem_e = str(res_plano.get('semana_enraizamiento', '202643'))
+    sem_s = str(res_plano.get('semana_siembra', sumar_semanas_iso(sem_e, SEMANAS_ENRAIZAMIENTO)))
+    today_str = date.today().strftime('%Y-%m-%d')
+
+    rows = []
+    for _, r in df_det.iterrows():
+        b_prog = int(r.get('Bandejas_112', 0))
+        e_prog = int(r.get('Esquejes', 0))
+        c_campo = float(r.get('Camas_Campo', 1.0))
+        
+        rows.append({
+            "Semana_Enraizamiento": sem_e,
+            "Dia_Clavado": str(r.get('Dia_Programado', 'Lunes')),
+            "Fecha_Clavado": today_str,
+            "Flor": str(r.get('Flor', 'Standard')),
+            "Color": str(r.get('Color', 'Mix')),
+            "Variedad": str(r.get('Variedad', '')),
+            "Bloque_Destino": str(r.get('Bloque_Destino', 'Bloque 01')),
+            "Bandejas_Programadas": b_prog,
+            "Esquejes_Programados": e_prog,
+            "Bandejas_Reales": 0,
+            "Esquejes_Reales": 0,
+            "Camas_Reales": 0.0,
+            "Cumplimiento_Pct": 0.0,
+            "Semana_Siembra_Proyectada": str(r.get('Semana_Siembra', sem_s)),
+            "Estado": "🔴 Pendiente",
+            "Observaciones": ""
+        })
+    return pd.DataFrame(rows)

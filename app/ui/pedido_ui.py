@@ -204,9 +204,9 @@ def render_pedido_module(db):
     st.header("🌱 Pedido de Material Vegetal (S&OP Propagación)")
     st.markdown("""
     Cálculo maestro del requerimiento de esquejes para propagación y proveedores.
-    - Se aplica un **5% adicional de seguridad** sobre la capacidad aprobada.
-    - Se redondea en camas físicas estándar de **5,200 esquejes**.
-    - El pedido se programa **4 semanas antes de la siembra**.
+    - El pedido se dimensiona estrictamente por la **capacidad física instalada de los bloques estimados donde se hará la siembra** (1,168 camas comerciales actuales / 1,120 camas post-S2648).
+    - Se redondea en camas físicas estándar según las dimensiones del bloque de destino (~5,200 esquejes/cama).
+    - El pedido se programa con **4 semanas de anticipación** a la siembra (`Sem_Pedido_MV = Sem_Siembra - 4`).
     """)
 
     # Gobernanza S&OP
@@ -250,7 +250,7 @@ def render_pedido_module(db):
     tab_firme, tab_extemporaneo, tab_cancelacion = st.tabs([
         "📦 Pedido Mensual Regular en Firme (+24 Semanas)", 
         "🚨 Pedidos Extemporáneos Reactivos (< 24 Semanas)",
-        "❌ Cancelación de Material Vegetal (Excedentes > 5%)"
+        "❌ Cancelación de Material Vegetal (Límite +10% y Reducción de Área)"
     ])
 
     # =========================================================================
@@ -386,7 +386,7 @@ def render_pedido_module(db):
                         if pd.isna(capacidad) or capacidad <= 0:
                             continue
 
-                        meta_tallos = capacidad * 1.05
+                        meta_tallos = capacidad
 
                         aprov, dia_pico, metodo = resolver_curva_variedad(
                             variedad, flor, color, dyn_lower, fc_stats, f_stats, global_stats
@@ -693,7 +693,7 @@ def render_pedido_module(db):
 
                             # Filtro estricto: Solo semanas ejecutables futuras
                             if sem_siguiente <= sem_ped < sem_firme_default:
-                                tallos_reponer = net_def * 1.05
+                                tallos_reponer = net_def
                                 plantas_nec = tallos_reponer / aprov
                                 camas = round(plantas_nec / 5200.0)
                                 if camas == 0 and plantas_nec > 0:
@@ -762,7 +762,7 @@ def render_pedido_module(db):
                             var_sel, flor_sel, col_sel, dyn_lower, fc_stats, f_stats, global_stats
                         )
                         esquejes_tot = camas_adhoc * 5200
-                        tallos_rep = int(round(esquejes_tot * aprov / 1.05))
+                        tallos_rep = int(round(esquejes_tot * aprov))
 
                         nuevo_reg = {
                             "Flor": flor_sel,
@@ -1005,7 +1005,7 @@ def render_pedido_module(db):
                                         })
 
                         if not cancel_records:
-                            st.success("🎉 No se detectaron sobrecupos netos por Grupo Color que superen el seguro del 5% en la ventana ejecutable.")
+                            st.success("🎉 No se detectaron sobrecupos netos por Grupo Color que superen el límite del +10% sobre Plan en la ventana ejecutable.")
                         else:
                             df_canc_result = pd.DataFrame(cancel_records)
                             st.session_state['df_cancelacion_raw'] = df_canc_result
@@ -1068,7 +1068,7 @@ def render_pedido_module(db):
                 with col_can3:
                     camas_a_canc = st.number_input("Camas a Cancelar (5,200 esquejes)", min_value=1, value=2, step=1, key="canc_camas")
                     motivo_canc = st.selectbox("Motivo de Cancelación", [
-                        "Producción en campo supera seguro del 5%",
+                        "Producción en campo supera límite del plan (+10%)",
                         "Cancelación de pedido comercial por cliente",
                         "Reducción de área/camas físicas disponibles",
                         "Excedente proyectado en curva de floración"
@@ -1184,7 +1184,7 @@ def render_pedido_module(db):
                 cols_mostrar = [
                     'Flor', 'Color', 'Variedad', 'Semana_Cosecha', 'Semana_Cancelacion',
                     'Gobernanza_Riesgo', 'Finca_Cumplimiento_%',
-                    'Tallos_Plan', 'Plan_con_Colchon_5%', 'Tallos_ForeCast', 'Excedente_Color_Neto', 'Excedente_Tallos',
+                    'Tallos_Plan', 'Plan_con_Colchon_10%', 'Tallos_ForeCast', 'Excedente_Color_Neto', 'Excedente_Tallos',
                     'Aprovechamiento_%', 'Camas_a_Cancelar', 'Esquejes_a_Cancelar', 'Motivo'
                 ]
                 cols_mostrar = [c for c in cols_mostrar if c in df_canc_mostrar.columns]

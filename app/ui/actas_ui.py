@@ -244,7 +244,7 @@ def render_actas_module(db: Session):
                 st.error("⚠️ No se puede aprobar la actualización hasta que todos los colores sumen exactamente 100%. Por favor corrige la tabla arriba y vuelve a Verificar Cambios.")
             else:
                 col1, col2 = st.columns(2)
-                if col1.button("✅ Aprobar y Actualizar Sistema", type="primary", use_container_width=True):
+                if col1.button("✅ Aprobar y Actualizar Sistema", type="primary", width="stretch"):
                     try:
                         for temp, df_comp in cambios_por_temporada.items():
                             db.query(DistribucionMVA).filter(
@@ -309,7 +309,7 @@ def render_actas_module(db: Session):
                         db.rollback()
                         st.error(f"Error al actualizar la base de datos: {e}")
                 
-                if col2.button("❌ Cancelar", use_container_width=True):
+                if col2.button("❌ Cancelar", width="stretch"):
                     st.session_state["show_mva_verification"] = False
                     st.rerun()
         else:

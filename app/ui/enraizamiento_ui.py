@@ -5,11 +5,23 @@ import math
 from datetime import date
 import altair as alt
 
+from app.models.models import Variedad
 from app.services.enraizamiento_service import (
     obtener_semanas_enraizamiento_disponibles,
     generar_plano_enraizamiento_semanal,
     generar_pdf_plano_enraizamiento,
     obtener_datos_comparativos_enraizamiento_y_camas,
+    calcular_bandejas_redondeadas,
+    cargar_inventario_recepcion,
+    guardar_inventario_recepcion,
+    cargar_inventario_lunes,
+    guardar_inventario_lunes,
+    precargar_inventario_desde_plano,
+    ejecutar_compensacion_inventario,
+    aprobar_ejecucion_y_descontar_inventario,
+    cargar_ejecucion_real,
+    guardar_ejecucion_real,
+    precargar_ejecucion_desde_plano,
     CAVIDADES_POR_BANDEJA,
     DIAS_PERMANENCIA_BANCO,
     SEMANAS_ENRAIZAMIENTO,
@@ -17,7 +29,14 @@ from app.services.enraizamiento_service import (
     TOTAL_HORAS_SEMANA_ESTANDAR,
     RENDIMIENTO_NORMAL,
     RENDIMIENTO_REFUERZO,
-    RENDIMIENTO_APRENDIZAJE
+    RENDIMIENTO_APRENDIZAJE,
+    UMBRAL_DIFERENCIA_DESPRECIABLE,
+    MINIMO_COMPENSACION_ESQUEJES,
+    ESQUEJES_MEDIA_CAMA,
+    ESQUEJES_POR_CAMA_ESTANDAR,
+    calcular_esquejes_efectivos_clavar,
+    calcular_estado_disponibilidad,
+    generar_resumen_excedentes_flor_color
 )
 
 def render_enraizamiento_module(db):
@@ -28,6 +47,25 @@ def render_enraizamiento_module(db):
     estandariza a **bandejas de 112 cavidades**, asigna el **bloque de campo tentativo** de destino,
     nivela la jornada laboral semanal (**{TOTAL_HORAS_SEMANA_ESTANDAR:.1f}h efectivas**, deduciendo 30 min de almuerzo L-V) y proyecta la **cosecha resultante**.
     """)
+
+    # Cargar catálogo oficial de variedades desde la base de datos (514 registros)
+    catalogo_vars_db = []
+    mapa_variedad_db = {}
+    lista_nombres_db = []
+    if db is not None:
+        try:
+            catalogo_vars_db = db.query(Variedad).order_by(Variedad.nombre).all()
+            for v in catalogo_vars_db:
+                if v.nombre and str(v.nombre).strip():
+                    nom = str(v.nombre).strip()
+                    lista_nombres_db.append(nom)
+                    mapa_variedad_db[nom.lower()] = (
+                        str(v.flor).strip() if v.flor else "Estándar",
+                        str(v.color).strip() if v.color else "Mix"
+                    )
+            lista_nombres_db = sorted(list(set(lista_nombres_db)))
+        except Exception as e:
+            print(f"Error al consultar catálogo de variedades: {e}")
 
     # 1. Cargar semanas disponibles en el Pedido Aprobado
     modo_plan = "aprobado"
@@ -65,7 +103,7 @@ def render_enraizamiento_module(db):
                 f"{opt['Total_Esquejes']:,d} esq.{tll_txt} ({opt['Total_Bandejas_112']:,d} bandejas 112{cam_txt})"
             )
 
-        col_sem, col_mod = st.columns([2.2, 1.0])
+        col_sem, col_mod, col_cap = st.columns([1.8, 1.0, 1.2])
         with col_sem:
             semana_sel = st.selectbox(
                 "Semana de enraizamiento a programar:",
@@ -83,6 +121,24 @@ def render_enraizamiento_module(db):
             )
             if "Base Histórica" in modelo_sel:
                 modo_plan = "plataforma_base"
+
+        with col_cap:
+            base_cap_sel = st.selectbox(
+                "Capacidad Camas Enraizamiento:",
+                options=[
+                    "🏗️ Capacidad Física por Bloque (m² y Densidad)",
+                    "🚜 Promedio Ponderado Finca (4,867 esq/cama)",
+                    "📦 Estándar Comercial Fijo (5,200 esq/cama)"
+                ],
+                index=0,
+                help="Ajusta el enraizamiento y bandejas a la capacidad física del bloque estimado de campo (m² de era x densidad agronómica) respetando la unidad comercial de 5,200 del pedido."
+            )
+            if "Capacidad Física" in base_cap_sel:
+                base_capacidad = "bloque"
+            elif "Promedio Ponderado" in base_cap_sel:
+                base_capacidad = "finca"
+            else:
+                base_capacidad = "std_5200"
 
         # Resumen Dinámico Adaptado a la Semana Seleccionada (sin textos defensivos)
         if semana_sel:
@@ -153,15 +209,38 @@ def render_enraizamiento_module(db):
         "rend_aprendizaje": rend_aprendizaje
     }
 
-    # Generar Plano Operativo Semanal
+    # 1. Recuperar inventario disponible / ajustado de la semana (si existe en memoria o disco)
     cod_sem = semana_sel['Semana_Enraizamiento']
+    session_key_inv = f"df_inv_recepcion_{cod_sem}"
+    version_inv_key = f"ver_inv_{cod_sem}"
+    adv_comp_key = f"adv_comp_{cod_sem}"
+
+    if version_inv_key not in st.session_state:
+        st.session_state[version_inv_key] = 0
+
+    df_inv_ajustado = None
+    if session_key_inv in st.session_state:
+        df_inv_ajustado = st.session_state[session_key_inv]
+    else:
+        df_guardado = cargar_inventario_recepcion(cod_sem)
+        if df_guardado is not None and not df_guardado.empty:
+            st.session_state[session_key_inv] = df_guardado
+            df_inv_ajustado = df_guardado
+
+    if df_inv_ajustado is not None and not df_inv_ajustado.empty:
+        df_inv_ajustado['Esquejes_Efectivos_Clavar'] = df_inv_ajustado.apply(calcular_esquejes_efectivos_clavar, axis=1)
+        st.session_state[session_key_inv] = df_inv_ajustado
+
+    # Generar Plano Operativo Semanal sincronizado con inventario real y compensaciones
     res_plano = generar_plano_enraizamiento_semanal(
         db, 
         cod_sem, 
         config_cuadrilla=config_cuadrilla,
         modo_plan=modo_plan,
         factor_expansion=factor_expansion,
-        correr_variedades=correr_variedades
+        correr_variedades=correr_variedades,
+        base_capacidad=base_capacidad,
+        df_inventario_ajustado=df_inv_ajustado
     )
 
     if "error" in res_plano:
@@ -181,15 +260,17 @@ def render_enraizamiento_module(db):
         )
         k1, k2, k3, k4, k5, k6 = st.columns(6)
         
+        tot_pedido = kpis.get('total_esquejes_pedido', kpis['total_esquejes'])
+        dif_ped = kpis['total_esquejes'] - tot_pedido
         k1.metric(
-            "Total Esquejes", 
+            "Esquejes Enraizamiento", 
             f"{kpis['total_esquejes']:,d}", 
-            f"{kpis['num_lotes']} lotes"
+            f"Pedido: {tot_pedido:,d} ({dif_ped:+,d})" if dif_ped != 0 else f"{kpis['num_lotes']} lotes"
         )
         k2.metric(
             "Bandejas (112 alv.)", 
             f"{kpis['total_bandejas']:,d}", 
-            f"112 cavidades"
+            f"Entero más cercano"
         )
         k3.metric(
             "Horas Requeridas", 
@@ -221,8 +302,10 @@ def render_enraizamiento_module(db):
         )
 
     # Pestañas de Trabajo
-    tab_plano, tab_mano_obra, tab_comparativa, tab_fenologia = st.tabs([
-        "📋 Plano Operativo Semanal (Detalle por Lote)",
+    tab_plano, tab_inventario, tab_ejecutado, tab_mano_obra, tab_comparativa, tab_fenologia = st.tabs([
+        "📋 Plano Operativo Semanal",
+        "📦 Inventario de Esquejes (Lunes)",
+        "✅ Registro de Ejecutado Real",
         "⏱️ Distribución Diaria y Cuadrilla",
         "📈 Proyección de Cosecha, ForeCast y Camas",
         "🌿 Ventana Fenológica y Parámetros"
@@ -239,16 +322,25 @@ def render_enraizamiento_module(db):
             "El archivo PDF exportado cuenta con casillas de ejecución real y firmas para control físico en invernadero."
         )
 
+        es_plano_ajustado = res_plano.get('es_ajustado_inventario', False)
+        if es_plano_ajustado:
+            st.success(
+                "⚡ **Plano Operativo Nivelado con Inventario Real de Cuarto Frío:** "
+                "Este plano y el PDF de impresión reflejan los esquejes efectivos a clavar, compensaciones por flor-color "
+                "(regla agronómica universal ≥0.5 camas) y extemporáneos. Los lotes reprogramados (+1w) figuran en 0 esquejes para esta semana."
+            )
+
         # Botones de Descarga en barra superior
         col_btn1, col_btn2, col_spacer = st.columns([1.5, 1.5, 3])
         
         # 1. Generar PDF oficial
         pdf_bytes = generar_pdf_plano_enraizamiento(res_plano)
+        label_pdf = "📥 Descargar Plano en PDF (Ajustado con Inventario)" if es_plano_ajustado else "📥 Descargar Plano en PDF (Listo para Operación)"
         with col_btn1:
             st.download_button(
-                label="📥 Descargar Plano en PDF (Listo para Operación)",
+                label=label_pdf,
                 data=pdf_bytes,
-                file_name=f"Plano_Enraizamiento_{res_plano['semana_enraizamiento_label']}.pdf",
+                file_name=f"Plano_Enraizamiento_{res_plano['semana_enraizamiento_label']}{'_Ajustado' if es_plano_ajustado else ''}.pdf",
                 mime="application/pdf",
                 help="Descarga el plano en formato horizontal con firmas y casillas de control para entregar a propagación."
             )
@@ -294,12 +386,21 @@ def render_enraizamiento_module(db):
 
         # Preparar columnas amigables
         df_display['Nivelado'] = df_display['Es_Nivelado'].apply(lambda x: "⚡ Nivelado" if x else "🎯 Tentativo")
+        if 'Capacidad_Cama_Bloque' in df_display.columns:
+            df_display['Capacidad_Cama_Bloque'] = df_display['Capacidad_Cama_Bloque'].apply(lambda x: f"{int(float(x)):,d}" if pd.notnull(x) and str(x).replace('.','',1).isdigit() else str(x))
         
-        columnas_orden = [
-            "Dia_Programado", "Flor", "Color", "Variedad", "Esquejes", 
-            "Bandejas_112", "Camas_Campo", "Bloque_Destino", 
-            "Semana_Siembra", "Semana_Cosecha", "Tallos_Esperados", "Nivelado"
-        ]
+        if es_plano_ajustado:
+            columnas_orden = [
+                "Dia_Programado", "Flor", "Color", "Variedad", "Esquejes_Pedido", "Compensacion_Volumen",
+                "Esquejes", "Bandejas_112", "Camas_Campo", "Bloque_Destino", "Semana_Siembra", "Semana_Cosecha",
+                "Estado_Disponibilidad", "Observaciones", "Nivelado"
+            ]
+        else:
+            columnas_orden = [
+                "Dia_Programado", "Flor", "Color", "Variedad", "Esquejes_Pedido", "Esquejes", 
+                "Bandejas_112", "Camas_Campo", "Bloque_Destino", "Capacidad_Cama_Bloque",
+                "Semana_Siembra", "Semana_Cosecha", "Tallos_Esperados", "Observaciones", "Nivelado"
+            ]
         columnas_orden = [c for c in columnas_orden if c in df_display.columns]
 
         # Fila de Totales
@@ -308,13 +409,18 @@ def render_enraizamiento_module(db):
             "Flor": "-",
             "Color": "-",
             "Variedad": f"{len(df_display)} Variedades",
+            "Esquejes_Pedido": int(df_display['Esquejes_Pedido'].sum()) if 'Esquejes_Pedido' in df_display.columns else int(df_display['Esquejes'].sum()),
+            "Compensacion_Volumen": int(df_display['Compensacion_Volumen'].sum()) if 'Compensacion_Volumen' in df_display.columns else 0,
             "Esquejes": int(df_display['Esquejes'].sum()),
             "Bandejas_112": int(df_display['Bandejas_112'].sum()),
             "Camas_Campo": round(float(df_display['Camas_Campo'].sum()), 1),
             "Bloque_Destino": "-",
+            "Capacidad_Cama_Bloque": "-",
             "Semana_Siembra": "-",
             "Semana_Cosecha": "-",
-            "Tallos_Esperados": int(df_display['Tallos_Esperados'].sum()),
+            "Tallos_Esperados": int(df_display['Tallos_Esperados'].sum()) if 'Tallos_Esperados' in df_display.columns else 0,
+            "Estado_Disponibilidad": "-",
+            "Observaciones": "-",
             "Nivelado": "-"
         }
         df_display_con_totales = pd.concat([df_display[columnas_orden], pd.DataFrame([row_totales])], ignore_index=True)
@@ -326,13 +432,18 @@ def render_enraizamiento_module(db):
                 "Flor": st.column_config.TextColumn("Flor"),
                 "Color": st.column_config.TextColumn("Color"),
                 "Variedad": st.column_config.TextColumn("Variedad"),
-                "Esquejes": st.column_config.NumberColumn("Esquejes", format="%d"),
-                "Bandejas_112": st.column_config.NumberColumn("Bandejas (112)", format="%d"),
+                "Esquejes_Pedido": st.column_config.NumberColumn("Esquejes Pedido (5,200)", format="%d", help="Esquejes del pedido comercial estándar"),
+                "Compensacion_Volumen": st.column_config.NumberColumn("Compensación (+/-)", format="%+d", help="Ajuste de volumen por compensación agronómica (≥0.5 camas)"),
+                "Esquejes": st.column_config.NumberColumn("Esquejes Enraizamiento", format="%d", help="Esquejes requeridos ajustados a capacidad física de cama del bloque"),
+                "Bandejas_112": st.column_config.NumberColumn("Bandejas (112)", format="%d", help="Bandejas de 112 cavidades ajustadas al entero más cercano (ej. 46.4 -> 46)"),
                 "Camas_Campo": st.column_config.NumberColumn("Camas Campo Eq.", format="%.1f"),
                 "Bloque_Destino": st.column_config.TextColumn("Bloque Destino"),
+                "Capacidad_Cama_Bloque": st.column_config.TextColumn("Cap. Cama Bloque"),
                 "Semana_Siembra": st.column_config.TextColumn("Sem. Siembra"),
                 "Semana_Cosecha": st.column_config.TextColumn("Sem. Cosecha"),
                 "Tallos_Esperados": st.column_config.NumberColumn("Tallos Esperados", format="%d"),
+                "Estado_Disponibilidad": st.column_config.TextColumn("Estado Inventario", help="Diagnóstico de inventario y ejecución de la variedad"),
+                "Observaciones": st.column_config.TextColumn("Observaciones", help="Espacio para registrar novedades de campo durante el proceso de enraizamiento"),
                 "Nivelado": st.column_config.TextColumn("Estado Programación")
             },
             hide_index=True,
@@ -340,8 +451,616 @@ def render_enraizamiento_module(db):
         )
 
         st.caption(
-            "💡 *Nota:* Los lotes marcados como **⚡ Nivelado** fueron redistribuidos inteligentemente desde su día tentativo "
-            "hacia días adyacentes para balancear la carga física diaria y evitar horas extras excesivas o cuellos de botella en nebulización."
+            "💡 **Cálculo Técnico:** El pedido comercial se realiza a razón estándar de 5,200 esquejes/cama. "
+            "Para enraizamiento operativo, los esquejes y bandejas se calculan sobre la **capacidad física instalada del bloque de destino** "
+            "(m² de era × densidad agronómica + margen de seguridad) y las bandejas de 112 cavidades se redondean **al entero más cercano** "
+            "(`round`, ej. 46.4 bandejas $\\to$ 46 bandejas, no 47), protegiendo la ocupación de banco sin sobrantes innecesarios."
+        )
+
+    # -------------------------------------------------------------
+    # -------------------------------------------------------------
+    # TAB 2: RECEPCIÓN DE ESQUEJES Y DISPONIBILIDAD EN CUARTO FRÍO
+    # -------------------------------------------------------------
+    with tab_inventario:
+        st.markdown("##### 📦 Recepción de Material Vegetal y Disponibilidad en Cuarto Frío")
+        st.caption(
+            "Cruce integral de requerimientos del plano frente al material vegetal recibido en recepción (semana previa) "
+            "y las existencias en cuarto frío. Permite conocer con total precisión el inventario real disponible, "
+            "compensar faltantes por compatibilidad y asegurar el cumplimiento del volumen programado."
+        )
+
+        session_key_inv = f"df_inv_recepcion_{cod_sem}"
+        version_inv_key = f"ver_inv_{cod_sem}"
+        adv_comp_key = f"adv_comp_{cod_sem}"
+
+        if version_inv_key not in st.session_state:
+            st.session_state[version_inv_key] = 0
+
+        if session_key_inv not in st.session_state:
+            df_guardado = cargar_inventario_recepcion(cod_sem)
+            if df_guardado is not None and not df_guardado.empty:
+                st.session_state[session_key_inv] = df_guardado
+            else:
+                st.session_state[session_key_inv] = precargar_inventario_desde_plano(res_plano)
+
+        df_inv_current = st.session_state[session_key_inv]
+
+        # Garantizar eliminación de columnas secundarias que saturan la interfaz
+        for c_drop in ["Proveedor", "Breeder"]:
+            if c_drop in df_inv_current.columns:
+                df_inv_current = df_inv_current.drop(columns=[c_drop])
+
+        # Sanitizar columnas y tipos de datos
+        cols_inv_str = ["Semana_Enraizamiento", "Fecha_Ingreso", "Flor", "Color", "Variedad", "Estado_Disponibilidad", "Estado_Aprobacion", "Observaciones"]
+        for c in cols_inv_str:
+            if c in df_inv_current.columns:
+                df_inv_current[c] = df_inv_current[c].fillna("").astype(str)
+
+        cols_inv_int = [
+            "Stock_Cuarto_Frio", "Esquejes_Recepcion", "Esquejes_Recibidos", "Bajas_Descartes",
+            "Total_Disponible", "Esquejes_Requeridos", "Diferencia_Recepcion", "Compensacion_Volumen",
+            "Reprogramado_Siguiente_Semana", "Esquejes_Efectivos_Clavar", "Diferencia_Saldo",
+            "Bandejas_112_Disponibles", "Esquejes_Clavados_Reales", "Remanente_Final"
+        ]
+        for c in cols_inv_int:
+            if c not in df_inv_current.columns:
+                df_inv_current[c] = 0
+            df_inv_current[c] = pd.to_numeric(df_inv_current[c], errors='coerce').fillna(0).astype(int)
+
+        # Recálculo exacto de totales y diferencias
+        df_inv_current['Esquejes_Recibidos'] = df_inv_current['Esquejes_Recepcion']
+        df_inv_current['Total_Disponible'] = df_inv_current['Stock_Cuarto_Frio'] + df_inv_current['Esquejes_Recepcion'] - df_inv_current['Bajas_Descartes']
+        df_inv_current['Diferencia_Recepcion'] = df_inv_current['Esquejes_Recepcion'] - df_inv_current['Esquejes_Requeridos']
+        df_inv_current['Esquejes_Efectivos_Clavar'] = df_inv_current.apply(calcular_esquejes_efectivos_clavar, axis=1)
+        df_inv_current['Diferencia_Saldo'] = df_inv_current['Total_Disponible'] - df_inv_current['Esquejes_Efectivos_Clavar']
+        df_inv_current['Remanente_Final'] = df_inv_current['Diferencia_Saldo'].apply(lambda x: max(0, x))
+        df_inv_current['Bandejas_112_Disponibles'] = df_inv_current['Esquejes_Efectivos_Clavar'].apply(calcular_bandejas_redondeadas)
+
+        df_inv_current['Estado_Disponibilidad'] = df_inv_current.apply(calcular_estado_disponibilidad, axis=1)
+
+        # Totales para métricas
+        tot_req = int(df_inv_current['Esquejes_Requeridos'].sum())
+        tot_stk = int(df_inv_current['Stock_Cuarto_Frio'].sum())
+        tot_rec = int(df_inv_current['Esquejes_Recepcion'].sum())
+        tot_baj = int(df_inv_current['Bajas_Descartes'].sum())
+        tot_disp = int(df_inv_current['Total_Disponible'].sum())
+        tot_clavar = int(df_inv_current['Esquejes_Efectivos_Clavar'].sum())
+        tot_reprog = int(df_inv_current['Reprogramado_Siguiente_Semana'].sum())
+        dif_saldo = tot_disp - tot_clavar
+        cob_disp_pct = (tot_disp / tot_req * 100.0) if tot_req > 0 else 100.0
+        tot_ban_clavar = int(df_inv_current['Bandejas_112_Disponibles'].sum())
+        tot_ban_req = sum([calcular_bandejas_redondeadas(x) for x in df_inv_current['Esquejes_Requeridos']])
+
+        # Banner de 5 Tarjetas KPIs
+        m_i1, m_i2, m_i3, m_i4, m_i5 = st.columns(5)
+        m_i1.metric("Requerido Plano", f"{tot_req:,d}", f"{tot_ban_req:,d} bandejas")
+        m_i2.metric("Stock Cuarto Frío", f"{tot_stk:,d}", "Remanente semana previa")
+        m_i3.metric("Recepción Esquejes", f"{tot_rec:,d}", f"Bajas: -{tot_baj:,d}" if tot_baj > 0 else "Sin bajas")
+        m_i4.metric("Total Disponible Físico", f"{tot_disp:,d}", f"{cob_disp_pct:.1f}% cobertura")
+        m_i5.metric("Esquejes a Clavar", f"{tot_clavar:,d}", f"{tot_ban_clavar:,d} bandejas (112)")
+
+        # Diagnóstico y Alertas de Compensación Jerárquica
+        advertencias_previas = st.session_state.get(adv_comp_key, [])
+        if advertencias_previas:
+            with st.expander("📋 **Detalle de Compensaciones y Ajustes Aplicados**", expanded=True):
+                for adv in advertencias_previas:
+                    t = adv.get('Tipo', 'info')
+                    m = adv.get('Mensaje', '')
+                    if t == 'success':
+                        st.success(m)
+                    elif t == 'warning':
+                        st.warning(m)
+                    elif t == 'error':
+                        st.error(m)
+                    else:
+                        st.info(m)
+
+        # Regla de Negocio: Alertar diferencias críticas > 500 esquejes (diferencias <= 500 son despreciables)
+        df_def_criticos = df_inv_current[
+            ((df_inv_current['Esquejes_Requeridos'] - df_inv_current['Total_Disponible']) > UMBRAL_DIFERENCIA_DESPRECIABLE) & 
+            (df_inv_current['Compensacion_Volumen'] == 0) & 
+            (df_inv_current['Reprogramado_Siguiente_Semana'] == 0)
+        ]
+        df_dif_menores = df_inv_current[
+            (df_inv_current['Esquejes_Requeridos'] > df_inv_current['Total_Disponible']) &
+            ((df_inv_current['Esquejes_Requeridos'] - df_inv_current['Total_Disponible']) <= UMBRAL_DIFERENCIA_DESPRECIABLE)
+        ]
+
+        if not df_def_criticos.empty:
+            st.error(
+                f"⚠️ **Atención:** Existen {len(df_def_criticos)} lote(s) con faltante crítico (>500 esquejes) frente al plano. "
+                "Haga clic en **🔄 Compensar Faltantes (Flor-Color / Color)** para nivelar el volumen con excedentes compatibles "
+                "(incluyendo variedades extemporáneas) o reprogramar el saldo no cubierto para la siguiente semana."
+            )
+        elif not df_dif_menores.empty:
+            st.info(
+                f"ℹ️ **Inventario en Rango Operativo:** {len(df_dif_menores)} lote(s) presentan variaciones menores (≤500 esquejes), "
+                "las cuales son despreciables y absorbidas por el margen de seguridad de la cama."
+            )
+        elif tot_reprog > UMBRAL_DIFERENCIA_DESPRECIABLE:
+            st.warning(
+                f"ℹ️ **Volumen Nivelado con Reprogramación:** Se reprogramaron **{tot_reprog:,d} esquejes** críticos para el plan de la siguiente semana (+1w). "
+                f"Las camas de esta semana se clavarán con **{tot_clavar:,d} esquejes ({tot_ban_clavar:,d} bandejas)**."
+            )
+        else:
+            st.success(
+                f"✅ **Inventario 100% Cubierto y Nivelado:** Se cuenta con material suficiente para ejecutar el programa operativo "
+                f"(**{tot_ban_clavar:,d} bandejas a clavar**)."
+            )
+
+        # Editor Interactivo Fluido con Catálogo Oficial en Lista Desplegable (SelectboxColumn)
+        ver_inv = st.session_state[version_inv_key]
+        editor_inv_key = f"editor_inv_{cod_sem}_{ver_inv}"
+
+        cols_orden_editor_inv = [
+            "Semana_Enraizamiento", "Fecha_Ingreso", "Flor", "Color", "Variedad",
+            "Stock_Cuarto_Frio", "Esquejes_Recepcion", "Bajas_Descartes",
+            "Total_Disponible", "Esquejes_Requeridos", "Compensacion_Volumen",
+            "Esquejes_Efectivos_Clavar", "Reprogramado_Siguiente_Semana",
+            "Diferencia_Saldo", "Bandejas_112_Disponibles",
+            "Estado_Disponibilidad", "Observaciones"
+        ]
+
+        # Consolidar opciones oficiales para lista desplegable
+        nombres_existentes_inv = set(df_inv_current['Variedad'].dropna().astype(str).str.strip())
+        lista_opciones_inv = sorted(list(set(lista_nombres_db) | {n for n in nombres_existentes_inv if n}))
+
+        df_inv_current = df_inv_current.reset_index(drop=True)
+        df_inv_editado = st.data_editor(
+            df_inv_current,
+            key=editor_inv_key,
+            column_order=cols_orden_editor_inv,
+            num_rows="dynamic",
+            width="stretch",
+            column_config={
+                "Semana_Enraizamiento": st.column_config.TextColumn("Semana", disabled=True),
+                "Fecha_Ingreso": st.column_config.TextColumn("Fecha"),
+                "Flor": st.column_config.TextColumn("Flor", disabled=True, help="Autocompletado automáticamente según el catálogo"),
+                "Color": st.column_config.TextColumn("Color", disabled=True, help="Autocompletado automáticamente según el catálogo"),
+                "Variedad": st.column_config.SelectboxColumn("Variedad", options=lista_opciones_inv, required=True, help="Seleccione variedad del catálogo oficial de base de datos (514 variedades)"),
+                "Stock_Cuarto_Frio": st.column_config.NumberColumn("Stock Cuarto Frío", min_value=0, step=100, format="%d", help="Existencias remanentes en cámara fría"),
+                "Esquejes_Recepcion": st.column_config.NumberColumn("Recepción Esquejes", min_value=0, step=100, format="%d", help="Material recibido en recepción de la semana previa (o pedido extemporáneo)"),
+                "Bajas_Descartes": st.column_config.NumberColumn("Bajas / Descartes", min_value=0, step=50, format="%d", help="Mermas, pérdidas de frío o descartes sanitarios"),
+                "Total_Disponible": st.column_config.NumberColumn("Total Disponible", disabled=True, format="%d", help="Stock Frío + Recepción - Bajas"),
+                "Esquejes_Requeridos": st.column_config.NumberColumn("Requerido Plano", disabled=True, format="%d", help="Demanda original del plano operativo (0 para extemporáneos)"),
+                "Compensacion_Volumen": st.column_config.NumberColumn("Compensación (+/-)", disabled=True, format="%+d", help="Volumen ajustado por compatibilidad de flor/color (mínimo media cama ≥2,500)"),
+                "Esquejes_Efectivos_Clavar": st.column_config.NumberColumn("Esquejes a Clavar", disabled=True, format="%d", help="Volumen final neto a clavar en banco"),
+                "Reprogramado_Siguiente_Semana": st.column_config.NumberColumn("Reprog. Sig. Sem.", disabled=True, format="%d", help="Faltante que no alcanza media cama o crítico no compensable que pasa al plan siguiente"),
+                "Diferencia_Saldo": st.column_config.NumberColumn("Saldo Remanente", disabled=True, format="%+d", help="Saldo final que queda en cuarto frío"),
+                "Bandejas_112_Disponibles": st.column_config.NumberColumn("Bandejas (112)", disabled=True, format="%d", help="Bandejas de 112 cavidades a clavar"),
+                "Estado_Disponibilidad": st.column_config.TextColumn("Estado / Diagnóstico", disabled=True),
+                "Observaciones": st.column_config.TextColumn("Observaciones / Novedad")
+            },
+            hide_index=True
+        )
+
+        # Función de procesamiento consolidado al terminar de digitar
+        def procesar_calculo_inventario(df_edit, sem_actual):
+            df = df_edit.copy()
+            today_str = date.today().strftime('%Y-%m-%d')
+            if 'Semana_Enraizamiento' in df.columns:
+                df['Semana_Enraizamiento'] = df['Semana_Enraizamiento'].fillna(str(sem_actual)).replace('', str(sem_actual))
+            else:
+                df['Semana_Enraizamiento'] = str(sem_actual)
+
+            if 'Fecha_Ingreso' in df.columns:
+                df['Fecha_Ingreso'] = df['Fecha_Ingreso'].fillna(today_str).replace('', today_str)
+
+            if 'Variedad' in df.columns:
+                df['Variedad'] = df['Variedad'].fillna("").astype(str)
+                df = df[df['Variedad'].str.strip() != ''].copy()
+
+            # Autocompletar Flor y Color desde el catálogo oficial de variedades
+            for idx in df.index:
+                v_nom = str(df.loc[idx, 'Variedad']).strip()
+                v_low = v_nom.lower()
+                if v_low in mapa_variedad_db:
+                    c_flor, c_col = mapa_variedad_db[v_low]
+                    df.loc[idx, 'Flor'] = c_flor
+                    df.loc[idx, 'Color'] = c_col
+                else:
+                    if not str(df.loc[idx, 'Flor']).strip():
+                        df.loc[idx, 'Flor'] = "Estándar"
+                    if not str(df.loc[idx, 'Color']).strip():
+                        df.loc[idx, 'Color'] = "Mix"
+
+            for cn in ["Stock_Cuarto_Frio", "Esquejes_Recepcion", "Bajas_Descartes", "Esquejes_Requeridos", "Compensacion_Volumen", "Reprogramado_Siguiente_Semana"]:
+                if cn not in df.columns:
+                    df[cn] = 0
+                df[cn] = pd.to_numeric(df[cn], errors='coerce').fillna(0).astype(int)
+
+            df['Total_Disponible'] = df['Stock_Cuarto_Frio'] + df['Esquejes_Recepcion'] - df['Bajas_Descartes']
+            df['Diferencia_Recepcion'] = df['Esquejes_Recepcion'] - df['Esquejes_Requeridos']
+            df['Esquejes_Efectivos_Clavar'] = df.apply(calcular_esquejes_efectivos_clavar, axis=1)
+            df['Diferencia_Saldo'] = df['Total_Disponible'] - df['Esquejes_Efectivos_Clavar']
+            df['Remanente_Final'] = df['Diferencia_Saldo'].apply(lambda x: max(0, x))
+            df['Bandejas_112_Disponibles'] = df['Esquejes_Efectivos_Clavar'].apply(calcular_bandejas_redondeadas)
+            df['Estado_Disponibilidad'] = df.apply(calcular_estado_disponibilidad, axis=1)
+            return df
+
+        # Barra de botones debajo del editor: los cálculos se realizan solo al presionar las acciones
+        b_col1, b_col2, b_col3, b_col4, b_col5 = st.columns([2.5, 2.8, 2.0, 1.8, 1.6])
+        with b_col1:
+            if st.button("🧮 Calcular Balances y Validar", key=f"btn_calc_inv_{cod_sem}", type="primary", help="Ejecuta el recálculo consolidado de disponibilidad, diferencias y bandejas de todas las filas ingresadas (incluyendo extemporáneos)."):
+                df_calc = procesar_calculo_inventario(df_inv_editado, cod_sem)
+                st.session_state[session_key_inv] = df_calc
+                st.session_state[version_inv_key] = ver_inv + 1
+                st.success("✅ Balances calculados exitosamente con autocompletado de catálogo.")
+                st.rerun()
+
+        with b_col2:
+            if st.button("🔄 Compensar Faltantes (Flor-Color / Color)", key=f"btn_comp_inv_{cod_sem}", help="Calcula y aplica compensación jerárquica con regla de mínimo media cama (≥2,500 esquejes / ≥23 bandejas): 1) Flor-Color, 2) Color (usando variedades programadas y extemporáneas), 3) Reprogramar si >500 esquejes sin fraccionar camas."):
+                df_calc = procesar_calculo_inventario(df_inv_editado, cod_sem)
+                df_comp, advertencias = ejecutar_compensacion_inventario(df_calc)
+                st.session_state[session_key_inv] = df_comp
+                st.session_state[adv_comp_key] = advertencias
+                guardar_inventario_recepcion(df_comp, semana_enraizamiento=cod_sem)
+                st.session_state[version_inv_key] = ver_inv + 1
+                st.success("✅ Compensación jerárquica ejecutada y balanceada respetando regla de mínimo media cama.")
+                st.rerun()
+
+        with b_col3:
+            if st.button("💾 Guardar Inventario", key=f"btn_guardar_inv_{cod_sem}", help="Calcula y guarda permanentemente este inventario en Recepcion_Inventario_Esquejes.csv"):
+                df_calc = procesar_calculo_inventario(df_inv_editado, cod_sem)
+                exito = guardar_inventario_recepcion(df_calc, semana_enraizamiento=cod_sem)
+                if exito:
+                    st.session_state[session_key_inv] = df_calc
+                    st.session_state[version_inv_key] = ver_inv + 1
+                    st.success("✅ Inventario calculado y guardado exitosamente.")
+                    st.rerun()
+                else:
+                    st.error("❌ Error al guardar el inventario.")
+
+        with b_col4:
+            if st.button("📥 Resetear desde Plano", key=f"btn_precargar_inv_{cod_sem}", help="Reinicia la planilla con los requerimientos exactos del plano operativo de la semana."):
+                df_nuevo = precargar_inventario_desde_plano(res_plano)
+                st.session_state[session_key_inv] = df_nuevo
+                if adv_comp_key in st.session_state:
+                    del st.session_state[adv_comp_key]
+                st.session_state[version_inv_key] = ver_inv + 1
+                st.rerun()
+
+        with b_col5:
+            excel_inv = io.BytesIO()
+            with pd.ExcelWriter(excel_inv, engine='openpyxl') as writer:
+                df_inv_editado.to_excel(writer, index=False, sheet_name='Recepcion_Inventario')
+            st.download_button(
+                label="📊 Excel",
+                data=excel_inv.getvalue(),
+                file_name=f"Recepcion_e_Inventario_{res_plano['semana_enraizamiento_label']}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"dl_inv_{cod_sem}"
+            )
+
+        # ----------------------------------------------------------------------
+        # CUADRO RESUMEN: DISPONIBILIDAD DE EXCEDENTES POR FLOR-COLOR
+        # ----------------------------------------------------------------------
+        df_resumen_exc = generar_resumen_excedentes_flor_color(df_inv_current)
+
+        st.markdown("---")
+        st.markdown("##### 🌸 Cuadro Resumen: Disponibilidad de Excedentes por Flor-Color")
+        st.caption(
+            "Consolida las combinaciones de Flor y Color que presentan excedente físico o saldo remanente. "
+            "Aplica la **regla agronómica de media cama (≥0.5 camas / ≥2,500 esquejes / ≥23 bandejas)** tanto para "
+            "determinar el material viable para compensación o siembra, como para resguardar saldos menores en cuarto frío "
+            "sin fraccionar camas con micro-lotes en campo."
+        )
+
+        if df_resumen_exc.empty:
+            st.info("ℹ️ No se registran excedentes físicos ni saldos remanentes en esta semana; el inventario se encuentra en equilibrio o con faltantes en seguimiento.")
+        else:
+            tot_exc_esq = int(df_resumen_exc['Excedente_Total'].sum())
+            tot_exc_ban = int(df_resumen_exc['Bandejas_112_Excedente'].sum())
+            tot_rem_esq = int(df_resumen_exc['Remanente_Cuarto_Frio'].sum())
+            tot_rem_ban = int(df_resumen_exc['Bandejas_112_Remanente'].sum())
+            tot_comp_don = int(df_resumen_exc['Compensado_Donado'].sum())
+
+            num_viables = len(df_resumen_exc[df_resumen_exc['Remanente_Cuarto_Frio'] >= MINIMO_COMPENSACION_ESQUEJES])
+            num_resguardo = len(df_resumen_exc[(df_resumen_exc['Remanente_Cuarto_Frio'] > UMBRAL_DIFERENCIA_DESPRECIABLE) & (df_resumen_exc['Remanente_Cuarto_Frio'] < MINIMO_COMPENSACION_ESQUEJES)])
+
+            # 4 Tarjetas de Control de Excedentes
+            rx1, rx2, rx3, rx4 = st.columns(4)
+            rx1.metric(
+                "Flor-Colores con Excedente",
+                f"{len(df_resumen_exc)} combinaciones",
+                f"{num_viables} viables (≥0.5 cam) | {num_resguardo} en frío (<0.5)"
+            )
+            rx2.metric(
+                "Excedente Físico Total",
+                f"{tot_exc_esq:,d} esquejes",
+                f"{tot_exc_ban:,d} bandejas (112) eq."
+            )
+            rx3.metric(
+                "Volumen Donado / Compensado",
+                f"{tot_comp_don:,d} esquejes",
+                "Asumido para cubrir faltantes"
+            )
+            rx4.metric(
+                "Remanente en Cuarto Frío",
+                f"{tot_rem_esq:,d} esquejes",
+                f"{tot_rem_ban:,d} bandejas ({tot_rem_esq/5200.0:.1f} camas eq.)",
+                delta_color="normal"
+            )
+
+            # Preparar tabla para visualización limpia
+            cols_resumen_visibles = [
+                "Flor", "Color", "Num_Variedades", "Variedades_Aportantes",
+                "Esquejes_Requeridos", "Total_Disponible", "Excedente_Total",
+                "Bandejas_112_Excedente", "Camas_Eq_Excedente",
+                "Compensado_Donado", "Remanente_Cuarto_Frio",
+                "Bandejas_112_Remanente", "Camas_Eq_Remanente",
+                "Clasificacion_Agronomica", "Accion_Sugerida"
+            ]
+
+            st.dataframe(
+                df_resumen_exc[cols_resumen_visibles],
+                column_config={
+                    "Flor": st.column_config.TextColumn("Tipo Flor"),
+                    "Color": st.column_config.TextColumn("Color"),
+                    "Num_Variedades": st.column_config.NumberColumn("N° Vars", format="%d"),
+                    "Variedades_Aportantes": st.column_config.TextColumn("Variedades con Excedente", help="Variedades específicas que aportan este excedente o saldo"),
+                    "Esquejes_Requeridos": st.column_config.NumberColumn("Req. Plano", format="%d"),
+                    "Total_Disponible": st.column_config.NumberColumn("Total Disp.", format="%d"),
+                    "Excedente_Total": st.column_config.NumberColumn("Excedente Bruto", format="%d", help="Total disponible menos requerimiento original"),
+                    "Bandejas_112_Excedente": st.column_config.NumberColumn("Bandejas Exc.", format="%d"),
+                    "Camas_Eq_Excedente": st.column_config.NumberColumn("Camas Exc. Eq.", format="%.1f"),
+                    "Compensado_Donado": st.column_config.NumberColumn("Donado Comp.", format="%d", help="Volumen transferido para cubrir déficits compatibles"),
+                    "Remanente_Cuarto_Frio": st.column_config.NumberColumn("Remanente en Frío", format="%d", help="Saldo final protegido en cuarto frío"),
+                    "Bandejas_112_Remanente": st.column_config.NumberColumn("Bandejas Frío (112)", format="%d"),
+                    "Camas_Eq_Remanente": st.column_config.NumberColumn("Camas Frío Eq.", format="%.1f"),
+                    "Clasificacion_Agronomica": st.column_config.TextColumn("Clasificación Agronómica"),
+                    "Accion_Sugerida": st.column_config.TextColumn("Destino / Acción Agronómica")
+                },
+                hide_index=True,
+                width="stretch"
+            )
+
+            # Botón de descarga de este resumen a Excel
+            excel_exc_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_exc_buffer, engine='openpyxl') as writer:
+                df_resumen_exc.to_excel(writer, index=False, sheet_name='Excedentes_Flor_Color')
+            st.download_button(
+                label="📊 Descargar Resumen de Excedentes en Excel",
+                data=excel_exc_buffer.getvalue(),
+                file_name=f"Resumen_Excedentes_FlorColor_{res_plano['semana_enraizamiento_label']}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"dl_exc_fc_{cod_sem}"
+            )
+
+    # -------------------------------------------------------------
+    # TAB 3: REGISTRO DE EJECUTADO REAL Y DESCUENTO DE INVENTARIO
+    # -------------------------------------------------------------
+    with tab_ejecutado:
+        st.markdown("##### ✅ Registro de Ejecutado Real de Enraizamiento (Clavado)")
+        st.caption(
+            "Captura el enraizamiento efectivamente clavado por lote y mesa. "
+            "**Flujo Oficial:** Al aprobar la ejecución de la semana, el sistema descuenta automáticamente los esquejes "
+            "reales del inventario disponible y transfiere el remanente de cuarto frío al inventario inicial de la siguiente semana."
+        )
+
+        session_key_ejec = f"df_ejec_real_{cod_sem}"
+        version_ejec_key = f"ver_ejec_{cod_sem}"
+        if version_ejec_key not in st.session_state:
+            st.session_state[version_ejec_key] = 0
+
+        if session_key_ejec not in st.session_state:
+            df_ejec_guardado = cargar_ejecucion_real(cod_sem)
+            if df_ejec_guardado is not None and not df_ejec_guardado.empty:
+                st.session_state[session_key_ejec] = df_ejec_guardado
+            else:
+                st.session_state[session_key_ejec] = precargar_ejecucion_desde_plano(res_plano)
+
+        df_ejec_current = st.session_state[session_key_ejec]
+
+        # Garantizar eliminación de columnas secundarias que saturan la interfaz
+        for c_drop in ["Operario", "Cuadrilla", "Cuadrilla_Clavado"]:
+            if c_drop in df_ejec_current.columns:
+                df_ejec_current = df_ejec_current.drop(columns=[c_drop])
+
+        # Sanitizar tipos de datos para st.data_editor (sin operario para evitar saturar)
+        cols_ejec_str = ["Semana_Enraizamiento", "Dia_Clavado", "Fecha_Clavado", "Flor", "Color", "Variedad", "Bloque_Destino", "Semana_Siembra_Proyectada", "Estado", "Observaciones"]
+        for c in cols_ejec_str:
+            if c in df_ejec_current.columns:
+                df_ejec_current[c] = df_ejec_current[c].fillna("").astype(str)
+        cols_ejec_int = ["Bandejas_Programadas", "Esquejes_Programados", "Bandejas_Reales", "Esquejes_Reales"]
+        for c in cols_ejec_int:
+            if c in df_ejec_current.columns:
+                df_ejec_current[c] = pd.to_numeric(df_ejec_current[c], errors='coerce').fillna(0).astype(int)
+        cols_ejec_flt = ["Camas_Reales", "Cumplimiento_Pct"]
+        for c in cols_ejec_flt:
+            if c in df_ejec_current.columns:
+                df_ejec_current[c] = pd.to_numeric(df_ejec_current[c], errors='coerce').fillna(0.0).astype(float)
+
+        # Recálculo derivado en df_ejec_current
+        df_ejec_current['Esquejes_Reales'] = df_ejec_current['Bandejas_Reales'] * CAVIDADES_POR_BANDEJA
+        def calc_cumpl_cur(row):
+            prog = row.get('Esquejes_Programados', 0)
+            real = row.get('Esquejes_Reales', 0)
+            return round((real / prog * 100.0), 1) if prog > 0 else 100.0
+        df_ejec_current['Cumplimiento_Pct'] = df_ejec_current.apply(calc_cumpl_cur, axis=1)
+
+        # KPIs de Ejecutado Real
+        tot_ban_prog = int(df_ejec_current['Bandejas_Programadas'].sum()) if not df_ejec_current.empty and 'Bandejas_Programadas' in df_ejec_current.columns else 0
+        tot_ban_real = int(df_ejec_current['Bandejas_Reales'].sum()) if not df_ejec_current.empty and 'Bandejas_Reales' in df_ejec_current.columns else 0
+        tot_esq_prog = int(df_ejec_current['Esquejes_Programados'].sum()) if not df_ejec_current.empty and 'Esquejes_Programados' in df_ejec_current.columns else 0
+        tot_esq_real = int(df_ejec_current['Esquejes_Reales'].sum()) if not df_ejec_current.empty and 'Esquejes_Reales' in df_ejec_current.columns else 0
+        tot_camas_real = float(df_ejec_current['Camas_Reales'].sum()) if not df_ejec_current.empty and 'Camas_Reales' in df_ejec_current.columns else 0.0
+        cumpl_global = (tot_esq_real / tot_esq_prog * 100.0) if tot_esq_prog > 0 else 100.0
+
+        me_1, me_2, me_3, me_4 = st.columns(4)
+        me_1.metric("Bandejas Reales Clavadas", f"{tot_ban_real:,d}", f"Prog: {tot_ban_prog:,d} ({tot_ban_real - tot_ban_prog:+,d})")
+        me_2.metric("Esquejes Reales Clavados", f"{tot_esq_real:,d}", f"{tot_esq_real - tot_esq_prog:+,d} vs prog", delta_color="normal" if tot_esq_real >= tot_esq_prog else "inverse")
+        me_3.metric("% Cumplimiento Clavado", f"{cumpl_global:.1f}%", "Meta: 100%")
+        me_4.metric("Camas para Siembra Campo", f"{tot_camas_real:.1f} cam.", f"Siembra {res_plano['semana_siembra_label']}")
+
+        # Editor Interactivo Reactivo (Limpio, sin columna Operario/Cuadrilla)
+        ver_ejec = st.session_state[version_ejec_key]
+        editor_ejec_key = f"editor_ejec_{cod_sem}_{ver_ejec}"
+
+        # Definir orden estricto de columnas visibles (sin Operario / Cuadrilla)
+        cols_orden_editor_ejec = [
+            "Semana_Enraizamiento", "Dia_Clavado", "Fecha_Clavado", "Flor", "Color",
+            "Variedad", "Bloque_Destino", "Bandejas_Programadas", "Esquejes_Programados",
+            "Bandejas_Reales", "Esquejes_Reales", "Camas_Reales", "Cumplimiento_Pct",
+            "Semana_Siembra_Proyectada", "Estado", "Observaciones"
+        ]
+
+        # Consolidar opciones oficiales de variedades para lista desplegable en ejecutado
+        nombres_existentes_ejec = set(df_ejec_current['Variedad'].dropna().astype(str).str.strip())
+        lista_opciones_ejec = sorted(list(set(lista_nombres_db) | {n for n in nombres_existentes_ejec if n}))
+
+        df_ejec_current = df_ejec_current.reset_index(drop=True)
+        df_ejec_editado = st.data_editor(
+            df_ejec_current,
+            key=editor_ejec_key,
+            column_order=cols_orden_editor_ejec,
+            num_rows="dynamic",
+            width="stretch",
+            column_config={
+                "Semana_Enraizamiento": st.column_config.TextColumn("Sem. Enr.", disabled=True),
+                "Dia_Clavado": st.column_config.SelectboxColumn("Día Clavado", options=["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"], required=True),
+                "Fecha_Clavado": st.column_config.TextColumn("Fecha"),
+                "Flor": st.column_config.TextColumn("Flor", disabled=True, help="Autocompletado automáticamente según el catálogo"),
+                "Color": st.column_config.TextColumn("Color", disabled=True, help="Autocompletado automáticamente según el catálogo"),
+                "Variedad": st.column_config.SelectboxColumn("Variedad", options=lista_opciones_ejec, required=True, help="Seleccione variedad del catálogo oficial (514 variedades)"),
+                "Bloque_Destino": st.column_config.TextColumn("Bloque Destino"),
+                "Bandejas_Programadas": st.column_config.NumberColumn("Bandejas Prog.", disabled=True, format="%d"),
+                "Esquejes_Programados": st.column_config.NumberColumn("Esquejes Prog.", disabled=True, format="%d"),
+                "Bandejas_Reales": st.column_config.NumberColumn("Bandejas Reales", min_value=0, step=1, format="%d", help="Bandejas de 112 cavidades clavadas realmente. Al modificar, ajusta esquejes reales automáticamente."),
+                "Esquejes_Reales": st.column_config.NumberColumn("Esquejes Reales", min_value=0, step=112, format="%d", help="Esquejes clavados realmente. Se recalcula automáticamente a partir de bandejas reales."),
+                "Camas_Reales": st.column_config.NumberColumn("Camas Siembra Eq.", format="%.2f", disabled=True),
+                "Cumplimiento_Pct": st.column_config.NumberColumn("% Cumpl.", disabled=True, format="%.1f%%"),
+                "Semana_Siembra_Proyectada": st.column_config.TextColumn("Sem. Siembra (+3w)", disabled=True),
+                "Estado": st.column_config.SelectboxColumn("Estado", options=["🟢 Clavado OK", "🟡 Parcial", "🔴 Pendiente", "⚪ Descartado"]),
+                "Observaciones": st.column_config.TextColumn("Observaciones / Descarte")
+            },
+            hide_index=True
+        )
+
+        # Función de procesamiento consolidado de clavado real
+        def procesar_calculo_ejecucion(df_edit, sem_actual):
+            df = df_edit.copy()
+            today_str = date.today().strftime('%Y-%m-%d')
+            if 'Semana_Enraizamiento' in df.columns:
+                df['Semana_Enraizamiento'] = df['Semana_Enraizamiento'].fillna(str(sem_actual)).replace('', str(sem_actual))
+            else:
+                df['Semana_Enraizamiento'] = str(sem_actual)
+
+            if 'Fecha_Clavado' in df.columns:
+                df['Fecha_Clavado'] = df['Fecha_Clavado'].fillna(today_str).replace('', today_str)
+            if 'Dia_Clavado' in df.columns:
+                df['Dia_Clavado'] = df['Dia_Clavado'].fillna("Lunes").replace('', "Lunes")
+
+            if 'Variedad' in df.columns:
+                df['Variedad'] = df['Variedad'].fillna("").astype(str)
+                df = df[df['Variedad'].str.strip() != ''].copy()
+
+            # Autocompletar Flor y Color desde el catálogo oficial
+            for idx in df.index:
+                v_nom = str(df.loc[idx, 'Variedad']).strip()
+                v_low = v_nom.lower()
+                if v_low in mapa_variedad_db:
+                    c_flor, c_col = mapa_variedad_db[v_low]
+                    df.loc[idx, 'Flor'] = c_flor
+                    df.loc[idx, 'Color'] = c_col
+                else:
+                    if not str(df.loc[idx, 'Flor']).strip():
+                        df.loc[idx, 'Flor'] = "Estándar"
+                    if not str(df.loc[idx, 'Color']).strip():
+                        df.loc[idx, 'Color'] = "Mix"
+
+            df['Bandejas_Reales'] = pd.to_numeric(df.get('Bandejas_Reales', 0), errors='coerce').fillna(0).astype(int)
+            df['Esquejes_Reales'] = df['Bandejas_Reales'] * CAVIDADES_POR_BANDEJA
+            df['Bandejas_Programadas'] = pd.to_numeric(df.get('Bandejas_Programadas', 0), errors='coerce').fillna(0).astype(int)
+            df['Esquejes_Programados'] = pd.to_numeric(df.get('Esquejes_Programados', 0), errors='coerce').fillna(0).astype(int)
+
+            def calc_cumpl_r(row):
+                prog = row.get('Esquejes_Programados', 0)
+                real = row.get('Esquejes_Reales', 0)
+                return round((real / prog * 100.0), 1) if prog > 0 else 100.0
+
+            df['Cumplimiento_Pct'] = df.apply(calc_cumpl_r, axis=1)
+            df['Camas_Reales'] = (df['Esquejes_Reales'] / 5081.0).round(2)
+
+            def calc_estado_auto(row):
+                c = row.get('Cumplimiento_Pct', 100.0)
+                est = str(row.get('Estado', ''))
+                if est in ["⚪ Descartado", "🔴 Pendiente"]:
+                    return est
+                if c >= 98.0:
+                    return "🟢 Clavado OK"
+                elif c > 0:
+                    return "🟡 Parcial"
+                else:
+                    return "🔴 Pendiente"
+            df['Estado'] = df.apply(calc_estado_auto, axis=1)
+            return df
+
+        # Botones de Acción debajo del editor: cálculo bajo demanda
+        be_col1, be_col2, be_col3, be_col4, be_col5 = st.columns([2.2, 2.8, 1.8, 1.8, 1.6])
+        with be_col1:
+            if st.button("🧮 Calcular Cumplimiento", key=f"btn_calc_ejec_{cod_sem}", help="Recalcula esquejes reales, % de cumplimiento y camas para todas las filas."):
+                df_calc_ej = procesar_calculo_ejecucion(df_ejec_editado, cod_sem)
+                st.session_state[session_key_ejec] = df_calc_ej
+                st.session_state[version_ejec_key] = ver_ejec + 1
+                st.success("✅ Cumplimiento recalculado exitosamente.")
+                st.rerun()
+
+        with be_col2:
+            if st.button("✅ Aprobar y Descontar de Inventario", key=f"btn_aprobar_ejec_{cod_sem}", type="primary", help="Aprueba formalmente la ejecución, descuenta los esquejes clavados del inventario y transfiere el remanente a la siguiente semana."):
+                df_calc_ej = procesar_calculo_ejecucion(df_ejec_editado, cod_sem)
+                res_aprob = aprobar_ejecucion_y_descontar_inventario(
+                    semana_enraizamiento=cod_sem,
+                    df_ejecucion_semana=df_calc_ej,
+                    df_inventario_semana=st.session_state.get(session_key_inv, df_inv_current)
+                )
+                if res_aprob.get("exito"):
+                    st.session_state[session_key_inv] = res_aprob["df_inv_actualizado"]
+                    st.session_state[session_key_ejec] = df_calc_ej
+                    st.session_state[version_inv_key] = st.session_state.get(version_inv_key, 0) + 1
+                    st.session_state[version_ejec_key] = ver_ejec + 1
+                    st.success(
+                        f"🎉 **¡Ejecución Aprobada y Descontada!** Se descontaron **{res_aprob['total_clavado']:,d} esquejes** del inventario. "
+                        f"Saldo remanente final: **{res_aprob['total_remanente']:,d} esquejes** transferidos automáticamente como stock inicial de cuarto frío para la **Semana S{res_aprob['semana_siguiente'][2:]}**."
+                    )
+                    st.rerun()
+                else:
+                    st.error(f"❌ Error al aprobar: {res_aprob.get('mensaje')}")
+
+        with be_col3:
+            if st.button("💾 Guardar Ejecutado", key=f"btn_guardar_ejec_{cod_sem}", help="Calcula y guarda los registros de clavado en Ejecucion_Real_Enraizamiento.csv."):
+                df_calc_ej = procesar_calculo_ejecucion(df_ejec_editado, cod_sem)
+                exito_ej = guardar_ejecucion_real(df_calc_ej, semana_enraizamiento=cod_sem)
+                if exito_ej:
+                    st.session_state[session_key_ejec] = df_calc_ej
+                    st.session_state[version_ejec_key] = ver_ejec + 1
+                    st.success("✅ Ejecutado real guardado.")
+                    st.rerun()
+                else:
+                    st.error("❌ Error al guardar el ejecutado real.")
+
+        with be_col4:
+            if st.button("📥 Resetear Lotes", key=f"btn_precargar_ejec_{cod_sem}", help="Reinicia la planilla con los lotes programados de la semana."):
+                df_nuevo_ej = precargar_ejecucion_desde_plano(res_plano)
+                st.session_state[session_key_ejec] = df_nuevo_ej
+                st.session_state[version_ejec_key] = ver_ejec + 1
+                st.rerun()
+
+        with be_col5:
+            excel_ej = io.BytesIO()
+            with pd.ExcelWriter(excel_ej, engine='openpyxl') as writer:
+                df_ejec_editado.to_excel(writer, index=False, sheet_name='Ejecutado_Real')
+            st.download_button(
+                label="📊 Excel",
+                data=excel_ej.getvalue(),
+                file_name=f"Ejecutado_Real_{res_plano['semana_enraizamiento_label']}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"dl_ejec_{cod_sem}"
+            )
+
+        st.info(
+            f"ℹ️ **Vínculo con el Módulo de Siembras:** Este registro alimenta directamente la disponibilidad de material vegetal vivo para la semana **{res_plano['semana_siembra_label']}** (fecha de trasplante a campo). "
+            f"Al ingresar al próximo Módulo de Siembras, el plano de campo tomará estas **{tot_ban_real:,d} bandejas ({tot_esq_real:,d} esquejes)** reales."
         )
 
     # -------------------------------------------------------------
@@ -618,6 +1337,14 @@ def render_enraizamiento_module(db):
             f"Compara el volumen semanal de esquejes a ingresar en propagación entre la plataforma y el pedido programado "
             f"para el ciclo productivo ({res_plano['temporada']})."
         )
+
+        dif_total_comp = int(df_comp['Diferencia_Esquejes'].abs().sum()) if not df_comp.empty and 'Diferencia_Esquejes' in df_comp.columns else 0
+        if dif_total_comp == 0 and not df_comp.empty:
+            st.info(
+                "💡 **Alineación 100% con Plataforma S&OP:** Ambas series coinciden exactamente semana a semana porque el pedido consolidado "
+                "de la plataforma (`PedidoConsolidado_master.xlsx`) ya fue actualizado mensualmente acorde a las curvas fenológicas de la finca. "
+                "La analítica confirma sincronía total entre lo aprobado en plataforma comercial y el requerimiento operativo de propagación."
+            )
 
         if not df_comp.empty:
             df_melt_enr = pd.melt(

@@ -113,8 +113,8 @@ def proyectar_cosecha_desde_mva(df_mrp, db, var_dict=None):
     
     records = []
     
-    # Calcular curvas dinámicamente con los parámetros óptimos (1.0 y 9)
-    curvas_dinamicas = calcular_curvas_dinamicas(alpha=1.0, num_ciclos=9)
+    # Calcular curvas dinámicamente con los parámetros óptimos calibrados
+    curvas_dinamicas = calcular_curvas_dinamicas(db=db)
     
     if var_dict is None:
         # Cargar todas las variedades en un diccionario para rapido acceso
@@ -219,25 +219,57 @@ def combinar_proyecciones_52_semanas(df_forecast, df_proyeccion):
     from app.services.forecast_service import isocalendar_to_string
     import pandas as pd
     
+    meta_cols = ['Flor', 'Color', 'Variedad']
+    
+    if (df_forecast is None or df_forecast.empty) and (df_proyeccion is None or df_proyeccion.empty):
+        return pd.DataFrame(columns=meta_cols)
+        
+    if df_forecast is None or df_forecast.empty:
+        df_p = df_proyeccion.copy()
+        for mc in meta_cols:
+            if mc not in df_p.columns:
+                df_p[mc] = ""
+        cols_mva = sorted([c for c in df_p.columns if str(c).startswith('202')])
+        return df_p[meta_cols + cols_mva[:52]]
+        
+    if df_proyeccion is None or df_proyeccion.empty:
+        df_f = df_forecast.copy()
+        for mc in meta_cols:
+            if mc not in df_f.columns:
+                df_f[mc] = ""
+        cols_fc = sorted([c for c in df_f.columns if str(c).startswith('202')])
+        return df_f[meta_cols + cols_fc[:52]]
+
+    # Asegurar columnas meta
+    df_f = df_forecast.copy()
+    for mc in meta_cols:
+        if mc not in df_f.columns:
+            df_f[mc] = ""
+            
+    df_p = df_proyeccion.copy()
+    for mc in meta_cols:
+        if mc not in df_p.columns:
+            df_p[mc] = ""
+    
     # 1. Preparar las 10 semanas de inventario vivo
     semana_actual = isocalendar_to_string(date.today())
-    cols_fc = sorted([c for c in df_forecast.columns if str(c).startswith('202')])
+    cols_fc = sorted([c for c in df_f.columns if str(c).startswith('202')])
     semanas_viv = [s for s in cols_fc if s >= semana_actual][:10]
     
-    df_viv = df_forecast[['Flor', 'Color', 'Variedad'] + semanas_viv].copy()
+    df_viv = df_f[meta_cols + semanas_viv].copy()
     
     # 2. Preparar el MVA a partir de la semana 11
-    cols_mva = sorted([c for c in df_proyeccion.columns if str(c).startswith('202')])
+    cols_mva = sorted([c for c in df_p.columns if str(c).startswith('202')])
     if semanas_viv:
         ultima_semana_viv = semanas_viv[-1]
         semanas_mva = [s for s in cols_mva if s > ultima_semana_viv]
     else:
         semanas_mva = cols_mva
         
-    df_mrp_futuro = df_proyeccion[['Flor', 'Color', 'Variedad'] + semanas_mva].copy()
+    df_mrp_futuro = df_p[meta_cols + semanas_mva].copy()
     
     # 3. Hacer un merge exterior (outer join) por Flor, Color, Variedad
-    df_consolidado = pd.merge(df_viv, df_mrp_futuro, on=['Flor', 'Color', 'Variedad'], how='outer')
+    df_consolidado = pd.merge(df_viv, df_mrp_futuro, on=meta_cols, how='outer')
     
     # Rellenar nulos con 0
     df_consolidado = df_consolidado.fillna(0)
@@ -246,7 +278,7 @@ def combinar_proyecciones_52_semanas(df_forecast, df_proyeccion):
     todas_las_semanas = sorted([c for c in df_consolidado.columns if str(c).startswith('202')])
     semanas_52 = todas_las_semanas[:52]
     
-    df_final = df_consolidado[['Flor', 'Color', 'Variedad'] + semanas_52]
+    df_final = df_consolidado[meta_cols + semanas_52]
     
     return df_final
 
@@ -509,7 +541,7 @@ def sincronizar_plan_detallado_desde_pedido_master(
 
     try:
         vars_db = {v.nombre.strip().lower(): v for v in db.query(Variedad).all()}
-        curvas_dyn = calcular_curvas_dinamicas(alpha=1.0, num_ciclos=9, db=db)
+        curvas_dyn = calcular_curvas_dinamicas(db=db)
 
         sems_mva_s = sorted([str(s).split('.')[0].strip() for s in df_mva['Semana_Siembra'].unique()])
         sem_min_mva = sems_mva_s[0] if sems_mva_s else '202638'

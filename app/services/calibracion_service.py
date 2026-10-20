@@ -124,6 +124,15 @@ def inicializar_o_cargar_datalake(db: Session) -> pd.DataFrame:
 
     if os.path.exists(DATALAKE_EJECUCIONES_FILE):
         try:
+            archivo_wf = "ReporteEstimadosVSRecepcion.xls"
+            if os.path.exists(archivo_wf):
+                mtime_wf = os.path.getmtime(archivo_wf)
+                mtime_dl = os.path.getmtime(DATALAKE_EJECUCIONES_FILE)
+                if mtime_wf > mtime_dl:
+                    df_wf = parse_webflowers_report(archivo_wf)
+                    df_dl, _, _ = integrar_reporte_al_datalake(df_wf, db)
+                    return df_dl
+
             df_dl = pd.read_csv(DATALAKE_EJECUCIONES_FILE)
             df_dl['Semana'] = df_dl['Semana'].astype(str)
             return df_dl
