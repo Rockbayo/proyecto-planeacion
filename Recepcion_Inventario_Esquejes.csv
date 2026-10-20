@@ -30,9 +30,9 @@ Semana_Enraizamiento,Fecha_Ingreso,Flor,Color,Variedad,Stock_Cuarto_Frio,Esqueje
 202643,2026-10-19,Cushion,Purple,Impulse,5200,0,-10508,5200,10508,-108,47,"🟢 Déficit Cubierto (-5,200)",Ingreso lote estándar,0.0,-5200.0,0.0,5308.0,0.0,Pendiente Aprobación
 202643,2026-10-19,Cushion,Purple,Lovato Purple,5200,0,-5254,5200,5254,-54,47,🟢 En Tolerancia (-54),Ingreso lote estándar,0.0,0.0,0.0,5254.0,0.0,Pendiente Aprobación
 202643,2026-10-19,Cushion,White,Sherpa,10300,0,-10508,10300,10508,-208,94,🟢 En Tolerancia (-208),Ingreso lote estándar,0.0,0.0,0.0,10508.0,0.0,Pendiente Aprobación
-202643,2026-10-19,Cushion,White,Skylie,116700,0,-89318,116700,89318,22182,844,"🟢 Excedente Aprovechado (+5,200 esq / 1.0 cam)",Ingreso lote estándar,0.0,5200.0,0.0,94518.0,22182.0,Pendiente Aprobación
-202643,2026-10-19,Cushion,Yellow,Champagne Yellow,8000,0,-5254,8000,5254,146,70,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,2600.0,0.0,7854.0,146.0,Pendiente Aprobación
-202643,2026-10-19,Cushion,Yellow,Hertz,9200,0,-5254,9200,5254,1346,70,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,2600.0,0.0,7854.0,1346.0,Pendiente Aprobación
+202643,2026-10-19,Cushion,White,Skylie,116700,0,-89318,116700,89318,27382,797,"🟢 Excedente Aprovechado (+5,200 esq / 1.0 cam)",Ingreso lote estándar,0.0,0.0,0.0,89318.0,27382.0,Pendiente Aprobación
+202643,2026-10-19,Cushion,Yellow,Champagne Yellow,8000,0,-5254,8000,5254,2746,47,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,0.0,0.0,5254.0,2746.0,Pendiente Aprobación
+202643,2026-10-19,Cushion,Yellow,Hertz,9200,0,-5254,9200,5254,3946,47,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,0.0,0.0,5254.0,3946.0,Pendiente Aprobación
 202643,2026-10-19,Daisy,Darkpink,Plasma,19200,0,-18389,19200,18389,811,164,"🔵 Remanente Frío (<0.5 cam, +811)",Ingreso lote estándar,0.0,0.0,0.0,18389.0,811.0,Pendiente Aprobación
 202643,2026-10-19,Daisy,Lavender,Melrose Dark,136900,0,-136604,136900,136604,296,1220,🟢 En Tolerancia (+296),Ingreso lote estándar,0.0,0.0,0.0,136604.0,296.0,Pendiente Aprobación
 202643,2026-10-19,Daisy,Novelty purple,Theron,15400,0,-15762,15400,15762,-362,141,🟢 En Tolerancia (-362),Ingreso lote estándar,0.0,0.0,0.0,15762.0,0.0,Pendiente Aprobación
@@ -42,12 +42,12 @@ Semana_Enraizamiento,Fecha_Ingreso,Flor,Color,Variedad,Stock_Cuarto_Frio,Esqueje
 202643,2026-10-19,Daisy,White,Alma,64200,0,-63048,64200,63048,1152,563,"🔵 Remanente Frío (<0.5 cam, +1,152)",Ingreso lote estándar,0.0,0.0,0.0,63048.0,1152.0,Pendiente Aprobación
 202643,2026-10-19,Daisy,White,Spartak,35100,0,-36778,35100,36778,0,313,"🔴 Reprog. Sig. Sem. (-1,678)",Ingreso lote estándar,0.0,0.0,1678.0,35100.0,0.0,Pendiente Aprobación
 202643,2026-10-19,Daisy,White,Top Dollar,103800,0,-105080,103800,105080,0,927,"🔴 Reprog. Sig. Sem. (-1,280)",Ingreso lote estándar,0.0,0.0,1280.0,103800.0,0.0,Pendiente Aprobación
-202643,2026-10-19,Daisy,Yellow,Celebrate,18700,0,-15762,18700,15762,338,164,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,2600.0,0.0,18362.0,338.0,Pendiente Aprobación
+202643,2026-10-19,Daisy,Yellow,Celebrate,18700,0,-15762,18700,15762,2938,141,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,0.0,0.0,15762.0,2938.0,Pendiente Aprobación
 202643,2026-10-19,Daisy,Yellow,Rio,16200,0,-15762,16200,15762,438,141,🟢 En Tolerancia (+438),Ingreso lote estándar,0.0,0.0,0.0,15762.0,438.0,Pendiente Aprobación
-202643,2026-10-19,Novelty,Green,Botani,71200,0,-42032,71200,42032,26568,398,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,2600.0,0.0,44632.0,26568.0,Pendiente Aprobación
+202643,2026-10-19,Novelty,Green,Botani,71200,0,-42032,71200,42032,29168,375,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,0.0,0.0,42032.0,29168.0,Pendiente Aprobación
 202643,2026-10-19,Novelty,Lavender,Delirock Pink,11800,0,-10508,11800,10508,1292,94,"🔵 Remanente Frío (<0.5 cam, +1,292)",Ingreso lote estándar,0.0,0.0,0.0,10508.0,1292.0,Pendiente Aprobación
-202643,2026-10-19,Novelty,Lavender,Roselle,40000,0,-29422,40000,29422,7978,286,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,2600.0,0.0,32022.0,7978.0,Pendiente Aprobación
+202643,2026-10-19,Novelty,Lavender,Roselle,40000,0,-29422,40000,29422,10578,263,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,0.0,0.0,29422.0,10578.0,Pendiente Aprobación
 202643,2026-10-19,Novelty,Purple,Delirock,23500,0,-15762,23500,15762,2538,187,"🟡 Asume Compensación (+5,200)",Ingreso lote estándar,0.0,5200.0,0.0,20962.0,2538.0,Pendiente Aprobación
-202643,2026-10-19,Novelty,White,Nivea,61100,0,-31524,61100,31524,26976,305,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,2600.0,0.0,34124.0,26976.0,Pendiente Aprobación
-202643,2026-10-19,Novelty,Yellow,Ringer,16200,0,-5254,16200,5254,8346,70,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,2600.0,0.0,7854.0,8346.0,Pendiente Aprobación
+202643,2026-10-19,Novelty,White,Nivea,61100,0,-31524,61100,31524,29576,281,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,0.0,0.0,31524.0,29576.0,Pendiente Aprobación
+202643,2026-10-19,Novelty,Yellow,Ringer,16200,0,-5254,16200,5254,10946,47,"🟢 Excedente Aprovechado (+2,600 esq / 0.5 cam)",Ingreso lote estándar,0.0,0.0,0.0,5254.0,10946.0,Pendiente Aprobación
 202643,2026-10-19,Cushion,Lavender,Whoopi,5200,0,0,5200,0,0,46,"🟣 Extemporáneo (5,200 a clavar)",,0.0,0.0,0.0,5200.0,0.0,Pendiente Aprobación
