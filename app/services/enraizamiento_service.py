@@ -1928,16 +1928,37 @@ def sincronizar_plan_detallado_con_inventario_ajustado(
     if df_inventario is None or df_inventario.empty or not os.path.exists(detailed_file):
         return False
     try:
-        sem_e = str(semana_enraizamiento).strip().replace("S", "")
+        def clean_sem_str(val):
+            if pd.isna(val) or str(val).lower() == 'nan':
+                return ""
+            try:
+                return str(int(float(val)))
+            except Exception:
+                return str(val).strip().replace('S', '')
+
+        sem_e = clean_sem_str(semana_enraizamiento)
         df_det = pd.read_csv(detailed_file)
-        if 'Semana_Enraizamiento' not in df_det.columns or 'Variedad' not in df_det.columns:
+        if 'Variedad' not in df_det.columns:
             return False
 
-        df_det['Sem_Enr_Clean'] = df_det['Semana_Enraizamiento'].astype(str).str.replace('S', '').str.strip()
+        if 'Semana_Enraizamiento' not in df_det.columns:
+            df_det['Semana_Enraizamiento'] = df_det['Semana_Siembra'].apply(lambda s: restar_semanas_iso(clean_sem_str(s), SEMANAS_ENRAIZAMIENTO))
+
+        # Sanitizar Sem_Enr_Clean convirtiendo floats '202643.0' a '202643'
+        df_det['Sem_Enr_Clean'] = df_det['Semana_Enraizamiento'].apply(clean_sem_str)
+        # Fallback a Sem_Siembra - 3 si Sem_Enr_Clean está vacío
+        mask_empty_enr = (df_det['Sem_Enr_Clean'] == "") & ('Semana_Siembra' in df_det.columns)
+        if mask_empty_enr.any():
+            df_det.loc[mask_empty_enr, 'Sem_Enr_Clean'] = df_det.loc[mask_empty_enr, 'Semana_Siembra'].apply(
+                lambda s: restar_semanas_iso(clean_sem_str(s), SEMANAS_ENRAIZAMIENTO)
+            )
+
         df_det['Var_Norm'] = df_det['Variedad'].astype(str).str.strip().str.lower()
 
+        new_rows = []
         for _, row in df_inventario.iterrows():
-            var_norm = str(row['Variedad']).strip().lower()
+            v_name = str(row['Variedad']).strip()
+            var_norm = v_name.lower()
             esq_efect = int(pd.to_numeric(row.get('Esquejes_Efectivos_Clavar', 0), errors='coerce') or 0)
             if esq_efect <= 0:
                 continue
@@ -1951,6 +1972,29 @@ def sincronizar_plan_detallado_con_inventario_ajustado(
                 df_det.at[idx, 'Camas'] = camas_calc
                 if 'Tallos_Esperados' in df_det.columns:
                     df_det.at[idx, 'Tallos_Esperados'] = int(round(esq_efect * aprov))
+            else:
+                # Variedad extemporánea o adicional del inventario
+                sem_s_calc = sumar_semanas_iso(sem_e, SEMANAS_ENRAIZAMIENTO)
+                sem_c_calc = sumar_semanas_iso(sem_s_calc, 11)
+                new_rows.append({
+                    'Flor': str(row.get('Flor', 'Standard')),
+                    'Color': str(row.get('Color', 'Mix')),
+                    'Variedad': v_name,
+                    'Semana_Cosecha': sem_c_calc,
+                    'Semana_Siembra': sem_s_calc,
+                    'Semana_Enraizamiento': sem_e,
+                    'Semana_Pedido_MV': restar_semanas_iso(sem_s_calc, 4),
+                    'Esquejes': esq_efect,
+                    'Camas': camas_calc,
+                    'Aprov_PP': 0.835,
+                    'Tallos_Esperados': int(round(esq_efect * 0.835)),
+                    'Dia_Pico': 77,
+                    'Dia_Inicio': 70
+                })
+
+        if new_rows:
+            df_new = pd.DataFrame(new_rows)
+            df_det = pd.concat([df_det, df_new], ignore_index=True)
 
         df_det = df_det.drop(columns=['Sem_Enr_Clean', 'Var_Norm'], errors='ignore')
         df_det.to_csv(detailed_file, index=False)

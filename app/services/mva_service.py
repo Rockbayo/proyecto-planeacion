@@ -748,6 +748,19 @@ def sincronizar_plan_detallado_desde_pedido_master(
         df_consolidado = df_consolidado[det_cols].sort_values(['Semana_Siembra', 'Flor', 'Color', 'Variedad']).reset_index(drop=True)
         df_consolidado.to_csv(detailed_filepath, index=False)
 
+        # 5. Re-aplicar automáticamente ajustes y absorciones de inventario registradas
+        try:
+            from app.services.enraizamiento_service import ARCHIVO_INVENTARIO_RECEPCION, sincronizar_plan_detallado_con_inventario_ajustado
+            if os.path.exists(ARCHIVO_INVENTARIO_RECEPCION):
+                df_inv_exist = pd.read_csv(ARCHIVO_INVENTARIO_RECEPCION)
+                if 'Semana_Enraizamiento' in df_inv_exist.columns:
+                    for sem_inv in df_inv_exist['Semana_Enraizamiento'].dropna().unique():
+                        df_sem_inv = df_inv_exist[df_inv_exist['Semana_Enraizamiento'] == sem_inv]
+                        sincronizar_plan_detallado_con_inventario_ajustado(str(sem_inv), df_sem_inv, detailed_file=detailed_filepath, db=db)
+                df_consolidado = pd.read_csv(detailed_filepath)
+        except Exception as e_reinv:
+            print(f"Aviso re-aplicando inventario en plan detallado: {e_reinv}")
+
         return df_consolidado
     finally:
         if close_db:
