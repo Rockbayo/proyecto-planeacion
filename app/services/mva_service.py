@@ -634,72 +634,6 @@ def sincronizar_pedido_consolidado_master(
         return {"status": "error", "message": f"Error al sincronizar Pedido Consolidado Maestro: {str(e)}"}
 
 
-def sincronizar_plan_aprobado_desde_detallado(
-    df_detallado: pd.DataFrame, 
-    plan_filepath: str = "Plan_Aprobado.csv", 
-    db = None
-) -> bool:
-    """
-    Sincroniza la columna 'Tallos a Producir (Capacidad)' de Plan_Aprobado.csv
-    con la cosecha proyectada del plan detallado factible (curvas biológicas MVA).
-    Recalcula la brecha: Diferencia = Tallos a Producir (Capacidad) - Tallos Pedidos (Plan).
-    Garantiza que la gráfica del ForeCast refleje de inmediato la curva nivelada ajustada al techo de 1,120 camas.
-    """
-    import os
-    if df_detallado is None or df_detallado.empty or not os.path.exists(plan_filepath):
-        return False
-    try:
-        from app.services.mva_service import proyectar_cosecha_desde_mva
-        close_db = False
-        if db is None:
-            from app.core.database import SessionLocal
-            db = SessionLocal()
-            close_db = True
-
-        df_det_copy = df_detallado.copy()
-        if 'Esquejes' in df_det_copy.columns:
-            df_det_copy['Esquejes_Para_Siembra (Final)'] = df_det_copy['Esquejes']
-
-        df_proy = proyectar_cosecha_desde_mva(df_det_copy, db)
-        if close_db:
-            db.close()
-
-        if df_proy.empty:
-            return False
-
-        meta_cols = ['Flor', 'Color', 'Variedad']
-        sem_cols = [c for c in df_proy.columns if str(c).startswith('202')]
-        df_melt = pd.melt(df_proy, id_vars=meta_cols, value_vars=sem_cols, var_name='Semana', value_name='Tallos_Cap')
-        df_melt['Var_Norm'] = df_melt['Variedad'].astype(str).str.strip().str.lower()
-        df_melt['Sem_Clean'] = df_melt['Semana'].astype(str).str.strip()
-
-        # Mapeo rápido (Var_Norm, Sem_Clean) -> Tallos_Cap
-        mapa_cap = df_melt.groupby(['Var_Norm', 'Sem_Clean'])['Tallos_Cap'].sum().to_dict()
-
-        df_plan = pd.read_csv(plan_filepath)
-        df_plan['Var_Norm'] = df_plan['Variedad'].astype(str).str.strip().str.lower()
-        df_plan['Sem_Clean'] = df_plan['Semana'].astype(str).apply(lambda v: str(int(float(v))) if pd.notna(v) and str(v).replace('.','',1).isdigit() else str(v).strip())
-
-        col_cap = 'Tallos a Producir (Capacidad)' if 'Tallos a Producir (Capacidad)' in df_plan.columns else 'Suma de Tallos'
-        col_ped = 'Tallos Pedidos (Plan)' if 'Tallos Pedidos (Plan)' in df_plan.columns else 'Suma de Tallos'
-
-        for idx, row in df_plan.iterrows():
-            key = (row['Var_Norm'], row['Sem_Clean'])
-            if key in mapa_cap:
-                cap_val = round(float(mapa_cap[key]))
-                df_plan.at[idx, col_cap] = cap_val
-                if 'Diferencia' in df_plan.columns:
-                    ped_val = float(df_plan.at[idx, col_ped]) if pd.notna(df_plan.at[idx, col_ped]) else 0.0
-                    df_plan.at[idx, 'Diferencia'] = cap_val - ped_val
-
-        df_plan = df_plan.drop(columns=['Var_Norm', 'Sem_Clean'], errors='ignore')
-        df_plan.to_csv(plan_filepath, index=False)
-        return True
-    except Exception as e:
-        print(f"Error en sincronizar_plan_aprobado_desde_detallado: {e}")
-        return False
-
-
 def sincronizar_plan_detallado_desde_pedido_master(
     master_filepath: str = "PedidoConsolidado_master.xlsx",
     detailed_filepath: str = "Plan_Aprobado_Detallado.csv",
@@ -712,6 +646,7 @@ def sincronizar_plan_detallado_desde_pedido_master(
     - Proyecta los tallos comerciales esperados según la fenología y curvas dinámicas calibradas de cada variedad.
     - Preserva semanas históricas anteriores a la primera semana del archivo maestro si existen.
     - Garantiza que los módulos de Enraizamiento, Ocupación y ForeCast operen en tiempo real con cifras vivas sin desfases.
+    - Mantiene 'Plan_Aprobado.csv' protegido e inalterado como la meta comercial aprobada por la empresa.
     """
     import os
     from datetime import date, timedelta
@@ -824,12 +759,6 @@ def sincronizar_plan_detallado_desde_pedido_master(
         det_cols = [c for c in det_cols if c in df_consolidado.columns]
         df_consolidado = df_consolidado[det_cols].sort_values(['Semana_Siembra', 'Flor', 'Color', 'Variedad']).reset_index(drop=True)
         df_consolidado.to_csv(detailed_filepath, index=False)
-
-        # 5. Sincronizar automáticamente Plan_Aprobado.csv con los tallos de capacidad nivelados
-        try:
-            sincronizar_plan_aprobado_desde_detallado(df_consolidado, db=db)
-        except Exception as e_pa:
-            print(f"Aviso sincronización Plan_Aprobado: {e_pa}")
 
         return df_consolidado
     finally:
