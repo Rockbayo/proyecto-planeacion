@@ -36,8 +36,11 @@ from app.services.enraizamiento_service import (
     ESQUEJES_POR_CAMA_ESTANDAR,
     calcular_esquejes_efectivos_clavar,
     calcular_estado_disponibilidad,
-    generar_resumen_excedentes_flor_color
+    generar_resumen_excedentes_flor_color,
+    calcular_semana_siembra_desde_enraizamiento,
+    absorber_excedentes_inventario_a_campo
 )
+from app.services.ocupacion_service import consultar_camas_disponibles_campo
 
 def render_enraizamiento_module(db):
     st.header("🌱 Plan y Plano Operativo de Enraizamiento")
@@ -539,6 +542,31 @@ def render_enraizamiento_module(db):
         m_i4.metric("Total Disponible Físico", f"{tot_disp:,d}", f"{cob_disp_pct:.1f}% cobertura")
         m_i5.metric("Esquejes a Clavar", f"{tot_clavar:,d}", f"{tot_ban_clavar:,d} bandejas (112)")
 
+        # Capacidad de Campo en Semana de Siembra (S+3)
+        sem_siem_iso = calcular_semana_siembra_desde_enraizamiento(cod_sem)
+        disp_campo_info = consultar_camas_disponibles_campo(sem_siem_iso, db=db)
+        c_lib_campo = disp_campo_info.get('camas_libres', 0.0)
+        c_ocup_campo = disp_campo_info.get('camas_ocupadas', 0.0)
+        techo_campo = disp_campo_info.get('capacidad_techo', 1120.0)
+        pct_campo = disp_campo_info.get('porcentaje_ocupacion', 0.0)
+
+        if c_lib_campo >= 0.5:
+            st.markdown(f"""
+            <div style="background-color: #f0fdf4; border-left: 4px solid #16a34a; padding: 10px 14px; border-radius: 6px; margin: 10px 0 14px 0; font-size: 13.5px;">
+                <span style="font-weight: 700; color: #15803d;">🌱 Capacidad de Campo en Siembra (Sem S{sem_siem_iso[2:]}):</span> 
+                <b>{c_ocup_campo:.0f} / {techo_campo:.0f} camas ocupadas ({pct_campo:.1f}%)</b> — 
+                <span style="color: #16a34a; font-weight: 600;">🟢 {c_lib_campo:.1f} camas libres disponibles para absorber excedentes a campo</span>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 10px 14px; border-radius: 6px; margin: 10px 0 14px 0; font-size: 13.5px;">
+                <span style="font-weight: 700; color: #b91c1c;">🌱 Capacidad de Campo en Siembra (Sem S{sem_siem_iso[2:]}):</span> 
+                <b>{c_ocup_campo:.0f} / {techo_campo:.0f} camas ocupadas ({pct_campo:.1f}%)</b> — 
+                <span style="color: #dc2626; font-weight: 600;">🔴 Pico al 100% de capacidad: Excedentes se resguardan en frío para evitar sobrecupo</span>
+            </div>
+            """, unsafe_allow_html=True)
+
         # Diagnóstico y Alertas de Compensación Jerárquica
         advertencias_previas = st.session_state.get(adv_comp_key, [])
         if advertencias_previas:
@@ -689,14 +717,14 @@ def render_enraizamiento_module(db):
                 st.rerun()
 
         with b_col2:
-            if st.button("🔄 Compensar Faltantes (Flor-Color / Color)", key=f"btn_comp_inv_{cod_sem}", help="Calcula y aplica compensación jerárquica con regla de mínimo media cama (≥2,500 esquejes / ≥23 bandejas): 1) Flor-Color, 2) Color (usando variedades programadas y extemporáneas), 3) Reprogramar si >500 esquejes sin fraccionar camas."):
+            if st.button("🔄 Compensar y Aprovechar Excedentes", key=f"btn_comp_inv_{cod_sem}", help="1) Compensa faltantes jerárquicamente (Flor-Color / Color), 2) Si hay espacio en campo (≤1,120 camas), absorbe excedentes físicos viables a siembra dentro del +10% de mercado."):
                 df_calc = procesar_calculo_inventario(df_inv_editado, cod_sem)
-                df_comp, advertencias = ejecutar_compensacion_inventario(df_calc)
+                df_comp, advertencias = ejecutar_compensacion_inventario(df_calc, semana_enraizamiento=cod_sem, absorber_excedentes_a_campo=True, db=db)
                 st.session_state[session_key_inv] = df_comp
                 st.session_state[adv_comp_key] = advertencias
                 guardar_inventario_recepcion(df_comp, semana_enraizamiento=cod_sem)
                 st.session_state[version_inv_key] = ver_inv + 1
-                st.success("✅ Compensación jerárquica ejecutada y balanceada respetando regla de mínimo media cama.")
+                st.success("✅ Compensación jerárquica y absorción de excedentes a campo ejecutada y sincronizada.")
                 st.rerun()
 
         with b_col3:

@@ -14,7 +14,10 @@ from app.services.mva_service import (
 from app.services.ocupacion_service import (
     resolver_bloque_tentativo, 
     calcular_ocupacion_semanal_52w,
+    consultar_camas_disponibles_campo,
     CAMAS_COMERCIALES_TOTALES,
+    CAMAS_COMERCIALES_REDUCIDAS,
+    SEMANA_CORTE_REDUCCION_AREA,
     obtener_dimensiones_camas_bloques
 )
 
@@ -1513,6 +1516,12 @@ def calcular_estado_disponibilidad(row: dict | pd.Series) -> str:
     req = int(pd.to_numeric(row.get('Esquejes_Requeridos', 0), errors='coerce') or 0)
     clavar = int(pd.to_numeric(row.get('Esquejes_Efectivos_Clavar', 0), errors='coerce') or 0)
 
+    curr_est = str(row.get('Estado_Disponibilidad', ''))
+    if "Excedente Aprovechado" in curr_est:
+        return curr_est
+    if "Excedente en Frío" in curr_est:
+        return curr_est
+
     # Variedad extemporánea (no estaba en el plano maestro semanal, req == 0)
     if req == 0:
         if comp > 0:
@@ -1710,6 +1719,12 @@ def guardar_inventario_recepcion(df_inventario_semana: pd.DataFrame, semana_enra
                 df_final = df_to_save
             df_final.to_csv(arch, index=False, encoding='utf-8')
 
+        # Sincronizar automáticamente con Plan_Aprobado_Detallado.csv para mantener alineada la proyección de 52 semanas
+        try:
+            sincronizar_plan_detallado_con_inventario_ajustado(sem, df_to_save)
+        except Exception:
+            pass
+
         return True
     except Exception as e:
         print(f"Error al guardar inventario recepción: {e}")
@@ -1794,7 +1809,163 @@ def precargar_inventario_desde_plano(res_plano: dict) -> pd.DataFrame:
     return grp[cols_order]
 
 
-def ejecutar_compensacion_inventario(df_inventario: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
+def calcular_semana_siembra_desde_enraizamiento(sem_enraizamiento_str: str) -> str:
+    """
+    Calcula la semana ISO de siembra a campo a partir de la semana de enraizamiento.
+    Regla agronómica: 3 semanas bajo cámara de nebulización / bancos (Sem_Siembra = Sem_Enraizamiento + 3).
+    """
+    try:
+        s_clean = str(sem_enraizamiento_str).replace('S', '').strip()
+        y = int(s_clean[:4])
+        w = int(s_clean[4:])
+        dt = date.fromisocalendar(y, w, 1) + timedelta(weeks=3)
+        return isocalendar_to_string(dt)
+    except Exception:
+        return str(sem_enraizamiento_str)
+
+
+def absorber_excedentes_inventario_a_campo(
+    df_inventario: pd.DataFrame,
+    semana_enraizamiento: str,
+    db: Session = None,
+    max_exceso_pct: float = 0.10
+) -> tuple[pd.DataFrame, list[dict]]:
+    """
+    Evalúa los excedentes de inventario físico disponibles en cuarto frío / recepción.
+    Si alcanzan el mínimo agronómico de media cama (≥2,500 esquejes / ≥23 bandejas de 112)
+    y existe espacio libre en campo en la semana de siembra (S+3) sin sobrepasar el techo de
+    1,120 camas comerciales post-reducción (ni exceder el límite de mercado de +10% sobre el plan aprobado),
+    incorpora ese excedente al plan de enraizamiento para ser sembrado y cosechado.
+    """
+    if df_inventario is None or df_inventario.empty:
+        return df_inventario, []
+
+    df = df_inventario.copy()
+    advertencias = []
+
+    sem_siembra = calcular_semana_siembra_desde_enraizamiento(semana_enraizamiento)
+    disp_campo = consultar_camas_disponibles_campo(sem_siembra, db=db)
+    camas_libres_disponibles = float(disp_campo.get('camas_libres', 0.0))
+    cap_techo = float(disp_campo.get('capacidad_techo', 1120.0))
+    camas_ocupadas = float(disp_campo.get('camas_ocupadas', 0.0))
+    es_pico_saturado = bool(disp_campo.get('es_pico_saturado', False))
+
+    for idx in df.index:
+        var = str(df.loc[idx, 'Variedad']).strip()
+        disp = int(pd.to_numeric(df.loc[idx, 'Total_Disponible'], errors='coerce') or 0)
+        efect = int(pd.to_numeric(df.loc[idx, 'Esquejes_Efectivos_Clavar'], errors='coerce') or 0)
+        req = int(pd.to_numeric(df.loc[idx, 'Esquejes_Requeridos'], errors='coerce') or 0)
+
+        saldo_remanente = disp - efect
+        if saldo_remanente < MINIMO_COMPENSACION_ESQUEJES:
+            continue
+
+        # Si el campo está saturado al 100% en pico
+        if es_pico_saturado or camas_libres_disponibles < 0.5:
+            advertencias.append({
+                'Nivel': '🔵 Excedente en Frío (Campo al 100%)',
+                'Tipo': 'info',
+                'Mensaje': (
+                    f"[{var}] tiene +{saldo_remanente:,d} esquejes de excedente ({saldo_remanente/5200.0:.1f} camas), "
+                    f"pero el campo en Sem {sem_siembra} está al 100% de capacidad ({camas_ocupadas:.0f}/{cap_techo:.0f} camas). "
+                    f"Se resguarda en cuarto frío para proteger el techo de la finca y evitar sobrecupo."
+                )
+            })
+            continue
+
+        # Verificar límite de mercado (+10% del requerimiento comercial)
+        if req > 0:
+            tope_mercado = int(round(req * max_exceso_pct))
+            tope_adicional = max(2600, tope_mercado)
+        else:
+            tope_adicional = 5200  # Variedad extemporánea: 1 cama completa si hay espacio
+
+        absorbible = min(saldo_remanente, tope_adicional)
+        if absorbible >= 5200:
+            absorbible = (absorbible // 5200) * 5200
+        elif absorbible >= 2600:
+            absorbible = 2600
+        else:
+            absorbible = 0
+
+        if absorbible >= MINIMO_COMPENSACION_ESQUEJES:
+            camas_add = round(absorbible / 5200.0, 1)
+            if camas_add <= camas_libres_disponibles:
+                # Absorber a siembra efectiva
+                df.loc[idx, 'Compensacion_Volumen'] = int(df.loc[idx, 'Compensacion_Volumen']) + absorbible
+                df.loc[idx, 'Esquejes_Efectivos_Clavar'] = efect + absorbible
+                df.loc[idx, 'Bandejas_112_Disponibles'] = calcular_bandejas_redondeadas(df.loc[idx, 'Esquejes_Efectivos_Clavar'])
+                df.loc[idx, 'Diferencia_Saldo'] = df.loc[idx, 'Total_Disponible'] - df.loc[idx, 'Esquejes_Efectivos_Clavar']
+                df.loc[idx, 'Remanente_Final'] = max(0, df.loc[idx, 'Diferencia_Saldo'])
+                df.loc[idx, 'Estado_Disponibilidad'] = f"🟢 Excedente Aprovechado (+{absorbible:,d} esq / {camas_add:.1f} cam)"
+
+                camas_libres_disponibles = max(0.0, round(camas_libres_disponibles - camas_add, 1))
+                advertencias.append({
+                    'Nivel': '🟢 Excedente Aprovechado',
+                    'Tipo': 'success',
+                    'Mensaje': (
+                        f"Excedente de inventario de {absorbible:,d} esquejes ({camas_add:.1f} camas / {calcular_bandejas_redondeadas(absorbible):,d} bandejas) "
+                        f"en [{var}] agregado al plan de enraizamiento para siembra en Sem {sem_siembra}. "
+                        f"Espacio libre restante en campo: {camas_libres_disponibles:.1f} camas (Techo: {cap_techo:.0f} camas)."
+                    )
+                })
+
+    return df, advertencias
+
+
+def sincronizar_plan_detallado_con_inventario_ajustado(
+    semana_enraizamiento: str,
+    df_inventario: pd.DataFrame,
+    detailed_file: str = "Plan_Aprobado_Detallado.csv",
+    db = None
+) -> bool:
+    """
+    Sincroniza Plan_Aprobado_Detallado.csv con los esquejes efectivos a clavar y camas
+    resultantes del ajuste de inventario y absorción de excedentes para esa semana.
+    Asegura que los módulos de Siembras, ForeCast a 52 semanas y Ocupación operen
+    con la información 100% viva y unificada.
+    """
+    if df_inventario is None or df_inventario.empty or not os.path.exists(detailed_file):
+        return False
+    try:
+        sem_e = str(semana_enraizamiento).strip().replace("S", "")
+        df_det = pd.read_csv(detailed_file)
+        if 'Semana_Enraizamiento' not in df_det.columns or 'Variedad' not in df_det.columns:
+            return False
+
+        df_det['Sem_Enr_Clean'] = df_det['Semana_Enraizamiento'].astype(str).str.replace('S', '').str.strip()
+        df_det['Var_Norm'] = df_det['Variedad'].astype(str).str.strip().str.lower()
+
+        for _, row in df_inventario.iterrows():
+            var_norm = str(row['Variedad']).strip().lower()
+            esq_efect = int(pd.to_numeric(row.get('Esquejes_Efectivos_Clavar', 0), errors='coerce') or 0)
+            if esq_efect <= 0:
+                continue
+
+            camas_calc = round(esq_efect / 5200.0, 1)
+            mask = (df_det['Sem_Enr_Clean'] == sem_e) & (df_det['Var_Norm'] == var_norm)
+            if mask.any():
+                idx = df_det[mask].index[0]
+                aprov = float(df_det.at[idx, 'Aprov_PP']) if 'Aprov_PP' in df_det.columns and pd.notna(df_det.at[idx, 'Aprov_PP']) else 0.835
+                df_det.at[idx, 'Esquejes'] = esq_efect
+                df_det.at[idx, 'Camas'] = camas_calc
+                if 'Tallos_Esperados' in df_det.columns:
+                    df_det.at[idx, 'Tallos_Esperados'] = int(round(esq_efect * aprov))
+
+        df_det = df_det.drop(columns=['Sem_Enr_Clean', 'Var_Norm'], errors='ignore')
+        df_det.to_csv(detailed_file, index=False)
+        return True
+    except Exception as e:
+        print(f"Error sincronizando Plan_Aprobado_Detallado con inventario: {e}")
+        return False
+
+
+def ejecutar_compensacion_inventario(
+    df_inventario: pd.DataFrame,
+    semana_enraizamiento: str = None,
+    absorber_excedentes_a_campo: bool = True,
+    db: Session = None
+) -> tuple[pd.DataFrame, list[dict]]:
     """
     Aplica la regla de compensación jerárquica agronómica de la empresa:
     1. Regla Agronómica de Mínimo Media Cama (≥0.5 camas / ≥2,500 esquejes / ≥23 bandejas):
@@ -1964,12 +2135,17 @@ def ejecutar_compensacion_inventario(df_inventario: pd.DataFrame) -> tuple[pd.Da
                 )
             })
 
-    # Recalcular valores finales
+    # Recalcular valores preliminares
     df['Esquejes_Efectivos_Clavar'] = df.apply(calcular_esquejes_efectivos_clavar, axis=1)
     df['Diferencia_Saldo'] = df['Total_Disponible'] - df['Esquejes_Efectivos_Clavar']
     df['Remanente_Final'] = df['Diferencia_Saldo'].apply(lambda x: max(0, x))
     df['Bandejas_112_Disponibles'] = df['Esquejes_Efectivos_Clavar'].apply(calcular_bandejas_redondeadas)
     df['Estado_Disponibilidad'] = df.apply(calcular_estado_disponibilidad, axis=1)
+
+    # Nivel 4: Absorción Productiva de Excedentes Restantes a Campo si hay espacio físico (<1,120 camas)
+    if absorber_excedentes_a_campo and semana_enraizamiento:
+        df, adv_abs = absorber_excedentes_inventario_a_campo(df, semana_enraizamiento, db=db)
+        advertencias.extend(adv_abs)
 
     return df, advertencias
 

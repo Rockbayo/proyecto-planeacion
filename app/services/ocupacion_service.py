@@ -542,6 +542,63 @@ def calcular_ocupacion_semanal_52w(db: Session, start_date: date = None) -> tupl
 
     return pd.DataFrame(res_semanal), pd.DataFrame(bloques_detalle)
 
+_CACHE_OCUPACION_DICT = {}
+
+def consultar_camas_disponibles_campo(semana_siembra: str, db: Session = None, refrescar_cache: bool = False) -> dict:
+    """
+    Retorna la disponibilidad física de camas en campo para una semana de siembra específica.
+    Permite validar si hay espacio libre para siembras adicionales o absorción de excedentes
+    respetando el techo máximo de 1,120 camas comerciales post-reducción (S202648) o 1,168 pre-reducción.
+    """
+    global _CACHE_OCUPACION_DICT
+    sem_str = str(semana_siembra).strip().replace("S", "")
+    sem_int = int(sem_str) if sem_str.isdigit() else 202640
+    techo_camas = CAMAS_COMERCIALES_REDUCIDAS if sem_int >= SEMANA_CORTE_REDUCCION_AREA else CAMAS_COMERCIALES_TOTALES
+
+    if refrescar_cache or not _CACHE_OCUPACION_DICT:
+        try:
+            close_db = False
+            if db is None:
+                from app.core.database import SessionLocal
+                db = SessionLocal()
+                close_db = True
+            df_sem, _ = calcular_ocupacion_semanal_52w(db)
+            if close_db:
+                db.close()
+            if not df_sem.empty:
+                _CACHE_OCUPACION_DICT = {
+                    str(r['Semana']).strip(): {
+                        'camas_ocupadas': float(r['Camas_Ocupadas']),
+                        'camas_libres': float(r['Camas_Libres']),
+                        'ocupacion_pct': float(r['Ocupacion_%']),
+                        'capacidad_techo': float(CAMAS_COMERCIALES_REDUCIDAS if (int(str(r['Semana'])) if str(r['Semana']).isdigit() else 202640) >= SEMANA_CORTE_REDUCCION_AREA else CAMAS_COMERCIALES_TOTALES)
+                    }
+                    for _, r in df_sem.iterrows()
+                }
+        except Exception as e:
+            print(f"Error consultando ocupación de campo: {e}")
+            _CACHE_OCUPACION_DICT = {}
+
+    info = _CACHE_OCUPACION_DICT.get(sem_str)
+    if info:
+        c_ocup = info['camas_ocupadas']
+        c_lib = max(0.0, round(techo_camas - c_ocup, 1))
+        pct = round((c_ocup / techo_camas) * 100.0, 1)
+    else:
+        c_ocup = 0.0
+        c_lib = float(techo_camas)
+        pct = 0.0
+
+    return {
+        "semana": sem_str,
+        "capacidad_techo": float(techo_camas),
+        "camas_ocupadas": float(c_ocup),
+        "camas_libres": float(c_lib),
+        "porcentaje_ocupacion": float(pct),
+        "hay_espacio_disponible": bool(c_lib >= 0.5),
+        "es_pico_saturado": bool(pct >= 99.0 or c_lib < 0.5)
+    }
+
 def calcular_balanceo_estacional(df_semanal: pd.DataFrame, meta_tallos_m2: float = META_TALLOS_M2_ANUAL) -> dict:
     """
     Analiza el desempeño estacional de la finca frente a la meta de 265 tallos/m2 (16.4M tallos)
@@ -769,21 +826,22 @@ def aplicar_nivelacion_quirurgica_picos(db: Session, max_camas: float = CAMAS_CO
         return "Regular"
 
     for s in semanas_52:
+        sem_int = int(s) if str(s).isdigit() else 202640
+        techo_sem_actual = CAMAS_COMERCIALES_REDUCIDAS if sem_int >= SEMANA_CORTE_REDUCCION_AREA else max_camas
         c_orig = round(float(orig_camas_map.get(s, occ_orig.get(s, 0.0))), 1)
-        c_niv = round(min(max_camas, c_orig), 1)
+        c_niv = round(min(techo_sem_actual, c_orig), 1)
         s_camas = round(float(siembra_camas_map.get(s, 0.0)), 1)
         c_vivas = round(float(vivas_camas_map.get(s, 0.0)), 1)
         c_fut = round(float(siembras_fut_map.get(s, 0.0)), 1)
-        pct_orig = round((c_orig / max_camas) * 100.0, 1)
-        pct_niv = round((c_niv / max_camas) * 100.0, 1)
-        libres_niv = round(max(0.0, max_camas - c_niv), 1)
+        pct_orig = round((c_orig / techo_sem_actual) * 100.0, 1)
+        pct_niv = round((c_niv / techo_sem_actual) * 100.0, 1)
+        libres_niv = round(max(0.0, techo_sem_actual - c_niv), 1)
         dif_c = round(max(0.0, c_orig - c_niv), 1)
         dif_esq = int(round(dif_c * 5200))
 
-        sem_int = int(s) if str(s).isdigit() else 202640
         temp = clasificar_temporada(sem_int)
 
-        if c_orig > max_camas:
+        if c_orig > techo_sem_actual:
             est = "🟢 CAPACIDAD COMPLETA (100%)"
         elif pct_niv >= 95.0:
             est = "🟠 ALTA DEMANDA (95%-100%)"
