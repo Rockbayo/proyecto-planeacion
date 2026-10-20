@@ -708,10 +708,15 @@ elif modulo == "ForeCast y Exportación":
                                     df_plan.index = df_plan.index.astype(str).str.strip().str.lower()
                                 except Exception:
                                     df_plan = None
+                            elif df_proyeccion_mva is not None and not df_proyeccion_mva.empty:
+                                df_plan = df_proyeccion_mva.copy()
+                                df_plan['Variedad_norm'] = df_plan['Variedad'].astype(str).str.strip().str.lower()
+                                cols_num_mva = [c for c in df_plan.columns if str(c).startswith('202')]
+                                df_plan = df_plan.groupby('Variedad_norm')[cols_num_mva].sum()
                             elif not df_mrp.empty:
-                                df_proyeccion_mva = proyectar_cosecha_desde_mva(df_mrp, db)
-                                if not df_proyeccion_mva.empty:
-                                    df_plan = df_proyeccion_mva.copy()
+                                df_proy_temp = proyectar_cosecha_desde_mva(df_mrp, db)
+                                if not df_proy_temp.empty:
+                                    df_plan = df_proy_temp.copy()
                                     df_plan['Variedad_norm'] = df_plan['Variedad'].astype(str).str.strip().str.lower()
                                     cols_num_mva = [c for c in df_plan.columns if str(c).startswith('202')]
                                     df_plan = df_plan.groupby('Variedad_norm')[cols_num_mva].sum()
@@ -802,8 +807,14 @@ elif modulo == "ForeCast y Exportación":
                                 with pd.ExcelWriter(output_mrp, engine='xlsxwriter') as writer:
                                     df_mrp.to_excel(writer, index=False, sheet_name="Explosion_MVA")
                                 
-                            df_proy_mva = proyectar_cosecha_desde_mva(df_mrp, db) if not df_mrp.empty else pd.DataFrame()
-                            df_52_semanas = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proy_mva)
+                            if df_proyeccion_mva is not None and not df_proyeccion_mva.empty:
+                                df_proy_final = df_proyeccion_mva
+                            elif not df_mrp.empty:
+                                df_proy_final = proyectar_cosecha_desde_mva(df_mrp, db)
+                            else:
+                                df_proy_final = pd.DataFrame()
+                                
+                            df_52_semanas = combinar_proyecciones_52_semanas(df_forecast_vivo, df_proy_final)
                             
                             resultados_52 = {}
                             errores_52 = {}

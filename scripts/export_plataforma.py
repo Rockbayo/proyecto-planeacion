@@ -1,7 +1,9 @@
 import pandas as pd
 import io
+import openpyxl
 from app.services.forecast_service import generar_forecast_13wk
 from app.core.database import SessionLocal
+from app.services.mva_service import extraer_semana_iso
 
 def procesar_plantillas_plataforma(templates_dict, df_forecast, df_plan=None):
     """
@@ -39,65 +41,151 @@ def procesar_plantillas_plataforma(templates_dict, df_forecast, df_plan=None):
             plan_var = df_p.groupby(level=0)[cols_num].sum()
         
     for filename, filebytes in templates_dict.items():
+        # Intento 1: Usar openpyxl para preservar 100% el formato, estilos, colores y fuentes
+        processed_with_openpyxl = False
         try:
-            # Cargar la plantilla preservando el nombre de hoja original
+            wb = openpyxl.load_workbook(io.BytesIO(filebytes))
+            ws = wb.active
+            
+            # Detectar fila de encabezados y columna de Variedad
+            header_row = 1
+            col_var_idx = None
+            col_semanas_map = {} # {col_idx: iso_semana}
+            
+            for r in range(1, min(10, ws.max_row + 1)):
+                temp_map = {}
+                v_idx = None
+                for c in range(1, ws.max_column + 1):
+                    val = ws.cell(r, c).value
+                    if val is not None:
+                        s_val = str(val).strip().lower()
+                        if 'variedad' in s_val:
+                            v_idx = c
+                        iso = extraer_semana_iso(val)
+                        if iso:
+                            temp_map[c] = iso
+                if temp_map and v_idx:
+                    header_row = r
+                    col_var_idx = v_idx
+                    col_semanas_map = temp_map
+                    break
+
+            if col_var_idx and col_semanas_map:
+                cols_ordenadas = sorted(col_semanas_map.keys())
+                semanas_forecast = cols_ordenadas[:9]
+                semanas_plan = cols_ordenadas[9:]
+                
+                for r in range(header_row + 1, ws.max_row + 1):
+                    var_val = ws.cell(r, col_var_idx).value
+                    if not var_val:
+                        continue
+                    var_norm = str(var_val).strip().lower()
+                    
+                    # 1. Rellenar las primeras 9 semanas con Inventario Vivo (fc_var)
+                    for c in semanas_forecast:
+                        iso_wk = col_semanas_map[c]
+                        val_num = 0
+                        if not fc_var.empty and iso_wk in fc_var.columns and var_norm in fc_var.index:
+                            v = fc_var.loc[var_norm, iso_wk]
+                            if hasattr(v, 'iloc'):
+                                v = v.iloc[0] if len(v) > 0 else 0
+                            if pd.notna(v):
+                                try:
+                                    val_num = int(round(float(v)))
+                                except (ValueError, TypeError):
+                                    val_num = 0
+                        ws.cell(r, c).value = val_num
+                        
+                    # 2. Rellenar las semanas restantes con Plan Maestro (plan_var)
+                    for c in semanas_plan:
+                        iso_wk = col_semanas_map[c]
+                        val_num = 0
+                        if not plan_var.empty and iso_wk in plan_var.columns and var_norm in plan_var.index:
+                            v = plan_var.loc[var_norm, iso_wk]
+                            if hasattr(v, 'iloc'):
+                                v = v.iloc[0] if len(v) > 0 else 0
+                            if pd.notna(v):
+                                try:
+                                    val_num = int(round(float(v)))
+                                except (ValueError, TypeError):
+                                    val_num = 0
+                        ws.cell(r, c).value = val_num
+                        
+                out = io.BytesIO()
+                wb.save(out)
+                resultados[filename] = out.getvalue()
+                processed_with_openpyxl = True
+        except Exception as e_op:
+            print(f"Advertencia openpyxl en {filename}: {e_op}")
+            processed_with_openpyxl = False
+            
+        if processed_with_openpyxl:
+            continue
+            
+        # Fallback con pandas si openpyxl falla
+        try:
             excel_file = pd.ExcelFile(io.BytesIO(filebytes))
             sheet_name = excel_file.sheet_names[0] if excel_file.sheet_names else 'Plantilla'
             df = pd.read_excel(excel_file, sheet_name=sheet_name)
             
-            # Extraer las columnas que son semanas
-            cols_semanas = [c for c in df.columns if str(c).startswith('202')]
-            
-            # Separar en las primeras 9 semanas a partir de la siguiente semana (Inventario Vivo) y las 4 restantes (Plan Maestro)
+            # Detectar columna variedad y mapeo de semanas
+            col_var = None
+            for c in df.columns:
+                if 'variedad' in str(c).lower():
+                    col_var = c
+                    break
+            if not col_var:
+                col_var = 'Variedad' if 'Variedad' in df.columns else None
+                
+            mapa_sem = {}
+            for c in df.columns:
+                iso = extraer_semana_iso(c)
+                if iso:
+                    mapa_sem[c] = iso
+                    
+            cols_semanas = list(mapa_sem.keys())
             semanas_forecast = cols_semanas[:9]
             semanas_plan = cols_semanas[9:]
             
-            # Rellenar cada fila
             for idx, row in df.iterrows():
-                variedad_original = row['Variedad']
-                variedad_norm = str(variedad_original).strip().lower()
+                if not col_var or pd.isna(row[col_var]):
+                    continue
+                variedad_norm = str(row[col_var]).strip().lower()
                 
-                # 1. Rellenar las primeras 9 semanas con el ForeCast (Inventario Vivo)
                 for sem in semanas_forecast:
-                    sem_str = str(int(sem)) if isinstance(sem, float) else str(sem)
-                    valor_proyectado = 0
-                    if not fc_var.empty and sem_str in fc_var.columns and variedad_norm in fc_var.index:
-                        val = fc_var.loc[variedad_norm, sem_str]
-                        if hasattr(val, 'iloc'):
-                            val = val.iloc[0] if len(val) > 0 else 0
-                        if pd.notna(val):
+                    iso_wk = mapa_sem[sem]
+                    val_num = 0
+                    if not fc_var.empty and iso_wk in fc_var.columns and variedad_norm in fc_var.index:
+                        v = fc_var.loc[variedad_norm, iso_wk]
+                        if hasattr(v, 'iloc'):
+                            v = v.iloc[0] if len(v) > 0 else 0
+                        if pd.notna(v):
                             try:
-                                valor_proyectado = int(round(float(val)))
+                                val_num = int(round(float(v)))
                             except (ValueError, TypeError):
-                                valor_proyectado = 0
-                    df.at[idx, sem] = valor_proyectado
-                
-                # 2. Rellenar las ultimas semanas con el Plan de Produccion
-                for sem in semanas_plan:
-                    sem_str = str(int(sem)) if isinstance(sem, float) else str(sem)
-                    valor_plan = 0
-                    if not plan_var.empty and sem_str in plan_var.columns and variedad_norm in plan_var.index:
-                        val = plan_var.loc[variedad_norm, sem_str]
-                        if hasattr(val, 'iloc'):
-                            val = val.iloc[0] if len(val) > 0 else 0
-                        if pd.notna(val):
-                            try:
-                                valor_plan = int(round(float(val)))
-                            except (ValueError, TypeError):
-                                valor_plan = 0
+                                val_num = 0
+                    df.at[idx, sem] = val_num
                     
-                    df.at[idx, sem] = valor_plan
-            
-            # Guardar en memoria
+                for sem in semanas_plan:
+                    iso_wk = mapa_sem[sem]
+                    val_num = 0
+                    if not plan_var.empty and iso_wk in plan_var.columns and variedad_norm in plan_var.index:
+                        v = plan_var.loc[variedad_norm, iso_wk]
+                        if hasattr(v, 'iloc'):
+                            v = v.iloc[0] if len(v) > 0 else 0
+                        if pd.notna(v):
+                            try:
+                                val_num = int(round(float(v)))
+                            except (ValueError, TypeError):
+                                val_num = 0
+                    df.at[idx, sem] = val_num
+                    
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df.to_excel(writer, index=False, sheet_name=sheet_name)
             output.seek(0)
-            
             resultados[filename] = output.getvalue()
-            
         except Exception as e:
             print(f"Error procesando {filename}: {e}")
             
     return resultados
-

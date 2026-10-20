@@ -208,12 +208,79 @@ def proyectar_cosecha_desde_mva(df_mrp, db, var_dict=None):
     
     return df_pivot[meta_cols + cols_semanas]
 
-def combinar_proyecciones_52_semanas(df_forecast, df_proyeccion):
+def extraer_semana_iso(val):
     """
-    Combina el forecast de corto plazo (inventario vivo) con el forecast de largo plazo (MVA)
-    para crear una proyección consolidada de 52 semanas.
-    - Primeras 10 semanas: Vienen de df_forecast (Inventario Vivo).
-    - Siguientes semanas (hasta la 52): Vienen de df_proyeccion (MVA).
+    Extrae el código canónico de semana ISO YYYYWW (ej. '202704', '202643')
+    desde múltiples formatos utilizados en plantillas de Webflowers, S&OP y Excel:
+    - Fechas ISO en el encabezado: 'Sem4. 2027-01-25', 'Sem. 2026-10-19', '2027-01-25'
+    - Fechas en formato DD/MM/YYYY: '25/01/2027', 'Sem4. 25/01/2027'
+    - Código ISO de 6 dígitos: '202643', '202704', 202643, 202704.0
+    - Código con prefijo S: 'S202643', 'S2643'
+    - Objetos date, datetime o Timestamp directos de Excel
+    """
+    import re
+    from datetime import date, datetime
+    import pandas as pd
+
+    if val is None:
+        return None
+    if isinstance(val, (datetime, date, pd.Timestamp)):
+        iy, iw, _ = val.isocalendar()
+        return f"{iy}{iw:02d}"
+
+    s = str(val).strip()
+
+    # 1. Buscar fecha YYYY-MM-DD (ej. 'Sem4. 2027-01-25')
+    m_date = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', s)
+    if m_date:
+        y, m, d = int(m_date.group(1)), int(m_date.group(2)), int(m_date.group(3))
+        try:
+            return f"{date(y, m, d).isocalendar()[0]}{date(y, m, d).isocalendar()[1]:02d}"
+        except Exception:
+            pass
+
+    # 2. Buscar fecha DD/MM/YYYY (ej. 'Sem4. 25/01/2027')
+    m_date2 = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', s)
+    if m_date2:
+        d, m, y = int(m_date2.group(1)), int(m_date2.group(2)), int(m_date2.group(3))
+        try:
+            return f"{date(y, m, d).isocalendar()[0]}{date(y, m, d).isocalendar()[1]:02d}"
+        except Exception:
+            pass
+
+    # 3. Código ISO de 6 dígitos que empiece por 202 (ej. '202643', '202704')
+    m_iso = re.search(r'\b(202\d{3})\b', s)
+    if m_iso:
+        return m_iso.group(1)
+
+    # 4. Número flotante o entero de 6 dígitos (ej. 202643.0)
+    try:
+        f_val = float(s)
+        i_val = int(f_val)
+        s_i = str(i_val)
+        if len(s_i) == 6 and s_i.startswith('202'):
+            return s_i
+    except Exception:
+        pass
+
+    # 5. Formato S + 6 dígitos o S + 4 dígitos (ej. 'S202643', 'S2643')
+    m_s = re.search(r'[sS](\d{4,6})', s)
+    if m_s:
+        num = m_s.group(1)
+        if len(num) == 6:
+            return num
+        if len(num) == 4:
+            return f"20{num}"
+
+    return None
+
+def combinar_proyecciones_52_semanas(df_forecast, df_proyeccion, horizonte_semanas=None):
+    """
+    Combina el forecast de corto plazo (inventario vivo) con el forecast de largo plazo (MVA / Plan Detallado)
+    para crear una proyección consolidada (52 semanas a 91 semanas).
+    - Primeras 10 semanas: Vienen de df_forecast (Inventario Vivo en suelo).
+    - Siguientes semanas: Vienen de df_proyeccion (MVA / Plan Detallado Aprobado).
+    - Si horizonte_semanas es None, retorna todas las semanas disponibles en el horizonte.
     """
     from datetime import date
     from app.services.forecast_service import isocalendar_to_string
@@ -230,7 +297,8 @@ def combinar_proyecciones_52_semanas(df_forecast, df_proyeccion):
             if mc not in df_p.columns:
                 df_p[mc] = ""
         cols_mva = sorted([c for c in df_p.columns if str(c).startswith('202')])
-        return df_p[meta_cols + cols_mva[:52]]
+        cols_ret = cols_mva[:horizonte_semanas] if horizonte_semanas else cols_mva
+        return df_p[meta_cols + cols_ret]
         
     if df_proyeccion is None or df_proyeccion.empty:
         df_f = df_forecast.copy()
@@ -238,7 +306,8 @@ def combinar_proyecciones_52_semanas(df_forecast, df_proyeccion):
             if mc not in df_f.columns:
                 df_f[mc] = ""
         cols_fc = sorted([c for c in df_f.columns if str(c).startswith('202')])
-        return df_f[meta_cols + cols_fc[:52]]
+        cols_ret = cols_fc[:horizonte_semanas] if horizonte_semanas else cols_fc
+        return df_f[meta_cols + cols_ret]
 
     # Asegurar columnas meta
     df_f = df_forecast.copy()
@@ -274,69 +343,125 @@ def combinar_proyecciones_52_semanas(df_forecast, df_proyeccion):
     # Rellenar nulos con 0
     df_consolidado = df_consolidado.fillna(0)
     
-    # Limitar a exactamente 52 semanas (10 de vivo + 42 de mva)
+    # Ordenar y seleccionar semanas
     todas_las_semanas = sorted([c for c in df_consolidado.columns if str(c).startswith('202')])
-    semanas_52 = todas_las_semanas[:52]
+    semanas_final = todas_las_semanas[:horizonte_semanas] if horizonte_semanas else todas_las_semanas
     
-    df_final = df_consolidado[meta_cols + semanas_52]
+    df_final = df_consolidado[meta_cols + semanas_final]
     
     return df_final
 
 def llenar_plantilla_52_semanas(template_bytes, df_52_semanas):
     """
-    Toma una plantilla Excel de 52 semanas subida por el usuario,
-    busca la columna 'Variedad' y rellena las columnas de semanas
-    con los datos de df_52_semanas. Mantiene las variedades en 0 si no hay datos.
-    Preserva el nombre de la hoja original de la plantilla y es tolerante a diferencias
-    de mayúsculas/minúsculas y espacios. Retorna los bytes del archivo Excel modificado.
+    Toma una plantilla Excel de 52 semanas / largo plazo subida por el usuario (ej. CH2026-43.xlsx),
+    identifica dinámicamente la columna 'Variedad' y todas las columnas de semanas
+    (detecta encabezados con fecha 'Sem4. 2027-01-25', ISO '202640', 'S202701', etc.),
+    e inyecta con precisión los tallos proyectados correspondientes.
+    
+    Utiliza openpyxl como motor principal para preservar al 100% las fuentes, estilos,
+    anchos de columna, fórmulas y estructura original de la plantilla.
     """
     import io
     import pandas as pd
+    import openpyxl
     
     # Pre-procesar df_52_semanas para búsquedas rápidas con deduplicación insensible a mayúsculas
-    df_temp = df_52_semanas.copy()
-    if 'Variedad' in df_temp.columns:
+    df_temp = df_52_semanas.copy() if df_52_semanas is not None else pd.DataFrame()
+    if not df_temp.empty and 'Variedad' in df_temp.columns:
         df_temp['Variedad_norm'] = df_temp['Variedad'].astype(str).str.strip().str.lower()
         cols_num = [c for c in df_temp.columns if str(c).startswith('202')]
         df_data = df_temp.groupby('Variedad_norm')[cols_num].sum()
     else:
         df_data = pd.DataFrame()
-    
-    # Leer la plantilla preservando el nombre de hoja original
-    excel_file = pd.ExcelFile(io.BytesIO(template_bytes))
-    sheet_name = excel_file.sheet_names[0] if excel_file.sheet_names else 'Plantilla'
-    df_template = pd.read_excel(excel_file, sheet_name=sheet_name)
-    
-    # Identificar las columnas de semanas (ej. 202640, 202701)
-    cols_semanas = [c for c in df_template.columns if str(c).startswith('202')]
-    
-    # Iterar y rellenar
-    if 'Variedad' in df_template.columns:
-        for idx, row in df_template.iterrows():
-            variedad_orig = str(row['Variedad']).strip().lower()
-            
-            for sem in cols_semanas:
-                sem_str = str(int(sem)) if isinstance(sem, float) else str(sem)
-                valor = 0
-                if not df_data.empty and variedad_orig in df_data.index and sem_str in df_data.columns:
-                    val = df_data.loc[variedad_orig, sem_str]
-                    if hasattr(val, 'iloc'):
-                        val = val.iloc[0] if len(val) > 0 else 0
-                    if pd.notna(val):
-                        try:
-                            valor = int(round(float(val)))
-                        except (ValueError, TypeError):
-                            valor = 0
+
+    # 1. Intentar procesar con openpyxl (mantiene estilos y formatos intactos)
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(template_bytes))
+        ws = wb.active
+        
+        # Localizar la columna de Variedad
+        col_var = None
+        for c in range(1, ws.max_column + 1):
+            val = str(ws.cell(1, c).value or '').strip().lower()
+            if 'variedad' in val:
+                col_var = c
+                break
                 
-                df_template.at[idx, sem] = valor
-    
-    # Guardar en memoria respetando el nombre de la hoja original
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_template.to_excel(writer, index=False, sheet_name=sheet_name)
-    output.seek(0)
-    
-    return output.getvalue()
+        if col_var is None:
+            col_var = 3  # Por defecto columna 3 en Webflowers
+            
+        # Mapear columnas de semanas dinámicamente
+        week_cols = {}
+        for c in range(1, ws.max_column + 1):
+            val = ws.cell(1, c).value
+            iso = extraer_semana_iso(val)
+            if iso:
+                week_cols[c] = iso
+
+        # Inyectar tallos proyectados fila por fila
+        for r in range(2, ws.max_row + 1):
+            var_cell = ws.cell(r, col_var).value
+            if not var_cell:
+                continue
+            var_norm = str(var_cell).strip().lower()
+            
+            for c, iso_wk in week_cols.items():
+                val = 0
+                if not df_data.empty and var_norm in df_data.index and iso_wk in df_data.columns:
+                    v = df_data.loc[var_norm, iso_wk]
+                    if hasattr(v, 'iloc'):
+                        v = v.iloc[0] if len(v) > 0 else 0
+                    if pd.notna(v):
+                        try:
+                            val = int(round(float(v)))
+                        except (ValueError, TypeError):
+                            val = 0
+                ws.cell(r, c).value = val
+                
+        output = io.BytesIO()
+        wb.save(output)
+        return output.getvalue()
+        
+    except Exception as e:
+        # Fallback de respaldo con pandas en caso de archivos legacy .xls
+        excel_file = pd.ExcelFile(io.BytesIO(template_bytes))
+        sheet_name = excel_file.sheet_names[0] if excel_file.sheet_names else 'Plantilla'
+        df_template = pd.read_excel(excel_file, sheet_name=sheet_name)
+        
+        # Identificar mapeo de columnas con extraer_semana_iso
+        col_var_name = None
+        for col in df_template.columns:
+            if 'variedad' in str(col).lower():
+                col_var_name = col
+                break
+                
+        if col_var_name:
+            col_map = {}
+            for col in df_template.columns:
+                iso = extraer_semana_iso(col)
+                if iso:
+                    col_map[col] = iso
+                    
+            for idx, row in df_template.iterrows():
+                var_orig = str(row[col_var_name]).strip().lower()
+                for col_orig, iso_wk in col_map.items():
+                    val = 0
+                    if not df_data.empty and var_orig in df_data.index and iso_wk in df_data.columns:
+                        v = df_data.loc[var_orig, iso_wk]
+                        if hasattr(v, 'iloc'):
+                            v = v.iloc[0] if len(v) > 0 else 0
+                        if pd.notna(v):
+                            try:
+                                val = int(round(float(v)))
+                            except (ValueError, TypeError):
+                                val = 0
+                    df_template.at[idx, col_orig] = val
+                    
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_template.to_excel(writer, index=False, sheet_name=sheet_name)
+        output.seek(0)
+        return output.getvalue()
 
 
 def sincronizar_pedido_consolidado_master(
