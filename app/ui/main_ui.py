@@ -317,10 +317,18 @@ elif modulo == "ForeCast y Exportación":
             df_forecast = df_forecast_vivo.copy()
             fuente_plan_mva = "Inventario Vivo Exclusivo"
 
+        col_sync_top, _ = st.columns([1.5, 2.5])
+        with col_sync_top:
+            if st.button("━ Actualizar y Nivelar Gráfica ForeCast", key="btn_sync_forecast_top", help="Ejecuta la sincronización atómica del plan maestro aplicando el techo de 1,120 camas, la nivelación proporcional de picos y la absorción de inventario."):
+                from app.services.mva_service import sincronizar_plan_detallado_desde_pedido_master
+                sincronizar_plan_detallado_desde_pedido_master(db=db, nivelar_techo_campo=True)
+                st.success("✅ Proyección S&OP nivelada y sincronizada al 100% con la capacidad real de campo.")
+                st.rerun()
+
         st.info(
-            f"💡 **Arquitectura de Suministro S&OP:** "
+            f"💡 **Arquitectura de Suministro S&OP (Techo 1,120 Camas):** "
             f"🟢 **Inventario Vivo (Verde Esmeralda):** Semanas 1 a 10 provienen al 100% del **Inventario Vivo** en suelo. | "
-            f"🟣 **Siembras Proyectadas del Pedido (Púrpura Amatista SAP):** Semana 11 en adelante proyecta la cosecha biológica real ({fuente_plan_mva}). | "
+            f"🟣 **Siembras Niveladas a Capacidad (Púrpura Amatista SAP):** Semana 11 en adelante proyecta la cosecha biológica real nivelada al 100% de capacidad ({fuente_plan_mva}). | "
             f"🟦 **Demanda Comercial Aprobada (Azul SAP Fiori Discontinuo):** Meta acordada en el Plan Maestro de Producción."
         )
         
