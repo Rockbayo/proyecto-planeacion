@@ -105,29 +105,18 @@ def run_audit():
         disp_siem = obtener_semanas_siembra_disponibles(db=db)
         print(f"[OK] 9. Plan de Siembra Catalogo: {len(cat_siem)} semanas en catalogo, {len(disp_siem)} con ejecucion real confirmada")
         
-        # Test de seguridad: Semana 202646 debe bloquearse si no tiene ejecucion real
-        res_bloq = generar_plano_siembra_semanal(db, "202646")
+        # Test de seguridad: una semana futura sin ejecución real (ej. 202653) debe bloquearse
+        res_bloq = generar_plano_siembra_semanal(db, "202653")
         if "error" in res_bloq and res_bloq["error"] == "sin_ejecucion_real":
-            print(f"[OK] 9b. Bloqueo de Seguridad Siembra: Semana 202646 bloqueada correctamente por falta de ejecucion real")
+            print(f"[OK] 9b. Bloqueo de Seguridad Siembra: Semana 202653 bloqueada correctamente por falta de ejecucion real")
         else:
             print(f"[ALERTA] 9b. Siembra: Comportamiento inesperado ({res_bloq.get('error')})")
 
-        # Test de generacion de PDF con datos simulados temporalmente
-        df_ejec_orig = pd.read_csv("Ejecucion_Real_Enraizamiento.csv")
-        df_test = df_ejec_orig.copy()
-        for idx in range(len(df_test)):
-            bp = df_test.loc[idx, 'Bandejas_Programadas']
-            df_test.loc[idx, 'Bandejas_Reales'] = bp
-            df_test.loc[idx, 'Esquejes_Reales'] = bp * 112
-        df_test.to_csv("Ejecucion_Real_Enraizamiento.csv", index=False)
-        try:
-            res_plano_siem = generar_plano_siembra_semanal(db, "202646")
-            pdf_bytes = generar_pdf_plano_siembra(res_plano_siem)
-            reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
-            print(f"[OK] 9c. PDF de Siembra: Generado exitosamente en EXACTAMENTE {len(reader.pages)} pagina(s)")
-        finally:
-            df_ejec_orig.to_csv("Ejecucion_Real_Enraizamiento.csv", index=False)
-            print("[OK] 9d. Restauracion: Ejecucion_Real_Enraizamiento.csv restaurada a 0 bandejas reales (Pendiente)")
+        # Test de generacion de PDF con Semana 202645 (que cuenta con ejecucion real de S202642)
+        res_plano_siem = generar_plano_siembra_semanal(db, "202645")
+        pdf_bytes = generar_pdf_plano_siembra(res_plano_siem)
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        print(f"[OK] 9c. PDF de Siembra: Generado exitosamente ({len(reader.pages)} pagina(s))")
     except Exception as e:
         print(f"[ERROR] 9. Plan de Siembra: {e}")
 

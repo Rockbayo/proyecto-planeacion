@@ -201,7 +201,6 @@ def exportar_matriz_estandar_erp(
     return out.getvalue()
 
 def render_pedido_module(db):
-    st.header("🌱 Pedido de Material Vegetal (S&OP Propagación)")
     st.markdown("""
     Cálculo maestro del requerimiento de esquejes para propagación y proveedores.
     - El pedido se dimensiona estrictamente por la **capacidad física instalada de los bloques estimados donde se hará la siembra** (1,168 camas comerciales actuales / 1,120 camas post-S2648).
@@ -213,11 +212,24 @@ def render_pedido_module(db):
     alertas = obtener_alertas_sop()
     regla_ped = alertas.get("regla_pedido", {})
     with st.container(border=True):
-        st.markdown(f"**{regla_ped.get('icono', '📦')} {regla_ped.get('titulo', '3. Pedido Material Vegetal')}** — *{regla_ped.get('deadline', '1ª Semana de cada mes')}*")
-        if regla_ped.get('activo', False):
-            st.success(regla_ped.get('mensaje', 'Ventana activa para pedido mensual regular.'))
-        else:
-            st.info(f"{regla_ped.get('mensaje', '')} Para pedidos fuera de ventana regular, contingencias o cancelaciones, use las pestañas correspondientes.")
+        col_gob1, col_gob2 = st.columns([2.5, 1.5])
+        with col_gob1:
+            st.markdown(f"**{regla_ped.get('icono', '📦')} {regla_ped.get('titulo', '3. Pedido Material Vegetal')}** — *{regla_ped.get('deadline', '1ª Semana de cada mes')}*")
+            if regla_ped.get('activo', False):
+                st.success(regla_ped.get('mensaje', 'Ventana activa para pedido mensual regular.'))
+            else:
+                st.info(f"{regla_ped.get('mensaje', '')} Para pedidos fuera de ventana regular, contingencias o cancelaciones, use las pestañas correspondientes.")
+        with col_gob2:
+            if os.path.exists("Distribucion_Produccion_Flor_Color.xlsx"):
+                with open("Distribucion_Produccion_Flor_Color.xlsx", "rb") as f_dist:
+                    st.download_button(
+                        label="📊 Descargar Distribución Flor/Color (Excel)",
+                        data=f_dist.read(),
+                        file_name="Distribucion_Produccion_Flor_Color.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="secondary",
+                        width="stretch"
+                    )
 
     plan_file_path = "Plan_Aprobado.csv"
     if not os.path.exists(plan_file_path):
@@ -664,10 +676,18 @@ def render_pedido_module(db):
 
                         df_eval = pd.merge(var_m, gc_info, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'], how='left')
 
-                        # Distribución proporcional solo si el grupo color tiene déficit neto
+                        # Distribución de déficit:
+                        # 1. En Alta Temporada (Madres 202715-202717) y Expansiones Comerciales Aprobadas (202719-202720):
+                        # Se prioriza la demanda de la variedad ("en temporada podemos sobre pasar el 110% si el área así lo permite")
+                        # 2. En semanas estándar fuera de temporada: se compensa a nivel neto de Grupo Color
+                        is_temporada_o_expansion = df_eval['Semana_Clean'].isin(['202715', '202716', '202717', '202719', '202720'])
                         df_eval['Net_Deficit_Var'] = 0.0
-                        mask_def = (df_eval['GC_Net_Deficit'] > 50) & (df_eval['GC_Raw_Def_Sum'] > 0) & (df_eval['Raw_Deficit'] > 0)
-                        df_eval.loc[mask_def, 'Net_Deficit_Var'] = df_eval.loc[mask_def, 'GC_Net_Deficit'] * (df_eval.loc[mask_def, 'Raw_Deficit'] / df_eval.loc[mask_def, 'GC_Raw_Def_Sum'])
+
+                        mask_def_std = (~is_temporada_o_expansion) & (df_eval['GC_Net_Deficit'] > 50) & (df_eval['GC_Raw_Def_Sum'] > 0) & (df_eval['Raw_Deficit'] > 0)
+                        df_eval.loc[mask_def_std, 'Net_Deficit_Var'] = df_eval.loc[mask_def_std, 'GC_Net_Deficit'] * (df_eval.loc[mask_def_std, 'Raw_Deficit'] / df_eval.loc[mask_def_std, 'GC_Raw_Def_Sum'])
+
+                        mask_def_temp = is_temporada_o_expansion & (df_eval['Raw_Deficit'] > 50)
+                        df_eval.loc[mask_def_temp, 'Net_Deficit_Var'] = df_eval.loc[mask_def_temp, 'Raw_Deficit']
 
                         ext_records = []
                         for _, r in df_eval[df_eval['Net_Deficit_Var'] > 50].iterrows():
@@ -700,6 +720,16 @@ def render_pedido_module(db):
                                     camas = 1
                                 esquejes_pedir = camas * 5200
 
+                                if sem_cos in ['202715', '202716', '202717']:
+                                    motivo_reg = "Temporada Madres: Cobertura pico comercial"
+                                    balance_reg = "Pico Madres (Prioridad Variedad)"
+                                elif sem_cos in ['202719', '202720'] and v in ['Top Dollar', 'Alma', 'Spartak']:
+                                    motivo_reg = "Expansión Comercial Daisy Blanco (+300k)"
+                                    balance_reg = "Expansión Comercial (+150k/sem)"
+                                else:
+                                    motivo_reg = "Déficit biológico neto del Grupo Color"
+                                    balance_reg = f"Déficit Color: {int(round(r['GC_Net_Deficit'])):,} tll"
+
                                 ext_records.append({
                                     "Flor": fl,
                                     "Color": col,
@@ -708,13 +738,13 @@ def render_pedido_module(db):
                                     "Semana_Pedido": sem_ped,
                                     "Tallos_Plan": int(round(r[col_capacidad])),
                                     "Tallos_ForeCast": int(round(r['Tallos_Forecast'])),
-                                    "Balance_Color_Neto": f"Déficit Color: {int(round(r['GC_Net_Deficit'])):,} tll",
+                                    "Balance_Color_Neto": balance_reg,
                                     "Deficit_Tallos": int(round(net_def)),
                                     "Aprovechamiento_%": round(aprov * 100.0, 1),
                                     "Metodo_Curva": metodo,
                                     "Camas_5200": camas,
                                     "Esquejes": esquejes_pedir,
-                                    "Motivo": "Déficit biológico neto del Grupo Color"
+                                    "Motivo": motivo_reg
                                 })
 
                         if not ext_records:
@@ -722,7 +752,7 @@ def render_pedido_module(db):
                         else:
                             df_ext_result = pd.DataFrame(ext_records)
                             st.session_state['df_extemporaneo_raw'] = df_ext_result
-                            st.success(f"Déficit biológico neto compensado por Grupo Color: {len(df_ext_result)} requerimientos en ventana.")
+                            st.success(f"✅ Análisis de brecha completado: {len(df_ext_result)} requerimientos extemporáneos identificados (incluye cobertura de temporada Madres y Daisy Blanco).")
 
                     except Exception as e:
                         st.error(f"Error analizando pedido extemporáneo: {e}")
@@ -913,6 +943,11 @@ def render_pedido_module(db):
                         var_m['Color_Norm'] = var_m['Color'].str.strip().str.lower()
                         # Límite máximo permitido: Plan * 1.10
                         var_m['Raw_Surplus'] = (var_m['Tallos_Forecast'] - var_m[col_capacidad] * 1.10).clip(lower=0)
+                        
+                        # Regla de Alta Temporada (Madres 202715-202717):
+                        # En temporada alta se permite sobrepasar el 110% si el área lo permite ("en temporada podemos sobre pasar el 110% si el área así lo permite")
+                        # No se cancela material vegetal en semanas de temporada alta
+                        var_m.loc[var_m['Semana_Clean'].isin(['202715', '202716', '202717']), 'Raw_Surplus'] = 0.0
 
                         # Balance a nivel de Grupo Color [Flor, Color, Semana] con límite +10%
                         gc_plan = var_m.groupby(['Flor_Norm', 'Color_Norm', 'Semana_Clean'])[col_capacidad].sum().reset_index().rename(columns={col_capacidad: 'GC_Plan'})
@@ -922,6 +957,7 @@ def render_pedido_module(db):
                         gc_info = pd.merge(gc_plan, gc_fc, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'])
                         gc_info = pd.merge(gc_info, gc_raw_sur, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'])
                         gc_info['GC_Net_Surplus'] = (gc_info['GC_FC'] - gc_info['GC_Plan'] * 1.10).clip(lower=0)
+                        gc_info.loc[gc_info['Semana_Clean'].isin(['202715', '202716', '202717']), 'GC_Net_Surplus'] = 0.0
 
                         df_eval = pd.merge(var_m, gc_info, on=['Flor_Norm', 'Color_Norm', 'Semana_Clean'], how='left')
 
@@ -1009,7 +1045,7 @@ def render_pedido_module(db):
                         else:
                             df_canc_result = pd.DataFrame(cancel_records)
                             st.session_state['df_cancelacion_raw'] = df_canc_result
-                            st.success(f"Se identificaron {len(df_canc_result)} cancelaciones netas distribuidas en sus semanas correspondientes.")
+                            st.success(f"✅ Evaluación de excedentes completada: {len(df_canc_result)} cancelaciones netas identificadas en semanas post-temporada y regulares (Temporada de Madres protegida al 100%).")
 
                     except Exception as e:
                         st.error(f"Error evaluando cancelaciones: {e}")

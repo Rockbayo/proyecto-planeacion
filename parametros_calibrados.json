@@ -1,43 +1,43 @@
 {
     "por_flor": {
         "Cushion": {
-            "alpha": 0.56,
-            "ponderacion_%": 56,
-            "num_ciclos": 1,
-            "wape_%": 11.8,
-            "bias_%": -4.62
+            "alpha": 1.0,
+            "ponderacion_%": 100,
+            "num_ciclos": 5,
+            "wape_%": 52.05,
+            "bias_%": -48.99
         },
         "Daisy": {
-            "alpha": 0.76,
-            "ponderacion_%": 76,
-            "num_ciclos": 6,
-            "wape_%": 9.64,
-            "bias_%": -3.38
+            "alpha": 0.5,
+            "ponderacion_%": 50,
+            "num_ciclos": 7,
+            "wape_%": 36.72,
+            "bias_%": -33.55
         },
         "Novelty": {
-            "alpha": 0.88,
-            "ponderacion_%": 88,
-            "num_ciclos": 1,
-            "wape_%": 16.45,
-            "bias_%": 16.45
+            "alpha": 1.0,
+            "ponderacion_%": 100,
+            "num_ciclos": 2,
+            "wape_%": 36.05,
+            "bias_%": -29.1
         }
     },
     "global": {
-        "alpha": 0.44,
-        "ponderacion_%": 44,
-        "num_ciclos": 1,
-        "wape_%": 14.48,
-        "bias_%": -0.3
+        "alpha": 0.88,
+        "ponderacion_%": 88,
+        "num_ciclos": 7,
+        "wape_%": 44.88,
+        "bias_%": -41.15
     },
-    "alpha": 0.44,
-    "ponderacion_%": 44,
-    "num_ciclos": 1,
-    "wape_%": 14.48,
-    "wape_anterior_%": 16.59,
-    "reduccion_error_%": 2.11,
-    "fecha_calibracion": "2026-10-19 06:37",
+    "alpha": 0.88,
+    "ponderacion_%": 88,
+    "num_ciclos": 7,
+    "wape_%": 44.88,
+    "wape_anterior_%": 46.39,
+    "reduccion_error_%": 1.51,
+    "fecha_calibracion": "2026-10-23 10:19",
     "semana_evaluada": "202642",
-    "total_iteraciones": 2000,
-    "simulaciones_por_flor": 500,
+    "total_iteraciones": 4000,
+    "simulaciones_por_flor": 1000,
     "origen": "Calibración Biológica Segmentada por Flor (2,000 Simulaciones)"
 }

@@ -767,3 +767,89 @@ def sincronizar_plan_detallado_desde_pedido_master(
             db.close()
 
 
+def generar_forecast_3_tramos(db, alpha=None, num_ciclos=None, params_por_flor=None, horizonte_semanas=None):
+    import os
+    from app.services.forecast_service import isocalendar_to_string, generar_forecast_13wk
+    from app.services.enraizamiento_service import sumar_semanas_iso
+
+    semana_actual = isocalendar_to_string(date.today())
+    total_sems = horizonte_semanas if horizonte_semanas else 52
+    semanas_futuras = [sumar_semanas_iso(semana_actual, i) for i in range(total_sems)]
+    
+    sems_t1 = semanas_futuras[:10]
+    sems_t2 = semanas_futuras[10:13]
+    sems_t3 = semanas_futuras[13:]
+    
+    meta_cols = ['Flor', 'Color', 'Variedad']
+    
+    # 1. Tramo 1: Inventario Vivo en Suelo (S1 a S10)
+    df_vivo = generar_forecast_13wk(db, alpha=alpha, num_ciclos=num_ciclos, params_por_flor=params_por_flor)
+    
+    # 2. Tramo 2: Enraizamiento Ejecutado en Plataforma (S11 a S13)
+    df_enr = pd.read_csv("Ejecucion_Real_Enraizamiento.csv") if os.path.exists("Ejecucion_Real_Enraizamiento.csv") else pd.DataFrame()
+    df_proy_enr = pd.DataFrame()
+    if not df_enr.empty:
+        # Usar estrictamente los esquejes reales clavados (> 0) para no inflar con programados no ejecutados
+        df_enr_active = df_enr[df_enr['Esquejes_Reales'] > 0].copy()
+        df_enr_active['Esquejes_Para_Siembra (Final)'] = df_enr_active['Esquejes_Reales']
+        df_enr_active['Semana_Siembra'] = df_enr_active['Semana_Siembra_Proyectada']
+        if not df_enr_active.empty:
+            df_proy_enr = proyectar_cosecha_desde_mva(df_enr_active, db)
+            
+    # 3. Tramo 3: Proyección del Enraizamiento del Material Vegetal Planificado (S14+)
+    df_proy_mva = pd.DataFrame()
+    if os.path.exists("Plan_Aprobado_Detallado.csv"):
+        df_det = pd.read_csv("Plan_Aprobado_Detallado.csv")
+        if 'Esquejes' in df_det.columns and not df_det.empty:
+            df_det['Esquejes_Para_Siembra (Final)'] = df_det['Esquejes']
+            df_proy_mva = proyectar_cosecha_desde_mva(df_det, db)
+    elif os.path.exists("PedidoConsolidado_master.xlsx"):
+        df_mrp = generar_plan_mva("PedidoConsolidado_master.xlsx", week_is="Pedido")
+        df_proy_mva = proyectar_cosecha_desde_mva(df_mrp, db)
+
+    def preparar_g(df_src, semanas):
+        if df_src is None or df_src.empty:
+            return pd.DataFrame()
+        d = df_src.copy()
+        d['var_norm'] = d['Variedad'].astype(str).str.strip().str.lower()
+        cols = [c for c in semanas if c in d.columns]
+        return d.groupby('var_norm')[cols].sum().reindex(columns=semanas, fill_value=0.0)
+
+    g1 = preparar_g(df_vivo, sems_t1)
+    g2 = preparar_g(df_proy_enr, sems_t2)
+    g3 = preparar_g(df_proy_mva, sems_t3)
+    
+    # Fallback exclusivo si Tramo 2 no tiene ningún dato ejecutado en plataforma
+    if g2.empty and not df_proy_mva.empty and len(sems_t2) > 0:
+        g2 = preparar_g(df_proy_mva, sems_t2)
+
+    # Catálogo unificado de variedades
+    meta_dict = {}
+    for df_src in [df_vivo, df_enr, df_proy_mva]:
+        if df_src is not None and not df_src.empty and 'Variedad' in df_src.columns:
+            d = df_src.copy()
+            d['var_norm'] = d['Variedad'].astype(str).str.strip().str.lower()
+            for _, r in d.iterrows():
+                vn = r['var_norm']
+                if vn not in meta_dict or not meta_dict[vn].get('Flor'):
+                    meta_dict[vn] = {m: r[m] if m in r and pd.notna(r[m]) else '' for m in meta_cols}
+                    meta_dict[vn]['Variedad'] = r['Variedad']
+
+    all_vars = sorted(list(set(list(g1.index) + list(g2.index) + list(g3.index) + list(meta_dict.keys()))))
+    g1_f = g1.reindex(index=all_vars, fill_value=0.0) if not g1.empty else pd.DataFrame(0.0, index=all_vars, columns=sems_t1)
+    g2_f = g2.reindex(index=all_vars, fill_value=0.0) if not g2.empty else pd.DataFrame(0.0, index=all_vars, columns=sems_t2)
+    g3_f = g3.reindex(index=all_vars, fill_value=0.0) if not g3.empty else pd.DataFrame(0.0, index=all_vars, columns=sems_t3)
+    
+    g_comb = pd.concat([g1_f, g2_f, g3_f], axis=1)
+    
+    records = []
+    for vn in all_vars:
+        m = meta_dict.get(vn, {'Flor': '', 'Color': '', 'Variedad': vn})
+        recs = {**m, **g_comb.loc[vn].to_dict()}
+        records.append(recs)
+        
+    df_res = pd.DataFrame(records)
+    cols_order = meta_cols + [c for c in semanas_futuras if c in df_res.columns]
+    return df_res[cols_order].fillna(0.0).drop_duplicates(subset=['Variedad'])
+
+

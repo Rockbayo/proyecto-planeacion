@@ -75,7 +75,13 @@ def obtener_catalogo_semanas_siembra(db: Session = None) -> list[dict]:
         num_vars = 0
 
         if not df_ejec.empty:
-            grp = df_ejec[df_ejec['Semana_Enraizamiento'] == str(sem_e)]
+            if 'Semana_Siembra_Proyectada' in df_ejec.columns:
+                grp = df_ejec[df_ejec['Semana_Siembra_Proyectada'].astype(str) == str(sem_s)]
+                if grp.empty:
+                    grp = df_ejec[df_ejec['Semana_Enraizamiento'] == str(sem_e)]
+            else:
+                grp = df_ejec[df_ejec['Semana_Enraizamiento'] == str(sem_e)]
+
             if not grp.empty:
                 tot_band = int(grp['Bandejas_Reales'].sum())
                 tot_esq = int(grp['Esquejes_Reales'].sum())
@@ -159,7 +165,12 @@ def generar_plano_siembra_semanal(
         }
 
     df_ejec_all['Semana_Enraizamiento'] = df_ejec_all['Semana_Enraizamiento'].astype(str)
-    df_sem_ejec = df_ejec_all[df_ejec_all['Semana_Enraizamiento'] == str(sem_enraizamiento)].copy()
+    if 'Semana_Siembra_Proyectada' in df_ejec_all.columns:
+        df_sem_ejec = df_ejec_all[df_ejec_all['Semana_Siembra_Proyectada'].astype(str) == str(sem_siembra)].copy()
+        if df_sem_ejec.empty:
+            df_sem_ejec = df_ejec_all[df_ejec_all['Semana_Enraizamiento'] == str(sem_enraizamiento)].copy()
+    else:
+        df_sem_ejec = df_ejec_all[df_ejec_all['Semana_Enraizamiento'] == str(sem_enraizamiento)].copy()
 
     if df_sem_ejec.empty:
         return {

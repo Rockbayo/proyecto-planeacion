@@ -1,65 +1,59 @@
 # ==============================================================================
-# CONFIGURACIÓN VISUAL EJECUTIVA S&OP (SAP IBP / KINAXIS RAPIDRESPONSE STYLE)
+# CONFIGURACIÓN VISUAL CORPORATIVA SAP FIORI HORIZON (ENTERPRISE HIGH-CONTRAST UI)
 # ==============================================================================
 
 [theme]
 base = "light"
-primaryColor = "#1D4ED8"              # Corporate Sapphire Blue
-backgroundColor = "#F8FAFC"           # Slate-50 Clean Canvas
-secondaryBackgroundColor = "#FFFFFF"  # Crisp White for cards & containers
-textColor = "#0F172A"                 # Deep Slate Navy for crisp legibility
-borderColor = "#CBD5E1"               # Crisp defined corporate border
+primaryColor = "#0057D2"              # Azul corporativo primario SAP Horizon
+backgroundColor = "#F5F6F7"           # Fondo general de la aplicación (Canvas)
+secondaryBackgroundColor = "#FFFFFF"  # Fondo de tarjetas y encabezados (Surface)
+textColor = "#131E29"                 # Texto principal de alto contraste (WCAG AAA)
+borderColor = "#D5DADD"               # Bordes de tarjetas y divisores
 showWidgetBorder = true
 showSidebarBorder = true
-baseRadius = "6px"                    # Professional, executive subtle rounding
+baseRadius = "6px"                    # Redondeo sobrio institucional
 buttonRadius = "6px"
-font = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-headingFont = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap"
+font = "'Segoe UI':https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap"
+headingFont = "'Segoe UI':https://fonts.googleapis.com/css2?family=Segoe+UI:wght@600;700&display=swap"
 codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
-baseFontSize = 14
+baseFontSize = 15
 baseFontWeight = 400
 codeFontSize = "13px"
 headingFontSizes = ["26px", "20px", "16px", "14px", "13px", "12px"]
 headingFontWeights = [700, 600, 600, 600, 500, 500]
 linkUnderline = false
 
-# Colores Semánticos S&OP
-greenColor = "#059669"   # Oferta / ForeCast Saludable / Cumplimiento
-redColor = "#DC2626"     # Quiebre / Déficit Crítico / Sobrecupo
-yellowColor = "#D97706"  # Alerta / Cuello de Botella
-orangeColor = "#EA580C"  # Riesgo Operativo
-blueColor = "#1D4ED8"    # Plan de Producción / Comercial
+# Colores Semánticos SAP Fiori Horizon
+greenColor = "#106333"   # Confirmación / Estado Óptimo
+redColor = "#A61C1C"     # Alerta Crítica / Error
+yellowColor = "#7A4100"  # Atención / Advertencia
+orangeColor = "#E76500"  # Riesgo Operativo
+blueColor = "#0057D2"    # Plan Maestro / Demanda
 violetColor = "#7C3AED"  # Variedades Estratégicas
-grayColor = "#64748B"    # Metadata / Líneas Base
+grayColor = "#475569"    # Subtítulos y Metadatos
 
 # Paleta Oficial S&OP para Gráficas
 chartCategoricalColors = [
-    "#1D4ED8",  # 1. Plan de Producción / Demanda (Azul Zafiro Corporativo)
-    "#059669",  # 2. ForeCast / Oferta Cosecha (Verde Esmeralda Ejecutivo)
-    "#D97706",  # 3. Pedido Propagación / Enraizamiento (Ámbar Cálido)
-    "#7C3AED",  # 4. Fast Track / Especiales (Violeta)
-    "#0284C7",  # 5. Capacidad Ajustada (Celeste Ejecutivo)
-    "#DC2626",  # 6. Techo Físico / Alerta (Rojo Carmesí)
-    "#64748B"   # 7. Línea Base Histórica (Gris Pizarra)
+    "#0057D2",  # 1. Plan Maestro / Demanda Comercial (Azul SAP Horizon)
+    "#106333",  # 2. Oferta de Cosecha / En Campo (Verde Acento)
+    "#7A4100",  # 3. Solicitud de Propagación / Enraizamiento (Ámbar)
+    "#7C3AED",  # 4. Programación de Siembra (Púrpura)
+    "#0284C7",  # 5. Capacidad Ajustada (Celeste)
+    "#A61C1C",  # 6. Techo Físico / Capacidad Máxima (Rojo Alerta)
+    "#475569"   # 7. Línea Base Histórica (Gris Pizarra)
 ]
 
 # Estilo de Tablas y DataFrames
-dataframeBorderColor = "#E2E8F0"
-dataframeHeaderBackgroundColor = "#F8FAFC"
-dataframeHeaderTextColor = "#1E293B"
+dataframeBorderColor = "#D5DADD"
+dataframeHeaderBackgroundColor = "#EDF0F2"
+dataframeHeaderTextColor = "#131E29"
 
-# Barra Lateral: Command Center Ejecutivo (Dark Slate Navy)
-[theme.sidebar]
-backgroundColor = "#0F172A"
-secondaryBackgroundColor = "#1E293B"
-codeBackgroundColor = "#1E293B"
-textColor = "#F8FAFC"
-borderColor = "#1E293B"
-primaryColor = "#3B82F6"
-dataframeHeaderBackgroundColor = "#1E293B"
-dataframeBorderColor = "#334155"
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false
 
 [server]
 headless = true
 enableCORS = false
-enableXsrfProtection = false
+enableXsrfProtection = true
+maxUploadSize = 50

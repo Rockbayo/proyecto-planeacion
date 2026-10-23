@@ -220,13 +220,95 @@ def generar_forecast_13wk(db: Session, start_date: date = None, alpha: float = N
                         "Tallos_Proyectados": int(tallos_esperados)
                     })
                     
+    # 2. Incorporar Inventario Vivo en Propagación (Enraizamiento Real Clavado en tránsito a campo)
+    # Aplica ÚNICAMENTE para lotes cuya siembra aún no ha sido registrada en el inventario de campo (suelo)
+    from app.services.enraizamiento_service import ARCHIVO_EJECUCION_REAL, sumar_semanas_iso
+    semanas_en_suelo = set(r['Semana_Siembra'] for r in forecast_records)
+
+    if os.path.exists(ARCHIVO_EJECUCION_REAL):
+        try:
+            df_ejec_real = pd.read_csv(ARCHIVO_EJECUCION_REAL)
+            if not df_ejec_real.empty and 'Esquejes_Reales' in df_ejec_real.columns:
+                df_ejec_real['Esquejes_Reales'] = pd.to_numeric(df_ejec_real['Esquejes_Reales'], errors='coerce').fillna(0).astype(int)
+                df_positivos = df_ejec_real[df_ejec_real['Esquejes_Reales'] > 0].copy()
+
+                if not df_positivos.empty:
+                    vars_dict_db = {v.nombre.strip().lower(): v for v in db.query(Variedad).all()}
+
+                    for _, r_ej in df_positivos.iterrows():
+                        sem_enr = str(r_ej.get('Semana_Enraizamiento', '')).strip().replace('.0', '')
+                        sem_siem = str(r_ej.get('Semana_Siembra_Proyectada', '')).strip().replace('.0', '')
+                        if not sem_siem or sem_siem == 'nan':
+                            sem_siem = sumar_semanas_iso(sem_enr, 3)
+
+                        # Si la semana ya está cargada en el inventario de campo (suelo), el suelo tiene prioridad
+                        if sem_siem in semanas_en_suelo:
+                            continue
+
+                        v_name = str(r_ej.get('Variedad', '')).strip()
+                        v_norm = v_name.lower()
+                        v_obj = vars_dict_db.get(v_norm)
+
+                        flor_val = str(r_ej.get('Flor') or (v_obj.flor if v_obj else 'Estándar'))
+                        color_val = str(r_ej.get('Color') or (v_obj.color if v_obj else 'Mix'))
+                        esq_real = int(r_ej['Esquejes_Reales'])
+
+                        if v_name in curvas_dinamicas:
+                            v_dyn = curvas_dinamicas[v_name]
+                            dia_ini_e = v_dyn['dia_inicio']
+                            curvas_e = [v_dyn[f'c{i}'] for i in range(1, 16)]
+                        elif v_obj:
+                            dia_ini_e = v_obj.dia_inicio if v_obj.dia_inicio else 70
+                            curvas_e = [
+                                v_obj.c1, v_obj.c2, v_obj.c3, v_obj.c4, v_obj.c5,
+                                v_obj.c6, v_obj.c7, v_obj.c8, v_obj.c9, v_obj.c10,
+                                v_obj.c11, v_obj.c12, v_obj.c13, v_obj.c14, v_obj.c15
+                            ]
+                            suma_c = sum([c for c in curvas_e if c])
+                            if abs(suma_c - 1.0) < 0.01 and v_obj.aprov_pp and v_obj.aprov_pp != 1.0:
+                                curvas_e = [c * v_obj.aprov_pp if c else 0.0 for c in curvas_e]
+                        else:
+                            dia_ini_e = 70
+                            curvas_e = [0.0] * 15
+                            curvas_e[7] = 0.806
+
+                        try:
+                            y_siem = int(sem_siem[:4])
+                            w_siem = int(sem_siem[4:])
+                            fecha_siem_est = date.fromisocalendar(y_siem, w_siem, 1)
+                        except Exception:
+                            fecha_siem_est = start_date
+
+                        fecha_inicio_cosecha_e = fecha_siem_est + timedelta(days=dia_ini_e)
+
+                        for dia_idx, pct_cosecha in enumerate(curvas_e):
+                            if pct_cosecha and pct_cosecha > 0:
+                                fecha_corte = fecha_inicio_cosecha_e + timedelta(days=dia_idx)
+                                sem_op = isocalendar_to_string(fecha_corte)
+                                tallos_est = esq_real * pct_cosecha
+
+                                if tallos_est > 0:
+                                    forecast_records.append({
+                                        "Sede": "CH",
+                                        "Bloque": "Enraizamiento",
+                                        "Cama": "Bandejas Clavadas",
+                                        "Flor": flor_val,
+                                        "Color": color_val,
+                                        "Variedad": v_name,
+                                        "Semana_Siembra": sem_siem,
+                                        "Semana_Cosecha": sem_op,
+                                        "Tallos_Proyectados": int(tallos_est)
+                                    })
+        except Exception as e_enr:
+            print(f"Advertencia al proyectar desde enraizamiento ejecutado: {e_enr}")
+
     # Convertir a DataFrame
     if forecast_records:
         df = pd.DataFrame(forecast_records)
         df_pivot = pd.pivot_table(
             df, 
             values='Tallos_Proyectados', 
-            index=['Sede', 'Flor', 'Color', 'Variedad'], 
+            index=['Flor', 'Color', 'Variedad'], 
             columns=['Semana_Cosecha'], 
             aggfunc='sum',
             fill_value=0
@@ -246,7 +328,7 @@ def generar_forecast_13wk(db: Session, start_date: date = None, alpha: float = N
             continue
         seen_vars.add(v_key)
         lista_vars.append({
-            "Sede": "",
+            "Sede": "CH",
             "Flor": v.flor,
             "Color": v.color,
             "Variedad": v.nombre
@@ -254,10 +336,7 @@ def generar_forecast_13wk(db: Session, start_date: date = None, alpha: float = N
     df_todas = pd.DataFrame(lista_vars)
     
     if not df_pivot.empty:
-        df_final = pd.merge(df_todas, df_pivot, on=['Flor', 'Color', 'Variedad'], how='left', suffixes=('_orig', ''))
-        if 'Sede' in df_final.columns and 'Sede_orig' in df_final.columns:
-            df_final['Sede'] = df_final['Sede'].fillna(df_final['Sede_orig'])
-            df_final = df_final.drop(columns=['Sede_orig'])
+        df_final = pd.merge(df_todas, df_pivot, on=['Flor', 'Color', 'Variedad'], how='left')
         df_final = df_final.fillna(0)
     else:
         df_final = df_todas
@@ -273,13 +352,28 @@ def calcular_distribucion_diaria_curvas(db: Session):
     """
     start_date = date.today()
     siembras = db.query(Siembra).filter(Siembra.estado == EstadoSiembra.EN_PRODUCCION).all()
+    curvas_dinamicas = calcular_curvas_dinamicas(db=db)
     
     records = []
     for siembra in siembras:
         var = siembra.variedad
-        
-        fecha_inicio_cosecha = siembra.fecha_siembra + timedelta(days=var.dia_inicio)
-        curvas = [var.c1, var.c2, var.c3, var.c4, var.c5, var.c6, var.c7, var.c8, var.c9, var.c10, var.c11, var.c12, var.c13, var.c14, var.c15]
+        if not var:
+            continue
+            
+        v_name = var.nombre
+        if v_name in curvas_dinamicas:
+            dyn = curvas_dinamicas[v_name]
+            dia_inicio_var = dyn['dia_inicio']
+            curvas = [dyn[f'c{i}'] for i in range(1, 16)]
+        elif var.dia_inicio and (var.c1 or var.c2 or var.c3):
+            dia_inicio_var = var.dia_inicio
+            curvas = [var.c1, var.c2, var.c3, var.c4, var.c5, var.c6, var.c7, var.c8, var.c9, var.c10, var.c11, var.c12, var.c13, var.c14, var.c15]
+        else:
+            dia_inicio_var = 70
+            curvas = [0.0] * 15
+            curvas[7] = 0.806
+            
+        fecha_inicio_cosecha = siembra.fecha_siembra + timedelta(days=dia_inicio_var)
         
         for dia_indice, porcentaje_cosecha in enumerate(curvas):
             if porcentaje_cosecha and porcentaje_cosecha > 0:
@@ -432,7 +526,7 @@ def generar_forecast_ml_live(db: Session, start_date: date = None, semanas_a_pro
     df_pivot = pd.pivot_table(
         df_live, 
         values='Tallos_Proyectados', 
-        index=['Sede', 'Flor', 'Color', 'Variedad'], 
+        index=['Flor', 'Color', 'Variedad'], 
         columns=['Semana_Cosecha'], 
         aggfunc='sum',
         fill_value=0

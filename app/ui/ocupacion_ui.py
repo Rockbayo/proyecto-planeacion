@@ -35,7 +35,6 @@ from app.services.ocupacion_service import (
 )
 
 def render_ocupacion_module(db):
-    st.header("🏢 Ocupación de Área y Capacidad de Finca (S&OP)")
     st.markdown(f"""
     Este módulo modela la **capacidad física instalada y la ocupación temporal de la finca** a lo largo de las 52 semanas del año,
     cruzando el plano de naves y camas (`Planos sección.csv`) contra el inventario vivo actual y el **Pedido Consolidado de Material Vegetal**.

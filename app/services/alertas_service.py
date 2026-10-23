@@ -155,55 +155,63 @@ def obtener_alertas_sop():
 def render_panel_alertas_sop():
     """
     Renderiza el panel visual del Semáforo y Alertas Operativas S&OP
-    en la interfaz de Streamlit.
+    con simetría milimétrica utilizando st.html y CSS Grid nativo (SAP Fiori Horizon).
+    Garantiza que las 3 tarjetas tengan exactamente la misma altura física en pantalla.
     """
     alertas = obtener_alertas_sop()
     
     st.markdown("### 🧭 Calendario de Gobernanza y Alertas S&OP")
     
-    col1, col2, col3 = st.columns(3)
+    a1 = alertas["regla_13wk"]
+    a2 = alertas["regla_52wk"]
+    a3 = alertas["regla_pedido"]
     
-    with col1:
-        a = alertas["regla_13wk"]
-        with st.container(border=True):
-            st.markdown(f"**{a['icono']} {a['titulo']}**")
-            st.caption(f"⏰ **Plazo:** {a['deadline']}")
-            if a['status'] == 'success':
-                st.success(a['mensaje'])
-            elif a['status'] == 'warning':
-                st.warning(a['mensaje'])
-            elif a['status'] == 'error':
-                st.error(a['mensaje'])
-            else:
-                st.info(a['mensaje'])
-                
-            ins = a['insumos']
-            st.markdown(f"<small>🌱 Plano Siembras: {ins['plano_siembras']}<br>📈 Curvas Piloto: {ins['curvas_piloto']}</small>", unsafe_allow_html=True)
-            
-    with col2:
-        a = alertas["regla_52wk"]
-        with st.container(border=True):
-            st.markdown(f"**{a['icono']} {a['titulo']}**")
-            st.caption(f"📅 **Plazo:** {a['deadline']}")
-            if a['status'] == 'success':
-                st.success(a['mensaje'])
-            elif a['status'] == 'warning':
-                st.warning(a['mensaje'])
-            else:
-                st.info(a['mensaje'])
-                
-            st.markdown("<small>Matriz anual consolidada de inventario vivo + MVA</small>", unsafe_allow_html=True)
-            
-    with col3:
-        a = alertas["regla_pedido"]
-        with st.container(border=True):
-            st.markdown(f"**{a['icono']} {a['titulo']}**")
-            st.caption(f"📦 **Plazo:** {a['deadline']}")
-            if a['status'] == 'warning':
-                st.warning(a['mensaje'])
-            elif a['status'] == 'success':
-                st.success(a['mensaje'])
-            else:
-                st.info(a['mensaje'])
-                
-            st.markdown("<small>Generación del pedido en piedra a propagación (+24 sem)</small>", unsafe_allow_html=True)
+    def get_alert_props(status):
+        if status == 'success':
+            return 'sap-alert-success', '✓', 'sap-badge-ok', 'Al Día'
+        elif status == 'warning':
+            return 'sap-alert-warning', '⚠', 'sap-badge-warn', 'Atención'
+        elif status == 'error':
+            return 'sap-alert-error', '✕', 'sap-badge-err', 'Vencido'
+        else:
+            return 'sap-alert-info', 'ℹ', 'sap-badge-info', 'Informativo'
+
+    cls1, ic1, bg_cls1, bg_txt1 = get_alert_props(a1['status'])
+    cls2, ic2, bg_cls2, bg_txt2 = get_alert_props(a2['status'])
+    cls3, ic3, bg_cls3, bg_txt3 = get_alert_props(a3['status'])
+    
+    ins = a1['insumos']
+    status_ped_txt = '🟢 Ventana Activa' if a3.get('activo') else '⚪ Ventana Regular Cerrada'
+    
+    html = (
+        '<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.25rem; margin-top: 10px; margin-bottom: 24px; align-items: stretch;">'
+        '<!-- Tarjeta 1 -->'
+        '<div class="cs-card" style="margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; height: 100%; min-height: 240px; box-sizing: border-box; padding: 1.25rem 1.5rem;">'
+        '<div>'
+        f'<div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--sap-border-subtle); padding-bottom: 8px; margin-bottom: 10px;"><span style="font-weight: 700; font-size: 0.95rem; color: var(--sap-text-primary);">{a1["icono"]} {a1["titulo"]}</span><span class="sap-badge {bg_cls1}">{bg_txt1}</span></div>'
+        f'<div style="font-size: 0.82rem; color: var(--sap-text-secondary); margin-bottom: 10px; font-weight: 500; min-height: 20px;">⏰ <b>Plazo:</b> {a1["deadline"]}</div>'
+        f'<div class="{cls1}" style="min-height: 68px; display: flex; align-items: center; padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.84rem; line-height: 1.35; margin-bottom: 12px; box-sizing: border-box;"><span><b>{ic1}</b> {a1["mensaje"]}</span></div>'
+        '</div>'
+        f'<div style="border-top: 1px solid var(--sap-border-subtle); padding-top: 10px; font-size: 0.80rem; color: var(--sap-text-secondary); line-height: 1.5; min-height: 42px; display: flex; flex-direction: column; justify-content: center;">• Plano Siembras: {ins["plano_siembras"]}<br>• Curvas Piloto: {ins["curvas_piloto"]}</div>'
+        '</div>'
+        '<!-- Tarjeta 2 -->'
+        '<div class="cs-card" style="margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; height: 100%; min-height: 240px; box-sizing: border-box; padding: 1.25rem 1.5rem;">'
+        '<div>'
+        f'<div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--sap-border-subtle); padding-bottom: 8px; margin-bottom: 10px;"><span style="font-weight: 700; font-size: 0.95rem; color: var(--sap-text-primary);">{a2["icono"]} {a2["titulo"]}</span><span class="sap-badge {bg_cls2}">{bg_txt2}</span></div>'
+        f'<div style="font-size: 0.82rem; color: var(--sap-text-secondary); margin-bottom: 10px; font-weight: 500; min-height: 20px;">📅 <b>Plazo:</b> {a2["deadline"]}</div>'
+        f'<div class="{cls2}" style="min-height: 68px; display: flex; align-items: center; padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.84rem; line-height: 1.35; margin-bottom: 12px; box-sizing: border-box;"><span><b>{ic2}</b> {a2["mensaje"]}</span></div>'
+        '</div>'
+        '<div style="border-top: 1px solid var(--sap-border-subtle); padding-top: 10px; font-size: 0.80rem; color: var(--sap-text-secondary); line-height: 1.5; min-height: 42px; display: flex; flex-direction: column; justify-content: center;">• Ciclo Anual: 4º Jueves de cada mes<br>• Estado: Matriz de 52 semanas activa</div>'
+        '</div>'
+        '<!-- Tarjeta 3 -->'
+        '<div class="cs-card" style="margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; height: 100%; min-height: 240px; box-sizing: border-box; padding: 1.25rem 1.5rem;">'
+        '<div>'
+        f'<div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--sap-border-subtle); padding-bottom: 8px; margin-bottom: 10px;"><span style="font-weight: 700; font-size: 0.95rem; color: var(--sap-text-primary);">{a3["icono"]} {a3["titulo"]}</span><span class="sap-badge {bg_cls3}">{bg_txt3}</span></div>'
+        f'<div style="font-size: 0.82rem; color: var(--sap-text-secondary); margin-bottom: 10px; font-weight: 500; min-height: 20px;">📦 <b>Plazo:</b> {a3["deadline"]}</div>'
+        f'<div class="{cls3}" style="min-height: 68px; display: flex; align-items: center; padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.84rem; line-height: 1.35; margin-bottom: 12px; box-sizing: border-box;"><span><b>{ic3}</b> {a3["mensaje"]}</span></div>'
+        '</div>'
+        f'<div style="border-top: 1px solid var(--sap-border-subtle); padding-top: 10px; font-size: 0.80rem; color: var(--sap-text-secondary); line-height: 1.5; min-height: 42px; display: flex; flex-direction: column; justify-content: center;">• Ventana Mensual: Días 1 al 7 de cada mes<br>• Estado: {status_ped_txt}</div>'
+        '</div>'
+        '</div>'
+    )
+    st.html(html)

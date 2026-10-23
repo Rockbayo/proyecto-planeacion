@@ -2514,3 +2514,169 @@ def precargar_ejecucion_desde_plano(res_plano: dict) -> pd.DataFrame:
             "Observaciones": ""
         })
     return pd.DataFrame(rows)
+
+
+def procesar_carga_masiva_ejecucion(df_input: pd.DataFrame, db: Session = None) -> dict:
+    """
+    Procesa un archivo Excel o DataFrame con registros de ejecución real de múltiples semanas.
+    Detecta columnas canónicas, calcula esquejes reales y actualiza Ejecucion_Real_Enraizamiento.csv
+    reemplazando las semanas ingresadas y conservando las demás.
+    """
+    if df_input is None or df_input.empty:
+        return {"exito": False, "mensaje": "El archivo está vacío."}
+        
+    try:
+        df = df_input.copy()
+        col_map = {}
+        for c in df.columns:
+            c_low = str(c).strip().lower().replace(' ', '_').replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u')
+            if 'semana' in c_low and ('enraiz' in c_low or 'clav' in c_low):
+                col_map[c] = 'Semana_Enraizamiento'
+            elif 'semana' in c_low and 'siembr' in c_low:
+                col_map[c] = 'Semana_Siembra_Proyectada'
+            elif 'variedad' in c_low or 'variety' in c_low:
+                col_map[c] = 'Variedad'
+            elif 'bandeja' in c_low and ('real' in c_low or 'clav' in c_low):
+                col_map[c] = 'Bandejas_Reales'
+            elif 'bandeja' in c_low:
+                col_map[c] = 'Bandejas_Programadas'
+            elif 'ejecutad' in c_low or ('esqueje' in c_low and ('real' in c_low or 'clav' in c_low)):
+                col_map[c] = 'Esquejes_Reales'
+            elif 'enraizar' in c_low or ('esqueje' in c_low and 'prog' in c_low):
+                col_map[c] = 'Esquejes_Programados'
+            elif 'flor' in c_low:
+                col_map[c] = 'Flor'
+            elif 'color' in c_low:
+                col_map[c] = 'Color'
+            elif 'bloque' in c_low:
+                col_map[c] = 'Bloque_Destino'
+            elif 'dia' in c_low:
+                col_map[c] = 'Dia_Clavado'
+            elif 'camas' in c_low and 'Camas_Reales' not in col_map.values():
+                col_map[c] = 'Camas_Reales'
+            elif 'observ' in c_low or 'oserv' in c_low:
+                col_map[c] = 'Observaciones'
+                
+        df = df.rename(columns=col_map)
+        
+        if 'Variedad' not in df.columns:
+            return {"exito": False, "mensaje": "No se encontró la columna 'Variedad' en el archivo."}
+            
+        def _clean_sem(val):
+            s = str(val).strip().replace('S', '').replace('.0', '')
+            if len(s) == 4: return f"20{s}"
+            return s
+            
+        if 'Semana_Enraizamiento' not in df.columns:
+            if 'Semana_Siembra_Proyectada' in df.columns:
+                df['Semana_Siembra_Proyectada'] = df['Semana_Siembra_Proyectada'].apply(_clean_sem)
+                df['Semana_Enraizamiento'] = df['Semana_Siembra_Proyectada'].apply(lambda s: restar_semanas_iso(s, SEMANAS_ENRAIZAMIENTO))
+            else:
+                return {"exito": False, "mensaje": "No se encontró columna de semana ('Semana_Enraizamiento' o 'Semana Siembra')."}
+        else:
+            df['Semana_Enraizamiento'] = df['Semana_Enraizamiento'].apply(_clean_sem)
+            
+        if 'Semana_Siembra_Proyectada' not in df.columns:
+            df['Semana_Siembra_Proyectada'] = df['Semana_Enraizamiento'].apply(lambda s: sumar_semanas_iso(s, SEMANAS_ENRAIZAMIENTO))
+        else:
+            df['Semana_Siembra_Proyectada'] = df['Semana_Siembra_Proyectada'].apply(_clean_sem)
+            
+        df['Variedad'] = df['Variedad'].astype(str).str.strip()
+        df = df.dropna(subset=['Variedad'])
+        df = df[~df['Variedad'].str.lower().isin(['total', 'nan', '', 'none'])]
+        
+        if 'Esquejes_Reales' in df.columns:
+            df['Esquejes_Reales'] = pd.to_numeric(df['Esquejes_Reales'], errors='coerce').fillna(0).astype(int)
+        else:
+            df['Esquejes_Reales'] = 0
+            
+        if 'Bandejas_Reales' in df.columns:
+            df['Bandejas_Reales'] = pd.to_numeric(df['Bandejas_Reales'], errors='coerce').fillna(0).astype(int)
+        else:
+            df['Bandejas_Reales'] = (df['Esquejes_Reales'] / float(CAVIDADES_POR_BANDEJA)).round().astype(int)
+            
+        mask_ban = (df['Bandejas_Reales'] <= 0) & (df['Esquejes_Reales'] > 0)
+        df.loc[mask_ban, 'Bandejas_Reales'] = (df.loc[mask_ban, 'Esquejes_Reales'] / float(CAVIDADES_POR_BANDEJA)).round().astype(int)
+        
+        if 'Esquejes_Programados' in df.columns:
+            df['Esquejes_Programados'] = pd.to_numeric(df['Esquejes_Programados'], errors='coerce').fillna(0).astype(int)
+        else:
+            df['Esquejes_Programados'] = df['Esquejes_Reales']
+            
+        if 'Bandejas_Programadas' in df.columns:
+            df['Bandejas_Programadas'] = pd.to_numeric(df['Bandejas_Programadas'], errors='coerce').fillna(0).astype(int)
+        else:
+            df['Bandejas_Programadas'] = (df['Esquejes_Programados'] / float(CAVIDADES_POR_BANDEJA)).round().astype(int)
+            
+        # Camas_Reales debe ser biológica y físicamente consistente con Esquejes_Reales
+        df['Camas_Reales'] = (pd.to_numeric(df['Esquejes_Reales'], errors='coerce').fillna(0) / 5200.0).round(1)
+            
+        df['Cumplimiento_Pct'] = df.apply(
+            lambda r: round((r['Esquejes_Reales'] / r['Esquejes_Programados'] * 100.0), 1) if r['Esquejes_Programados'] > 0 else 100.0,
+            axis=1
+        )
+        
+        today_str = date.today().strftime('%Y-%m-%d')
+        if 'Fecha_Clavado' not in df.columns:
+            df['Fecha_Clavado'] = today_str
+        if 'Bloque_Destino' not in df.columns:
+            df['Bloque_Destino'] = 'Bloque 01'
+        if 'Estado' not in df.columns:
+            df['Estado'] = df['Esquejes_Reales'].apply(lambda x: '✅ Clavado Real' if x > 0 else '⚪ No Clavado')
+        if 'Observaciones' not in df.columns:
+            df['Observaciones'] = ''
+        if 'Dia_Clavado' not in df.columns:
+            df['Dia_Clavado'] = 'Lunes'
+        else:
+            df['Dia_Clavado'] = df['Dia_Clavado'].astype(str).str.strip().str.capitalize()
+            
+        if db is not None:
+            try:
+                from app.models.models import Variedad
+                vars_db = {v.nombre.strip().lower(): v for v in db.query(Variedad).all()}
+                for idx_r in df.index:
+                    v_norm = str(df.loc[idx_r, 'Variedad']).strip().lower()
+                    if v_norm in vars_db:
+                        v_obj = vars_db[v_norm]
+                        if 'Flor' not in df.columns or pd.isna(df.loc[idx_r, 'Flor']) or not df.loc[idx_r, 'Flor']:
+                            df.loc[idx_r, 'Flor'] = v_obj.flor or 'Estándar'
+                        if 'Color' not in df.columns or pd.isna(df.loc[idx_r, 'Color']) or not df.loc[idx_r, 'Color']:
+                            df.loc[idx_r, 'Color'] = v_obj.color or 'Mix'
+            except Exception:
+                pass
+                
+        cols_finales = [
+            "Semana_Enraizamiento", "Dia_Clavado", "Fecha_Clavado", "Flor", "Color",
+            "Variedad", "Bloque_Destino", "Bandejas_Programadas", "Esquejes_Programados",
+            "Bandejas_Reales", "Esquejes_Reales", "Camas_Reales",
+            "Cumplimiento_Pct", "Semana_Siembra_Proyectada", "Estado", "Observaciones"
+        ]
+        for cf in cols_finales:
+            if cf not in df.columns:
+                df[cf] = ''
+                
+        df_to_save = df[cols_finales].copy()
+        semanas_cargadas = sorted(list(df_to_save['Semana_Enraizamiento'].unique()))
+        
+        if os.path.exists(ARCHIVO_EJECUCION_REAL):
+            try:
+                df_exist = pd.read_csv(ARCHIVO_EJECUCION_REAL)
+                df_exist['Semana_Enraizamiento'] = df_exist['Semana_Enraizamiento'].astype(str)
+                df_otras = df_exist[~df_exist['Semana_Enraizamiento'].isin(semanas_cargadas)]
+                df_final = pd.concat([df_otras, df_to_save], ignore_index=True)
+            except Exception:
+                df_final = df_to_save
+        else:
+            df_final = df_to_save
+            
+        df_final.to_csv(ARCHIVO_EJECUCION_REAL, index=False, encoding='utf-8')
+        
+        return {
+            "exito": True,
+            "semanas": semanas_cargadas,
+            "total_registros": len(df_to_save),
+            "total_esquejes": int(df_to_save['Esquejes_Reales'].sum()),
+            "total_bandejas": int(df_to_save['Bandejas_Reales'].sum())
+        }
+    except Exception as e:
+        return {"exito": False, "mensaje": str(e)}

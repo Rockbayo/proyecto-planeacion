@@ -6,10 +6,6 @@ import plotly.express as px
 from app.ui.styles import estilizar_figura_plotly
 
 def render_curvas_module(db):
-    st.header("📈 Curvas e Índices (Datos de Campo)")
-    st.markdown("""
-    Este módulo consolida la información real de cosecha proveniente de los reportes de campo.
-    """)
     
     tab1, tab2 = st.tabs(["📊 Análisis por Flor y Periodo", "⚙️ Ingreso y Simulación de Datos"])
     
@@ -44,13 +40,14 @@ def render_curvas_module(db):
             if pd.isna(min_date) or pd.isna(max_date):
                 st.warning("Las fechas de inicio de producción en el histórico son inválidas.")
             else:
-                col_f1, col_f2, col_f3 = st.columns([1.5, 1.5, 2])
-                with col_f1:
-                    start_date = st.date_input("Fecha Inicio Cosecha", min_date)
-                with col_f2:
-                    end_date = st.date_input("Fecha Fin Cosecha", max_date)
-                with col_f3:
-                    modo_vista = st.radio("Nivel de Análisis:", ["Por Tipo de Flor", "Por Variedad"], horizontal=True)
+                with st.expander("🔍 Filtros de Búsqueda: Fechas de Cosecha y Tipo de Consulta", expanded=True):
+                    col_f1, col_f2, col_f3 = st.columns([1.5, 1.5, 2])
+                    with col_f1:
+                        start_date = st.date_input("Fecha Inicio Cosecha", min_date)
+                    with col_f2:
+                        end_date = st.date_input("Fecha Fin Cosecha", max_date)
+                    with col_f3:
+                        modo_vista = st.radio("¿Cómo deseas ver el análisis?", ["Por Tipo de Flor", "Por Variedad"], horizontal=True)
                     
                 # Aplicar filtro
                 start_ts = pd.to_datetime(start_date)
@@ -300,7 +297,16 @@ def render_curvas_module(db):
         La plataforma utiliza este insumo crudo para aplicar la **Estadística Determinística** y proyectar a futuro.
         """)
         
-        archivo = st.file_uploader("📥 Subir Reporte Camas Piloto (Excel)", type=["xlsx", "xls"])
+        if "ver_uploader_camas_piloto" not in st.session_state:
+            st.session_state["ver_uploader_camas_piloto"] = 0
+        if "flash_curvas_success" in st.session_state:
+            st.success(st.session_state.pop("flash_curvas_success"))
+            
+        archivo = st.file_uploader(
+            "📥 Subir Reporte Camas Piloto (Excel)", 
+            type=["xlsx", "xls"],
+            key=f"uploader_camas_piloto_{st.session_state['ver_uploader_camas_piloto']}"
+        )
         
         if archivo is not None:
             col1, col2 = st.columns(2)
@@ -357,6 +363,11 @@ def render_curvas_module(db):
                         st.session_state['df_hist_full'] = df_consolidado
                         st.session_state['variedades_a_analizar'] = variedades_a_analizar
                         st.session_state['lotes_nuevos'] = lotes_nuevos
+                        st.session_state['ver_uploader_camas_piloto'] += 1
+                        msg_curvas = f"✅ Archivo procesado: {lotes_nuevos} lotes nuevos integrados al histórico de curvas." if lotes_nuevos > 0 else "⚠️ Archivo procesado: Todos los registros ya existían en el histórico."
+                        st.session_state['flash_curvas_success'] = msg_curvas
+                        st.toast(msg_curvas)
+                        st.rerun()
                             
                     except Exception as e:
                         import traceback

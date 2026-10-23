@@ -1201,7 +1201,7 @@ Semana,Flor,Color,Variedad,Tallos Pedidos (Plan),Tallos a Producir (Capacidad),D
 202701,Novelty,Lavender,Roselle,4207.5,3935.0,-272.5
 202701,Novelty,Purple,Delirock,13589.0,12945.0,-644.0
 202701,Novelty,White,Nivea,8863.0,8680.0,-183.0
-202701,Novelty,Yellow,Ringer,18616.8,16427.0,-2189.7999999999997
+202701,Novelty,Yellow,Ringer,18616.8,16427.0,-2189.8
 202701,Novelty,Yellow,Zippo,4654.2,5624.0,969.8000000000002
 202702,Cushion,Lavender,Allstar,564.6,0.0,-564.6
 202702,Cushion,Lavender,Veronica,2258.4,4149.0,1890.6
@@ -1463,7 +1463,7 @@ Semana,Flor,Color,Variedad,Tallos Pedidos (Plan),Tallos a Producir (Capacidad),D
 202711,Novelty,Pink,Tulum,4538.0,4376.0,-162.0
 202711,Novelty,Purple,Delirock,18611.0,17260.0,-1351.0
 202711,Novelty,White,Nivea,13296.0,13020.0,-276.0
-202712,Cushion,Lavender,Allstar,5456.200000000001,7703.0,2246.7999999999997
+202712,Cushion,Lavender,Allstar,5456.200000000001,7703.0,2246.8
 202712,Cushion,Lavender,Veronica,21824.800000000003,20747.0,-1077.800000000003
 202712,Cushion,Pink,Yolanda,3681.0,3506.0,-175.0
 202712,Cushion,Purple,Impulse,4320.0,3941.0,-379.0
@@ -1658,9 +1658,9 @@ Semana,Flor,Color,Variedad,Tallos Pedidos (Plan),Tallos a Producir (Capacidad),D
 202719,Daisy,Lavender,Melrose Dark,16526.0,16261.0,-265.0
 202719,Daisy,Novelty purple,Theron,4050.0,4076.0,26.0
 202719,Daisy,Purple,Amor Fancy,11361.0,11721.0,360.0
-202719,Daisy,White,Alma,14166.6,15610.0,1443.3999999999996
-202719,Daisy,White,Spartak,9444.4,8090.0,-1354.3999999999996
-202719,Daisy,White,Top Dollar,23611.0,24410.0,799.0
+202719,Daisy,White,Alma,14166.6,61610.0,1443.3999999999996
+202719,Daisy,White,Spartak,9444.4,36090.0,-1354.3999999999996
+202719,Daisy,White,Top Dollar,23611.0,100410.0,799.0
 202719,Daisy,Yellow,Celebrate,10541.4,12074.0,1532.6000000000004
 202719,Daisy,Yellow,Rio,24596.6,24564.0,-32.599999999998545
 202719,Novelty,Green,Botani,25099.0,23901.0,-1198.0
@@ -1683,9 +1683,9 @@ Semana,Flor,Color,Variedad,Tallos Pedidos (Plan),Tallos a Producir (Capacidad),D
 202720,Daisy,Lavender,Melrose Dark,16526.0,16261.0,-265.0
 202720,Daisy,Novelty purple,Theron,4050.0,4076.0,26.0
 202720,Daisy,Purple,Amor Fancy,11361.0,11721.0,360.0
-202720,Daisy,White,Alma,11807.7,11708.0,-99.69999999999892
-202720,Daisy,White,Spartak,7871.8,8090.0,218.19999999999985
-202720,Daisy,White,Top Dollar,19679.5,20341.0,661.5
+202720,Daisy,White,Alma,11807.7,57708.0,-99.69999999999892
+202720,Daisy,White,Spartak,7871.8,36090.0,218.19999999999985
+202720,Daisy,White,Top Dollar,19679.5,96341.0,661.5
 202720,Daisy,Yellow,Celebrate,9312.9,12074.0,2761.1000000000004
 202720,Daisy,Yellow,Rio,21730.1,20470.0,-1260.0999999999983
 202720,Novelty,Green,Botani,25099.0,23901.0,-1198.0

@@ -16,12 +16,7 @@ def render_siembra_module(db: Session):
     Permite seleccionar cualquier semana de siembra registrada,
     analizar la distribución de camas y bloques, y descargar el plano oficial en PDF (1 página) y Excel.
     """
-    st.markdown("### 🌱 Plan Operativo de Siembra Semanal (Campo)")
-    st.caption(
-        "Programación detallada de la siembra en eras de campo. "
-        "Sincroniza las plántulas provenientes de enraizamiento (3 semanas de propagación) "
-        "y distribuye los lotes de manera balanceada de Lunes a Sábado para asegurar el pico fenológico a cosecha."
-    )
+
 
     # 1. Cargar catálogo de semanas de siembra programadas
     semanas_catalogo = obtener_catalogo_semanas_siembra(db)
